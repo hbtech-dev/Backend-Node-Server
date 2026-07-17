@@ -1,5 +1,6 @@
 const User = require('../models/user.model');
 const Invoice = require('../models/invoice.model');
+const Notification = require('../models/notification.model');
 const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
@@ -112,6 +113,14 @@ exports.chargeCredit = catchAsync(async (req, res, next) => {
     amount: parseFloat(amount),
     status: 'paid',
     date: new Date()
+  });
+
+  // Create notification
+  await Notification.create({
+    title: 'Balance Top-Up Successful',
+    message: `Charged €${parseFloat(amount).toFixed(2)} successfully!`,
+    type: 'success',
+    user: user._id
   });
 
   res.status(200).json({

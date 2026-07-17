@@ -30,7 +30,9 @@ exports.register = catchAsync(async (req, res, next) => {
         email: user.email,
         username: user.username,
         fullName: user.fullName,
-        companyName: user.companyName
+        companyName: user.companyName,
+        balance: user.balance,
+        accountType: user.accountType
       },
       token,
       refreshToken
@@ -60,7 +62,10 @@ exports.login = catchAsync(async (req, res, next) => {
         id: user._id,
         email: user.email,
         username: user.username,
-        fullName: user.fullName
+        fullName: user.fullName,
+        companyName: user.companyName,
+        balance: user.balance,
+        accountType: user.accountType
       },
       token,
       refreshToken

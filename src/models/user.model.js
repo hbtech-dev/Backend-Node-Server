@@ -65,7 +65,12 @@ const userSchema = new mongoose.Schema(
     },
     balance: {
       type: Number,
-      default: 45.00
+      default: 0.00
+    },
+    accountType: {
+      type: String,
+      enum: ['standard', 'premium'],
+      default: 'standard'
     },
     isActive: {
       type: Boolean,

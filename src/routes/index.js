@@ -4,6 +4,7 @@ const userRoutes = require('./user.routes');
 const itemRoutes = require('./item.routes');
 const temuRoutes = require('./temu.routes');
 const invoiceRoutes = require('./invoice.routes');
+const notificationRoutes = require('./notification.routes');
 
 const router = express.Router();
 
@@ -12,5 +13,6 @@ router.use('/users', userRoutes);
 router.use('/items', itemRoutes);
 router.use('/temu', temuRoutes);
 router.use('/invoices', invoiceRoutes);
+router.use('/notifications', notificationRoutes);
 
 module.exports = router;
