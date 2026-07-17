@@ -28,6 +28,45 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true
     },
+    companyName: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    streetName: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    houseNumber: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    postcode: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    cityName: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    contactEmail: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    telephone: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    balance: {
+      type: Number,
+      default: 45.00
+    },
     isActive: {
       type: Boolean,
       default: true

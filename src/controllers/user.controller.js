@@ -1,4 +1,5 @@
 const User = require('../models/user.model');
+const Invoice = require('../models/invoice.model');
 const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
@@ -14,12 +15,19 @@ exports.getMe = catchAsync(async (req, res, next) => {
 });
 
 exports.updateMe = catchAsync(async (req, res, next) => {
-  const { email, username, fullName } = req.body;
+  const { email, username, fullName, companyName, streetName, houseNumber, postcode, cityName, contactEmail, telephone } = req.body;
 
   const updateData = {};
   if (email) updateData.email = email;
   if (username) updateData.username = username;
   if (fullName) updateData.fullName = fullName;
+  if (companyName !== undefined) updateData.companyName = companyName;
+  if (streetName !== undefined) updateData.streetName = streetName;
+  if (houseNumber !== undefined) updateData.houseNumber = houseNumber;
+  if (postcode !== undefined) updateData.postcode = postcode;
+  if (cityName !== undefined) updateData.cityName = cityName;
+  if (contactEmail !== undefined) updateData.contactEmail = contactEmail;
+  if (telephone !== undefined) updateData.telephone = telephone;
 
   const user = await User.findByIdAndUpdate(req.user.id, updateData, {
     new: true,
@@ -82,5 +90,35 @@ exports.deleteUser = catchAsync(async (req, res, next) => {
   res.status(204).json({
     status: 'success',
     data: null
+  });
+});
+
+exports.chargeCredit = catchAsync(async (req, res, next) => {
+  const { amount } = req.body;
+
+  if (!amount || isNaN(amount) || amount <= 0) {
+    return next(new AppError('Please provide a valid charge amount', 400));
+  }
+
+  const user = await User.findById(req.user.id);
+  user.balance = (user.balance || 0) + parseFloat(amount);
+  await user.save();
+
+  // Create invoice
+  const invoiceNumber = `INV-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+  const invoice = await Invoice.create({
+    number: invoiceNumber,
+    user: user._id,
+    amount: parseFloat(amount),
+    status: 'paid',
+    date: new Date()
+  });
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      user,
+      invoice
+    }
   });
 });

@@ -4,7 +4,7 @@ const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
 exports.register = catchAsync(async (req, res, next) => {
-  const { email, password, username, fullName } = req.body;
+  const { email, password, username, fullName, companyName } = req.body;
 
   const existingUser = await User.findOne({ $or: [{ email }, { username }] });
   if (existingUser) {
@@ -15,7 +15,8 @@ exports.register = catchAsync(async (req, res, next) => {
     email,
     password,
     username,
-    fullName
+    fullName,
+    companyName
   });
 
   const token = generateToken(user._id);
@@ -28,7 +29,8 @@ exports.register = catchAsync(async (req, res, next) => {
         id: user._id,
         email: user.email,
         username: user.username,
-        fullName: user.fullName
+        fullName: user.fullName,
+        companyName: user.companyName
       },
       token,
       refreshToken
@@ -96,5 +98,19 @@ exports.logout = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     message: 'Logged out successfully'
+  });
+});
+
+exports.forgotPassword = catchAsync(async (req, res, next) => {
+  const { email } = req.body;
+
+  const user = await User.findOne({ email });
+  if (!user) {
+    return next(new AppError('No user found with that email address', 404));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: 'A simulated password reset link has been generated. Since this is a demo/development setup, you are good to proceed!'
   });
 });

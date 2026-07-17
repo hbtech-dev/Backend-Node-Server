@@ -15,10 +15,26 @@ router.put(
   [
     body('email').optional().isEmail().withMessage('Please provide a valid email'),
     body('username').optional().notEmpty().withMessage('Username cannot be empty'),
-    body('fullName').optional()
+    body('fullName').optional(),
+    body('companyName').optional().isString(),
+    body('streetName').optional().isString(),
+    body('houseNumber').optional().isString(),
+    body('postcode').optional().isString(),
+    body('cityName').optional().isString(),
+    body('contactEmail').optional().isEmail().withMessage('Please provide a valid contact email'),
+    body('telephone').optional().isString()
   ],
   validate,
   userController.updateMe
+);
+
+router.post(
+  '/me/charge',
+  [
+    body('amount').isNumeric().withMessage('Charge amount must be a number')
+  ],
+  validate,
+  userController.chargeCredit
 );
 
 router.get('/', userController.getAllUsers);
