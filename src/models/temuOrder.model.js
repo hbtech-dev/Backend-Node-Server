@@ -11,6 +11,10 @@ const temuOrderSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    temuOrderId: {
+      type: String,
+      default: ''
+    },
     orderDate: {
       type: String,
       default: () => new Date().toLocaleDateString('de-DE')
@@ -23,7 +27,31 @@ const temuOrderSchema = new mongoose.Schema(
       type: String,
       default: 'DE'
     },
+    streetName: {
+      type: String,
+      default: ''
+    },
+    houseNumber: {
+      type: String,
+      default: ''
+    },
+    postcode: {
+      type: String,
+      default: ''
+    },
+    cityName: {
+      type: String,
+      default: ''
+    },
     address: {
+      type: String,
+      default: ''
+    },
+    email: {
+      type: String,
+      default: ''
+    },
+    phone: {
       type: String,
       default: ''
     },
@@ -31,11 +59,35 @@ const temuOrderSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    sku: {
+      type: String,
+      default: ''
+    },
+    quantity: {
+      type: Number,
+      default: 1
+    },
+    price: {
+      type: Number,
+      default: 19.99
+    },
+    weight: {
+      type: String,
+      default: '0.50 kg'
+    },
     shippingMethod: {
       type: String,
       default: 'DHL EDER International'
     },
     tracking: {
+      type: String,
+      default: ''
+    },
+    qrCodeData: {
+      type: String,
+      default: ''
+    },
+    barcodeData: {
       type: String,
       default: ''
     },
