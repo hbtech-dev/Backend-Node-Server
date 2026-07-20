@@ -80,6 +80,14 @@ const userSchema = new mongoose.Schema(
       type: String,
       enum: ['user', 'admin'],
       default: 'user'
+    },
+    temuIntegration: {
+      isConnected: { type: Boolean, default: false },
+      appKey: { type: String, default: '' },
+      appSecret: { type: String, default: '' },
+      sellerId: { type: String, default: '' },
+      shopName: { type: String, default: '' },
+      lastSyncedAt: { type: Date, default: null }
     }
   },
   {
