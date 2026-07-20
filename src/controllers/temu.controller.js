@@ -303,9 +303,12 @@ exports.disconnectTemu = catchAsync(async (req, res, next) => {
   };
   await user.save();
 
+  // Clear synced Temu orders for this user on disconnect
+  await TemuOrder.deleteMany({ user: req.user.id });
+
   res.status(200).json({
     status: 'success',
-    message: 'Temu Seller account disconnected.',
+    message: 'Temu Seller account disconnected and orders cleared.',
     data: {
       temuIntegration: user.temuIntegration
     }
