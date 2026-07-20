@@ -88,6 +88,15 @@ const userSchema = new mongoose.Schema(
       sellerId: { type: String, default: '' },
       shopName: { type: String, default: '' },
       lastSyncedAt: { type: Date, default: null }
+    },
+    ebayIntegration: {
+      isConnected: { type: Boolean, default: false },
+      appId: { type: String, default: '' },
+      certId: { type: String, default: '' },
+      devId: { type: String, default: '' },
+      userToken: { type: String, default: '' },
+      storeName: { type: String, default: '' },
+      lastSyncedAt: { type: Date, default: null }
     }
   },
   {
