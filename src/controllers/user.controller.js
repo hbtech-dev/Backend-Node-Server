@@ -5,7 +5,12 @@ const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
 exports.getMe = catchAsync(async (req, res, next) => {
-  const user = await User.findById(req.user.id);
+  const mongoose = require('mongoose');
+  let user = req.user;
+
+  if (mongoose.connection.readyState === 1) {
+    user = await User.findById(req.user.id) || req.user;
+  }
 
   res.status(200).json({
     status: 'success',

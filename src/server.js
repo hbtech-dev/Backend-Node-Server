@@ -3,7 +3,11 @@ const config = require('./config/config');
 const logger = require('./utils/logger');
 const connectDB = require('./config/database');
 
-connectDB();
+const temuSyncService = require('./services/temuSync.service');
+
+connectDB().then(() => {
+  temuSyncService.startTemuBackgroundSync();
+});
 
 const PORT = config.port || 3000;
 

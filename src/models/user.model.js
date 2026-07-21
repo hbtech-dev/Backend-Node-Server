@@ -97,6 +97,15 @@ const userSchema = new mongoose.Schema(
       userToken: { type: String, default: '' },
       storeName: { type: String, default: '' },
       lastSyncedAt: { type: Date, default: null }
+    },
+    dhlIntegration: {
+      isConnected: { type: Boolean, default: false },
+      apiKey: { type: String, default: '' },
+      apiSecret: { type: String, default: '' },
+      accountNumber: { type: String, default: '' },
+      isSandbox: { type: Boolean, default: true },
+      productType: { type: String, default: 'V01PAK' },
+      lastTestedAt: { type: Date, default: null }
     }
   },
   {

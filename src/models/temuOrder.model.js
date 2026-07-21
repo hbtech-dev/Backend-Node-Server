@@ -91,6 +91,18 @@ const temuOrderSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    dhlShipmentId: {
+      type: String,
+      default: ''
+    },
+    dhlLabelUrl: {
+      type: String,
+      default: ''
+    },
+    shippedAt: {
+      type: Date,
+      default: null
+    },
     status: {
       type: String,
       enum: ['open', 'created_label', 'printed', 'canceled'],

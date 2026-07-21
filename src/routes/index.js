@@ -6,6 +6,7 @@ const temuRoutes = require('./temu.routes');
 const ebayRoutes = require('./ebay.routes');
 const invoiceRoutes = require('./invoice.routes');
 const notificationRoutes = require('./notification.routes');
+const dhlRoutes = require('./dhl.routes');
 
 const router = express.Router();
 
@@ -16,5 +17,6 @@ router.use('/temu', temuRoutes);
 router.use('/ebay', ebayRoutes);
 router.use('/invoices', invoiceRoutes);
 router.use('/notifications', notificationRoutes);
+router.use('/dhl', dhlRoutes);
 
 module.exports = router;
