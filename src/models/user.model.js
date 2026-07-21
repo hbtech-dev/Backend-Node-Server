@@ -106,6 +106,27 @@ const userSchema = new mongoose.Schema(
       isSandbox: { type: Boolean, default: true },
       productType: { type: String, default: 'V01PAK' },
       lastTestedAt: { type: Date, default: null }
+    },
+    settings: {
+      standardValues: {
+        defWeight: { type: String, default: '0.5' },
+        defLength: { type: String, default: '30' },
+        defWidth: { type: String, default: '20' },
+        defHeight: { type: String, default: '15' }
+      },
+      deliveryNotes: {
+        showLogo: { type: Boolean, default: true },
+        showReturnLabel: { type: Boolean, default: false },
+        includePackingList: { type: Boolean, default: true }
+      },
+      printSettings: {
+        labelFormat: { type: String, default: 'A4' },
+        printerType: { type: String, default: 'Laser' }
+      },
+      processingNumbers: {
+        numPrefix: { type: String, default: 'PO-' },
+        nextNum: { type: String, default: '10001' }
+      }
     }
   },
   {

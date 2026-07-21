@@ -21,7 +21,7 @@ exports.getMe = catchAsync(async (req, res, next) => {
 });
 
 exports.updateMe = catchAsync(async (req, res, next) => {
-  const { email, username, fullName, companyName, streetName, houseNumber, postcode, cityName, contactEmail, telephone } = req.body;
+  const { email, username, fullName, companyName, streetName, houseNumber, postcode, cityName, contactEmail, telephone, settings } = req.body;
 
   const updateData = {};
   if (email) updateData.email = email;
@@ -34,6 +34,7 @@ exports.updateMe = catchAsync(async (req, res, next) => {
   if (cityName !== undefined) updateData.cityName = cityName;
   if (contactEmail !== undefined) updateData.contactEmail = contactEmail;
   if (telephone !== undefined) updateData.telephone = telephone;
+  if (settings !== undefined) updateData.settings = settings;
 
   const user = await User.findByIdAndUpdate(req.user.id, updateData, {
     new: true,

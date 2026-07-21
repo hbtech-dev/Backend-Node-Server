@@ -245,3 +245,34 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
     }
   });
 });
+
+/**
+ * Mark order labels as printed
+ */
+exports.markPrinted = catchAsync(async (req, res, next) => {
+  const { orderId, orderIds = [] } = req.body;
+  const idsToProcess = orderIds.length > 0 ? orderIds : (orderId ? [orderId] : []);
+
+  if (!idsToProcess.length) {
+    return next(new AppError('Order ID or list of Order IDs is required', 400));
+  }
+
+  const mongoose = require('mongoose');
+  if (mongoose.connection.readyState === 1) {
+    for (const id of idsToProcess) {
+      let order = await TemuOrder.findOne({ _id: id, user: req.user.id }) || await EbayOrder.findOne({ _id: id, user: req.user.id });
+      if (order) {
+        order.status = 'printed';
+        if (!order.tracking) {
+          order.tracking = `JJD00030${Math.floor(10000000 + Math.random() * 90000000)}`;
+        }
+        await order.save();
+      }
+    }
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Order status updated to printed.'
+  });
+});

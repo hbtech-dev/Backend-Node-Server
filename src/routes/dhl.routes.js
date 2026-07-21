@@ -14,5 +14,6 @@ router.post('/test-connection', dhlController.testConnection);
 // Shipment processing
 router.post('/create-shipment', dhlController.createShipment);
 router.post('/bulk-create-shipments', dhlController.bulkCreateShipments);
+router.post('/mark-printed', dhlController.markPrinted);
 
 module.exports = router;
