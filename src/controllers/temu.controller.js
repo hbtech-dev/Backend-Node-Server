@@ -191,9 +191,9 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
 
     if (testRes.ok) {
       const body = await testRes.json();
-      // If signature invalid or app_key invalid
-      if (body.errorCode && (body.errorCode === 3000010 || body.errorCode === 3000001)) {
-        return next(new AppError(`Invalid Temu credentials: ${body.errorMsg || 'App Key or App Secret is incorrect.'}`, 401));
+      if (body.success === false || (body.errorCode && body.errorCode !== 0)) {
+        const errorDetail = body.errorMsg || `Error code ${body.errorCode}`;
+        return next(new AppError(`Invalid Temu credentials: ${errorDetail}`, 401));
       }
     }
   } catch (_err) {
