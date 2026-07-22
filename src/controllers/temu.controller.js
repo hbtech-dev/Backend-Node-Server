@@ -341,121 +341,38 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
   });
 });
 
-const seedReturnsAndIssues = async (userId) => {
-  const returnCount = await TemuReturn.countDocuments({ user: userId });
-  if (returnCount === 0) {
-    await TemuReturn.insertMany([
-      {
-        user: userId,
-        returnId: 'RET-076-948201',
-        orderNum: 'PO-076-18356739533430248',
-        buyerName: 'pi***la',
-        country: 'DE',
-        reason: 'Item smaller than expected / defective container',
-        refundAmount: 9.55,
-        status: 'pending',
-        itemDetails: {
-          articleName: 'Apple Cider Vinegar Gummies 1200mg',
-          sku: '12343231',
-          quantity: 1
-        }
-      },
-      {
-        user: userId,
-        returnId: 'RET-192-384910',
-        orderNum: 'PO-192-00516465055351944',
-        buyerName: 'Manuela Keller',
-        country: 'CH',
-        reason: 'Wrong delivery address attempt',
-        refundAmount: 14.99,
-        status: 'pending',
-        itemDetails: {
-          articleName: 'Bio Kurkuma Kapseln – High Potency',
-          sku: 'TM-KUR-003',
-          quantity: 1
-        }
-      }
-    ]);
-  }
-
-  const issueCount = await TemuFulfillmentIssue.countDocuments({ user: userId });
-  if (issueCount === 0) {
-    await TemuFulfillmentIssue.insertMany([
-      {
-        user: userId,
-        issueId: 'ISS-076-102948',
-        orderNum: 'PO-076-18273159475830746',
-        buyerName: 'h.***ch',
-        issueType: 'address_change',
-        country: 'DE',
-        description: 'Customer requested updated street number from 88 to 88B before dispatch',
-        requestedAddress: 'Friedrichstraße 88B, 80331 München',
-        status: 'open'
-      },
-      {
-        user: userId,
-        issueId: 'ISS-163-992019',
-        orderNum: 'PO-163-00423409285750581',
-        buyerName: 'Benilde Machado',
-        issueType: 'late_shipment',
-        country: 'PT',
-        description: 'Verge of late shipment risk (18h dispatch window remaining)',
-        status: 'open'
-      }
-    ]);
-  }
-};
-
 /**
  * Get all Temu returns across all countries
  */
 exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
-  let returnsList = [];
+  let user = req.user;
 
   if (mongoose.connection.readyState === 1) {
-    await seedReturnsAndIssues(req.user.id);
+    user = await User.findById(req.user.id) || req.user;
+  }
+
+  // If Temu is not connected, clear sample returns and return empty list
+  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+    if (mongoose.connection.readyState === 1) {
+      // Purge legacy seeded return samples
+      const SAMPLE_RETURN_IDS = ['RET-076-948201', 'RET-192-384910'];
+      await TemuReturn.deleteMany({ user: req.user.id, returnId: { $in: SAMPLE_RETURN_IDS } });
+    }
+    return res.status(200).json({
+      status: 'success',
+      data: { returns: [] }
+    });
+  }
+
+  let returnsList = [];
+  if (mongoose.connection.readyState === 1) {
     returnsList = await TemuReturn.find({ user: req.user.id }).sort({ createdAt: -1 });
-  } else {
-    returnsList = [
-      {
-        _id: 'ret-1',
-        returnId: 'RET-076-948201',
-        orderNum: 'PO-076-18356739533430248',
-        buyerName: 'pi***la',
-        country: 'DE',
-        reason: 'Item smaller than expected / size issue',
-        refundAmount: 9.55,
-        status: 'pending',
-        itemDetails: {
-          articleName: 'Apple Cider Vinegar Gummies 1200mg',
-          sku: '12343231',
-          quantity: 1
-        }
-      },
-      {
-        _id: 'ret-2',
-        returnId: 'RET-192-384910',
-        orderNum: 'PO-192-00516465055351944',
-        buyerName: 'Manuela Keller',
-        country: 'CH',
-        reason: 'Wrong delivery address attempt',
-        refundAmount: 14.99,
-        status: 'pending',
-        itemDetails: {
-          articleName: 'Bio Kurkuma Kapseln – High Potency',
-          sku: 'TM-KUR-003',
-          quantity: 1
-        }
-      }
-    ];
   }
 
   res.status(200).json({
     status: 'success',
-    data: {
-      returns: returnsList
-    }
+    data: { returns: returnsList }
   });
 });
 
@@ -491,42 +408,32 @@ exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
  */
 exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
-  let issuesList = [];
+  let user = req.user;
 
   if (mongoose.connection.readyState === 1) {
-    await seedReturnsAndIssues(req.user.id);
+    user = await User.findById(req.user.id) || req.user;
+  }
+
+  // If Temu is not connected, clear sample issues and return empty list
+  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+    if (mongoose.connection.readyState === 1) {
+      const SAMPLE_ISSUE_IDS = ['ISS-076-102948', 'ISS-163-992019'];
+      await TemuFulfillmentIssue.deleteMany({ user: req.user.id, issueId: { $in: SAMPLE_ISSUE_IDS } });
+    }
+    return res.status(200).json({
+      status: 'success',
+      data: { issues: [] }
+    });
+  }
+
+  let issuesList = [];
+  if (mongoose.connection.readyState === 1) {
     issuesList = await TemuFulfillmentIssue.find({ user: req.user.id }).sort({ createdAt: -1 });
-  } else {
-    issuesList = [
-      {
-        _id: 'iss-1',
-        issueId: 'ISS-076-102948',
-        orderNum: 'PO-076-18273159475830746',
-        buyerName: 'h.***ch',
-        issueType: 'address_change',
-        country: 'DE',
-        description: 'Customer requested updated street number from 88 to 88B before dispatch',
-        requestedAddress: 'Friedrichstraße 88B, 80331 München',
-        status: 'open'
-      },
-      {
-        _id: 'iss-2',
-        issueId: 'ISS-163-992019',
-        orderNum: 'PO-163-00423409285750581',
-        buyerName: 'Benilde Machado',
-        issueType: 'late_shipment',
-        country: 'PT',
-        description: 'Verge of late shipment risk (18h dispatch window remaining)',
-        status: 'open'
-      }
-    ];
   }
 
   res.status(200).json({
     status: 'success',
-    data: {
-      issues: issuesList
-    }
+    data: { issues: issuesList }
   });
 });
 
