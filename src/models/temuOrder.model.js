@@ -67,6 +67,18 @@ const temuOrderSchema = new mongoose.Schema(
       type: Number,
       default: 1
     },
+    productImage: {
+      type: String,
+      default: ''
+    },
+    variation: {
+      type: String,
+      default: ''
+    },
+    packaging: {
+      type: String,
+      default: 'Small Parcel (25×18×10cm)'
+    },
     price: {
       type: Number,
       default: 19.99
