@@ -39,112 +39,7 @@ const buildFallbackProducts = (keyword) => {
   ];
 };
 
-const seedUserTemuOrders = async (userId) => {
-  const sampleOrders = [
-    {
-      user: userId,
-      orderNum: 'PO-076-18356739533430248',
-      temuOrderId: '076-18356760504950248',
-      name: 'pi***la',
-      country: 'DE',
-      streetName: 'Bahnhofstraße',
-      houseNumber: '14',
-      postcode: '10117',
-      cityName: 'Berlin',
-      address: 'Bahnhofstraße 14, 10117 Berlin',
-      email: 'pi.la@temu.com',
-      phone: '+49 171 9482019',
-      articleName: 'Apple Cider Vinegar Gummies 1200mg, Strawberry Flavor, with Vitamin C, B6, B9, B12 & Beetroot (60 Vegan Bears)',
-      sku: '12343231',
-      quantity: 1,
-      variation: 'Packung 1',
-      packaging: 'Small Parcel (25×18×10cm)',
-      productImage: '',
-      price: 9.55,
-      weight: '0.35 kg',
-      shippingMethod: 'DHL Paket International',
-      tracking: '',
-      qrCodeData: 'https://shipstation.dhl.com/track/PO-076-18356739533430248',
-      barcodeData: '4012345678901',
-      status: 'open',
-      orderDate: '21.07.2026',
-      source: 'Temu'
-    },
-    {
-      user: userId,
-      orderNum: 'PO-076-18273159475830746',
-      temuOrderId: '076-18273235497590746',
-      name: 'h.***ch',
-      country: 'DE',
-      streetName: 'Friedrichstraße',
-      houseNumber: '88',
-      postcode: '80331',
-      cityName: 'München',
-      address: 'Friedrichstraße 88, 80331 München',
-      email: 'h.koch@temu.com',
-      phone: '+49 152 4892011',
-      articleName: 'Apple Cider Vinegar Gummies 1200 mg – 120 Vegan Gummies | 60 Servings | 2-Month Supply (2 Packs)',
-      sku: '67634729082075',
-      quantity: 1,
-      variation: '120 Vegan Gummies (2-Month Supply)',
-      packaging: 'Medium Parcel (35×25×15cm)',
-      productImage: '',
-      price: 15.76,
-      weight: '0.45 kg',
-      shippingMethod: 'DHL Paket International',
-      tracking: '',
-      qrCodeData: 'https://shipstation.dhl.com/track/PO-076-18273159475830746',
-      barcodeData: '4012345678918',
-      status: 'open',
-      orderDate: '21.07.2026',
-      source: 'Temu'
-    },
-    {
-      user: userId,
-      orderNum: 'PO-162-04086218168951213',
-      temuOrderId: '162-04086176225911213',
-      name: 'Ag***ik',
-      country: 'PL',
-      streetName: 'Marszałkowska',
-      houseNumber: '102',
-      postcode: '00-026',
-      cityName: 'Warszawa',
-      address: 'Marszałkowska 102, 00-026 Warszawa',
-      email: 'ag.ik@temu.com',
-      phone: '+48 22 123 4567',
-      articleName: 'Apple Cider Vinegar Gummies (60 Gummies)',
-      sku: '59043658424548',
-      quantity: 1,
-      variation: '60 Gummies',
-      packaging: 'Small Parcel (25×18×10cm)',
-      productImage: '',
-      price: 55.72,
-      weight: '0.30 kg',
-      shippingMethod: 'DHL Paket International',
-      tracking: '',
-      qrCodeData: 'https://shipstation.dhl.com/track/PO-162-04086218168951213',
-      barcodeData: '4012345678987',
-      status: 'open',
-      orderDate: '22.07.2026',
-      source: 'Temu'
-    }
-  ];
 
-  // Purge any synthetic demo orders from MongoDB that are not actual user store orders
-  const validOrderNums = ['PO-076-18356739533430248', 'PO-076-18273159475830746', 'PO-162-04086218168951213'];
-  await TemuOrder.deleteMany({
-    user: userId,
-    orderNum: { $nin: validOrderNums },
-    status: 'open'
-  });
-
-  for (const sample of sampleOrders) {
-    const exists = await TemuOrder.findOne({ user: userId, orderNum: sample.orderNum });
-    if (!exists) {
-      await TemuOrder.create({ ...sample, user: userId });
-    }
-  }
-};
 
 exports.getHealth = catchAsync(async (req, res, next) => {
   res.status(200).json({
@@ -320,7 +215,8 @@ exports.syncTemuOrders = catchAsync(async (req, res, next) => {
   }
 
   if (mongoose.connection.readyState === 1) {
-    await seedUserTemuOrders(user._id);
+    // Clear out sample open orders so only live unshipped store orders remain
+    await TemuOrder.deleteMany({ user: user._id, status: 'open' });
     const temuSyncService = require('../services/temuSync.service');
     await temuSyncService.syncUserTemuOrders(user);
     user.temuIntegration.lastSyncedAt = new Date();
@@ -365,8 +261,15 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    await seedUserTemuOrders(req.user.id);
-    const filter = { user: req.user.id };
+    // Purge any seeded sample order numbers that are NOT real Temu API orders
+    const SAMPLE_ORDER_NUMS = [
+      'PO-076-18356739533430248',
+      'PO-076-18273159475830746',
+      'PO-162-04086218168951213',
+    ];
+    await TemuOrder.deleteMany({ user: req.user.id, orderNum: { $in: SAMPLE_ORDER_NUMS } });
+
+    const filter = { user: req.user.id, status: 'open' };
     if (req.query.status) {
       filter.status = req.query.status;
     }
