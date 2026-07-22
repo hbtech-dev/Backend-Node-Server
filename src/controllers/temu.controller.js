@@ -153,6 +153,48 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
     return next(new AppError('App Key and App Secret are required to connect to Temu', 400));
   }
 
+  // --- Validate credentials against Temu Open Platform API ---
+  const crypto = require('crypto');
+  const TEMU_API_BASE = process.env.TEMU_API_BASE_URL || 'https://openapi.temu.com/openapi';
+
+  const buildSign = (secret, params) => {
+    const sortedKeys = Object.keys(params).sort();
+    const signStr = sortedKeys.map(k => `${k}${params[k]}`).join('');
+    return crypto.createHmac('sha256', secret).update(signStr).digest('hex').toUpperCase();
+  };
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const testParams = { app_key: appKey, timestamp, method: 'bgn.shop.info.get' };
+  testParams.sign = buildSign(appSecret, testParams);
+  const queryStr = Object.entries(testParams)
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+
+  let shopInfo = null;
+  let validationError = null;
+
+  try {
+    const testRes = await fetch(`${TEMU_API_BASE}?${queryStr}`, {
+      method: 'GET',
+      headers: { 'Content-Type': 'application/json' }
+    });
+    const testBody = await testRes.json();
+
+    // Temu API returns error_code on auth failure
+    if (testBody.error_code && testBody.error_code !== '0') {
+      validationError = testBody.error_msg || testBody.message || `Temu API error: ${testBody.error_code}`;
+    } else {
+      shopInfo = testBody.result || testBody.data || null;
+    }
+  } catch (err) {
+    // Network error — can't reach Temu API at all
+    validationError = `Cannot reach Temu API: ${err.message}`;
+  }
+
+  if (validationError) {
+    return next(new AppError(`Invalid Temu credentials: ${validationError}`, 401));
+  }
+
+  // --- Credentials valid — save and sync ---
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
 
@@ -160,21 +202,20 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
     isConnected: true,
     appKey,
     appSecret,
-    sellerId: sellerId || `TEMU-SELLER-${Math.floor(100000 + Math.random() * 900000)}`,
-    shopName: shopName || 'Temu Official Store',
+    sellerId: shopInfo?.seller_id || sellerId || `TEMU-SELLER-${Math.floor(100000 + Math.random() * 900000)}`,
+    shopName: shopInfo?.shop_name || shopName || 'Temu Official Store',
     lastSyncedAt: new Date()
   };
 
   if (mongoose.connection.readyState === 1 && typeof user.save === 'function') {
     await user.save();
-    // Immediately sync real unshipped orders from Temu API
     const temuSyncService = require('../services/temuSync.service');
     await temuSyncService.syncUserTemuOrders(user);
   }
 
   res.status(200).json({
     status: 'success',
-    message: 'Temu Seller account successfully connected!',
+    message: 'Temu Seller account successfully connected and verified!',
     data: {
       temuIntegration: user.temuIntegration
     }
