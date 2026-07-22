@@ -35,6 +35,8 @@ const generateDHLTrackingNumber = (country = 'DE') => {
   return `LF${Math.floor(100000000 + Math.random() * 900000000)}${country}`;
 };
 
+const httpFetch = require('../utils/httpHelper');
+
 /**
  * Test DHL API Credentials
  */
@@ -44,7 +46,7 @@ exports.testDHLConnection = async (userDhlConfig = {}) => {
   if (config.apiKey && config.apiSecret) {
     try {
       const authHeader = 'Basic ' + Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64');
-      const response = await fetch(`${config.baseUrl}/rates?originCountryCode=DE&originCity=Dortmund&destinationCountryCode=DE&destinationCity=Berlin&weight=0.5`, {
+      const response = await httpFetch(`${config.baseUrl}/rates?originCountryCode=DE&originCity=Dortmund&destinationCountryCode=DE&destinationCity=Berlin&weight=0.5`, {
         method: 'GET',
         headers: {
           'Authorization': authHeader,
@@ -136,14 +138,14 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
         }
       };
 
-      const response = await fetch(`${config.baseUrl}/shipments`, {
+      const response = await httpFetch(`${config.baseUrl}/shipments`, {
         method: 'POST',
         headers: {
           'Authorization': authHeader,
           'DHL-API-Key': config.apiKey,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify(payload)
+        body: payload
       });
 
       if (response.ok) {

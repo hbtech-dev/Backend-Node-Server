@@ -181,12 +181,14 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
 
   const routerUrl = process.env.TEMU_ROUTER_URL || 'https://openapi-b-eu.temu.com/openapi/router';
 
+  const httpFetch = require('../utils/httpHelper');
+
   try {
-    const testRes = await fetch(routerUrl, {
+    const testRes = await httpFetch(routerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, sign }),
-      signal: AbortSignal.timeout(8000)
+      timeout: 8000
     });
 
     if (!testRes.ok) {

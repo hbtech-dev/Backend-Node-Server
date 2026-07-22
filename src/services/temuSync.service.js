@@ -12,6 +12,8 @@ const Notification = require('../models/notification.model');
 
 let syncInterval = null;
 
+const httpFetch = require('../utils/httpHelper');
+
 /**
  * Call Temu Open Platform Router API across ALL regional endpoints (EU, Global, US)
  * and combine orders from all regions so no country's orders are missed.
@@ -41,11 +43,11 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
 
   for (const url of routerUrls) {
     try {
-      const res = await fetch(url, {
+      const res = await httpFetch(url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData),
-        signal: AbortSignal.timeout(8000)
+        timeout: 8000
       });
       if (res.ok) {
         const data = await res.json();
