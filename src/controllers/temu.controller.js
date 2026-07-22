@@ -40,7 +40,10 @@ const buildFallbackProducts = (keyword) => {
 };
 
 const seedUserTemuOrders = async (userId) => {
-  await TemuOrder.deleteMany({ user: userId });
+  const count = await TemuOrder.countDocuments({ user: userId });
+  if (count > 0) {
+    return;
+  }
 
   const sampleOrders = [
     {
@@ -61,7 +64,7 @@ const seedUserTemuOrders = async (userId) => {
       quantity: 1,
       variation: 'Packung 1',
       packaging: 'Small Parcel (25×18×10cm)',
-      productImage: 'https://images.unsplash.com/photo-1584308666744-24d5c474f2ae?w=200&auto=format&fit=crop&q=80',
+      productImage: '',
       price: 9.55,
       weight: '0.35 kg',
       shippingMethod: 'DHL Paket International',
@@ -90,7 +93,7 @@ const seedUserTemuOrders = async (userId) => {
       quantity: 1,
       variation: '120 Vegan Gummies (2-Month Supply)',
       packaging: 'Medium Parcel (35×25×15cm)',
-      productImage: 'https://images.unsplash.com/photo-1577401239170-897942555fb3?w=200&auto=format&fit=crop&q=80',
+      productImage: '',
       price: 15.76,
       weight: '0.45 kg',
       shippingMethod: 'DHL Paket International',
@@ -325,9 +328,8 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    const hasOldMock = await TemuOrder.findOne({ user: req.user.id, orderNum: 'PO-076-00175683098233977' });
     const count = await TemuOrder.countDocuments({ user: req.user.id });
-    if (count === 0 || hasOldMock) {
+    if (count === 0) {
       await seedUserTemuOrders(req.user.id);
     }
     const filter = { user: req.user.id };
