@@ -13,9 +13,10 @@ const Notification = require('../models/notification.model');
 let syncInterval = null;
 
 /**
- * Call Temu Open Platform Router API
+ * Call Temu Open Platform Router API across ALL regional endpoints (EU, Global, US)
+ * and combine orders from all regions so no country's orders are missed.
  */
-const callTemuRouter = async (appKey, appSecret, accessToken, type, params = {}) => {
+const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, params = {}) => {
   const routerUrls = [
     'https://openapi-b-eu.temu.com/openapi/router',
     'https://openapi-b-global.temu.com/openapi/router',
@@ -36,6 +37,7 @@ const callTemuRouter = async (appKey, appSecret, accessToken, type, params = {})
   const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
   const bodyData = { ...payload, sign };
+  let combinedOrders = [];
 
   for (const url of routerUrls) {
     try {
@@ -43,24 +45,24 @@ const callTemuRouter = async (appKey, appSecret, accessToken, type, params = {})
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData),
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(8000)
       });
       if (res.ok) {
         const data = await res.json();
         if (data.success || data.result || data.data) {
-          return data;
+          const result = data.result || data.data || data;
+          const list = result.order_list || result.orderList || result.orders || result.data || [];
+          if (Array.isArray(list) && list.length > 0) {
+            combinedOrders.push(...list);
+          }
         }
-        // If error response, throw or log
-        if (data.errorMsg || data.errorCode) {
-          console.warn(`Temu Router response from ${url}:`, data.errorCode, data.errorMsg);
-        }
-        return data;
       }
     } catch (e) {
       console.warn(`Temu router error hitting ${url}:`, e.message);
     }
   }
-  return null;
+
+  return combinedOrders;
 };
 
 /**
@@ -113,32 +115,20 @@ const syncUserTemuOrders = async (user) => {
   }
 
   try {
-    // --- 1. Fetch all unshipped orders (ALL countries/regions) ---
-    let unshippedOrders = [];
-    const payload = await callTemuRouter(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+    // --- 1. Fetch all unshipped orders (ALL countries/regions: EU, Global, US) ---
+    const unshippedOrders = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
       order_status: '1', // 1 = Unshipped / Pending Fulfillment in Temu API
       page_size: '100',
       page_no: '1'
     });
 
-    if (payload) {
-      const result = payload.result || payload.data || payload;
-      unshippedOrders = result.order_list || result.orderList || result.orders || result.data || [];
-    }
-
     // --- 2. Fetch shipped orders to detect externally shipped ones ---
-    let shippedOrderNums = [];
-    const shippedPayload = await callTemuRouter(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+    const shippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
       order_status: '2', // 2 = Shipped / Fulfilled in Temu API
       page_size: '100',
       page_no: '1'
     });
-
-    if (shippedPayload) {
-      const shippedResult = shippedPayload.result || shippedPayload.data || shippedPayload;
-      const shippedList = shippedResult.order_list || shippedResult.orderList || shippedResult.orders || shippedResult.data || [];
-      shippedOrderNums = shippedList.map(o => o.order_sn || o.orderSn || o.orderNum).filter(Boolean);
-    }
+    const shippedOrderNums = shippedList.map(o => o.order_sn || o.orderSn || o.orderNum).filter(Boolean);
 
     // --- 3. Delete from open queue what Temu already shipped externally ---
     if (shippedOrderNums.length > 0) {
