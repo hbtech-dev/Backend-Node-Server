@@ -167,7 +167,9 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
 
   if (mongoose.connection.readyState === 1 && typeof user.save === 'function') {
     await user.save();
-    await seedUserTemuOrders(user._id);
+    // Immediately sync real unshipped orders from Temu API
+    const temuSyncService = require('../services/temuSync.service');
+    await temuSyncService.syncUserTemuOrders(user);
   }
 
   res.status(200).json({
