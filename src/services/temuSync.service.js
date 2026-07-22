@@ -217,7 +217,9 @@ const syncUserTemuOrders = async (user) => {
     // Deduplicate fetched unshipped orders
     const combinedMap = new Map();
     [...unshipped1, ...unshipped2].forEach(o => {
-      const sn = o.order_sn || o.orderSn || o.parent_order_sn || o.order_id || o.orderId;
+      // Each pageItem may be wrapped in parentOrderMap
+      const inner = o.parentOrderMap || o;
+      const sn = inner.parentOrderSn || inner.parent_order_sn || inner.orderSn || inner.order_sn || inner.orderId || inner.order_id;
       if (sn) combinedMap.set(sn, o);
     });
     const unshippedOrders = Array.from(combinedMap.values());
@@ -228,7 +230,10 @@ const syncUserTemuOrders = async (user) => {
       page_size: '100',
       page_no: '1'
     });
-    const shippedOrderNums = shippedList.map(o => o.order_sn || o.orderSn || o.orderNum).filter(Boolean);
+    const shippedOrderNums = shippedList.map(o => {
+      const inner = o.parentOrderMap || o;
+      return inner.parentOrderSn || inner.parent_order_sn || inner.orderSn || inner.order_sn;
+    }).filter(Boolean);
 
     // --- 3. Delete from open queue what Temu already shipped externally ---
     if (shippedOrderNums.length > 0) {
@@ -241,13 +246,14 @@ const syncUserTemuOrders = async (user) => {
 
     // --- 4. Upsert new unshipped orders ---
     let newCount = 0;
-    for (const orderData of unshippedOrders) {
-      const orderNum = orderData.order_sn || orderData.orderSn || orderData.orderNum;
+    for (const rawItem of unshippedOrders) {
+      const inner = rawItem.parentOrderMap || rawItem;
+      const orderNum = inner.parentOrderSn || inner.parent_order_sn || inner.orderSn || inner.order_sn;
       if (!orderNum) continue;
 
       const exists = await TemuOrder.findOne({ user: user._id, orderNum });
       if (!exists) {
-        const mapped = mapTemuOrderToModel(orderData, user._id);
+        const mapped = mapTemuOrderToModel(rawItem, user._id);
         await TemuOrder.create(mapped);
         newCount++;
 
