@@ -48,21 +48,29 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(bodyData),
-        timeout: 8000
+        timeout: 15000
       });
       if (res.ok) {
         const data = await res.json();
-        console.log(`📡 Temu API Sync (${url}):`, JSON.stringify(data).slice(0, 350));
         
         // Temu Open API uses errorCode: 1000000 / 0 / success: true to indicate success
         const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0 || Boolean(data.result) || Boolean(data.data);
         if (isOk) {
           const result = data.result || data.response || data.data || data;
-          const list = result.order_list || result.orderList || result.orders || result.order_sn_list || result.data || [];
+          
+          // Temu bg.order.list.v2.get returns { result: { totalItemNum, pageItems: [...] } }
+          const list = result.pageItems || result.page_items || result.order_list || result.orderList || result.orders || result.order_sn_list || result.data || [];
+          
           if (Array.isArray(list) && list.length > 0) {
-            console.log(`✅ Fetched ${list.length} order(s) from ${url}`);
+            console.log(`✅ Fetched ${list.length} order(s) from ${url} (totalItemNum: ${result.totalItemNum || result.total_item_num || '?'})`);
+            // Log the first item's full structure so we can map the fields correctly
+            console.log(`📦 First order item structure:`, JSON.stringify(list[0]).slice(0, 800));
             combinedOrders.push(...list);
+          } else {
+            console.log(`📡 Temu API responded OK from ${url} but 0 items in list. totalItemNum: ${result.totalItemNum || result.total_item_num || '?'}`);
           }
+        } else {
+          console.warn(`⚠️ Temu API error from ${url}: ${data.errorMsg || data.error_msg || 'unknown'} (code: ${data.errorCode || data.error_code})`);
         }
       }
     } catch (e) {
@@ -74,26 +82,39 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
 };
 
 /**
- * Map Temu API order object to our TemuOrder model fields
+ * Map Temu API order object to our TemuOrder model fields.
+ * Temu bg.order.list.v2.get returns each pageItem as:
+ *   { parentOrderMap: { parentOrderSn, orderItemList: [...], addressInfo: {...}, ... } }
  */
-const mapTemuOrderToModel = (orderData, userId) => {
-  const addr = orderData.recipient_address || orderData.recipientAddress || orderData.address_info || {};
-  const goods = (orderData.goods_list || orderData.goodsList || orderData.item_list || orderData.itemList || [{}])[0] || {};
+const mapTemuOrderToModel = (rawItem, userId) => {
+  // Unwrap parentOrderMap if present (Temu v2 format)
+  const orderData = rawItem.parentOrderMap || rawItem;
+  
+  // Extract address — Temu uses addressInfo or recipientAddress
+  const addr = orderData.addressInfo || orderData.address_info || orderData.recipient_address || orderData.recipientAddress || {};
+  
+  // Extract goods — Temu uses orderItemList with nested items
+  const itemList = orderData.orderItemList || orderData.order_item_list || orderData.goods_list || orderData.goodsList || orderData.item_list || orderData.itemList || [];
+  const firstItem = itemList[0] || {};
+  // Inside each orderItem there may be a nested goodsList
+  const goods = (firstItem.goodsList || firstItem.goods_list || [firstItem])[0] || firstItem;
 
-  // Extract country code (PL, DE, NL, GB, GR, BG, etc.)
+  // Extract country code from address or order-level fields
   let rawCountry = (
-    addr.country_code ||
     addr.countryCode ||
+    addr.country_code ||
     addr.country ||
+    addr.countryId ||
     addr.country_id ||
-    orderData.country_code ||
     orderData.countryCode ||
+    orderData.country_code ||
     orderData.country ||
-    orderData.region_code ||
     orderData.regionCode ||
+    orderData.region_code ||
+    orderData.siteId ||
     orderData.site_id ||
     orderData.region ||
-    'PL'
+    'EU'
   ).toString().toUpperCase().trim();
 
   // Clean country code if full country name was passed
@@ -130,33 +151,34 @@ const mapTemuOrderToModel = (orderData, userId) => {
     else rawCountry = rawCountry.substring(0, 2);
   }
 
-  const orderNumber = orderData.order_sn || orderData.orderSn || orderData.parent_order_sn || orderData.parentOrderSn || orderData.order_id || orderData.orderId || orderData.orderNum || `PO-${Date.now()}`;
+  // Temu uses parentOrderSn as the main order number (e.g. PO-186-03626858276474079)
+  const orderNumber = orderData.parentOrderSn || orderData.parent_order_sn || orderData.orderSn || orderData.order_sn || orderData.orderId || orderData.order_id || orderData.orderNum || `PO-${Date.now()}`;
 
   return {
     user: userId,
     orderNum: orderNumber,
-    temuOrderId: orderData.order_id || orderData.orderId || orderData.order_sn || orderNumber,
-    name: addr.name || addr.recipient_name || orderData.buyer_name || orderData.buyerName || 'Temu Customer',
+    temuOrderId: orderData.orderId || orderData.order_id || orderData.orderSn || orderData.order_sn || orderNumber,
+    name: addr.recipientName || addr.recipient_name || addr.name || orderData.buyerName || orderData.buyer_name || 'Temu Customer',
     country: rawCountry,
-    streetName: addr.street_name || addr.streetName || addr.address1 || addr.street || '',
-    houseNumber: addr.house_number || addr.houseNumber || addr.address2 || '',
-    postcode: addr.zipcode || addr.postcode || addr.zip_code || addr.zip || '',
+    streetName: addr.streetName || addr.street_name || addr.address1 || addr.street || addr.detailAddress || '',
+    houseNumber: addr.houseNumber || addr.house_number || addr.address2 || '',
+    postcode: addr.zipCode || addr.zipcode || addr.zip_code || addr.postcode || addr.zip || '',
     cityName: addr.city || addr.cityName || addr.city_name || '',
-    address: addr.full_address || addr.fullAddress ||
-      [addr.address1 || addr.street, addr.address2, addr.city, addr.zipcode || addr.postcode, rawCountry].filter(Boolean).join(', ') || '',
-    email: addr.email || orderData.buyer_email || '',
-    phone: addr.phone || addr.mobile || orderData.buyer_phone || '',
-    articleName: goods.goods_name || goods.goodsName || goods.goods_title || goods.article_name || orderData.goods_name || orderData.product_name || 'Temu Article',
-    sku: goods.sku_id || goods.skuId || goods.goods_id || goods.goodsId || goods.sku || '',
-    quantity: goods.goods_num || goods.goodsNum || goods.quantity || 1,
-    variation: goods.sku_spec || goods.skuSpec || goods.variation || goods.spec || 'Standard',
+    address: addr.fullAddress || addr.full_address || addr.detailAddress || addr.detail_address ||
+      [addr.streetName || addr.street_name, addr.city, addr.zipCode || addr.zipcode, rawCountry].filter(Boolean).join(', ') || '',
+    email: addr.email || orderData.buyerEmail || orderData.buyer_email || '',
+    phone: addr.phone || addr.mobile || addr.phoneNumber || addr.phone_number || orderData.buyerPhone || orderData.buyer_phone || '',
+    articleName: goods.goodsName || goods.goods_name || goods.productName || goods.product_name || goods.goodsTitle || goods.goods_title || orderData.goodsName || 'Temu Article',
+    sku: (goods.skuId || goods.sku_id || goods.goodsId || goods.goods_id || goods.sku || '').toString(),
+    quantity: goods.goodsNumber || goods.goods_number || goods.goodsNum || goods.goods_num || goods.quantity || 1,
+    variation: goods.skuSpec || goods.sku_spec || goods.variation || goods.spec || 'Standard',
     packaging: orderData.packaging || 'Small Parcel (25x18x10cm)',
-    productImage: goods.goods_img || goods.goodsImg || goods.image_url || goods.thumb_url || '',
-    price: goods.goods_price || goods.goodsPrice || orderData.payment_amount || orderData.order_amount || 0,
-    weight: orderData.weight || '0.50 kg',
-    shippingMethod: orderData.shipping_method || orderData.logistics_name || 'DHL Paket International',
-    orderDate: orderData.create_time || orderData.createTime || orderData.confirm_time
-      ? new Date(Number(orderData.create_time || orderData.createTime || orderData.confirm_time) * 1000).toLocaleDateString('de-DE')
+    productImage: goods.goodsImg || goods.goods_img || goods.thumbUrl || goods.thumb_url || goods.imageUrl || goods.image_url || '',
+    price: goods.goodsPrice || goods.goods_price || orderData.paymentAmount || orderData.payment_amount || orderData.orderAmount || orderData.order_amount || 0,
+    weight: orderData.weight || orderData.packageWeight || '0.50 kg',
+    shippingMethod: orderData.shippingMethod || orderData.shipping_method || orderData.logisticsName || orderData.logistics_name || 'DHL Paket International',
+    orderDate: orderData.createTime || orderData.create_time || orderData.confirmTime || orderData.confirm_time
+      ? new Date(Number(orderData.createTime || orderData.create_time || orderData.confirmTime || orderData.confirm_time) * 1000).toLocaleDateString('de-DE')
       : new Date().toLocaleDateString('de-DE'),
     status: 'open',
     source: 'Temu'
