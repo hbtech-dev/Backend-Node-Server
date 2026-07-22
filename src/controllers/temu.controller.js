@@ -186,18 +186,20 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, sign }),
-      signal: AbortSignal.timeout(6000)
+      signal: AbortSignal.timeout(8000)
     });
 
-    if (testRes.ok) {
-      const body = await testRes.json();
-      if (body.success === false || (body.errorCode && body.errorCode !== 0)) {
-        const errorDetail = body.errorMsg || `Error code ${body.errorCode}`;
-        return next(new AppError(`Invalid Temu credentials: ${errorDetail}`, 401));
-      }
+    if (!testRes.ok) {
+      return next(new AppError(`Temu verification failed (HTTP ${testRes.status}). Please check your credentials and server connection.`, 401));
     }
-  } catch (_err) {
-    // Timeout or network unreachable — allow saving
+
+    const body = await testRes.json();
+    if (body.success === false || (body.errorCode && body.errorCode !== 0)) {
+      const errorDetail = body.errorMsg || `Error code ${body.errorCode}`;
+      return next(new AppError(`Invalid Temu credentials: ${errorDetail}`, 401));
+    }
+  } catch (err) {
+    return next(new AppError(`Temu API verification failed: ${err.message}`, 401));
   }
 
   // ---- Save credentials ----
