@@ -137,6 +137,14 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     order.shippingMethod = 'FedEx Express International';
     order.tracking = fedexTrackingNumber;
     await order.save();
+
+    const Notification = require('../models/notification.model');
+    await Notification.create({
+      title: 'FedEx Express Label Generated',
+      message: `FedEx label & tracking (${fedexTrackingNumber}) generated for order ${order.orderNum}.`,
+      type: 'success',
+      user: user._id
+    }).catch(() => {});
   }
 
   res.status(200).json({
@@ -183,6 +191,14 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       }
     }
   }
+
+  const Notification = require('../models/notification.model');
+  await Notification.create({
+    title: 'Bulk FedEx Labels Generated',
+    message: `Successfully processed ${processedOrders.length || orderIds.length} orders via FedEx Express API.`,
+    type: 'success',
+    user: user._id
+  }).catch(() => {});
 
   res.status(200).json({
     status: 'success',
