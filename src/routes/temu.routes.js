@@ -16,4 +16,10 @@ router.post('/disconnect', auth, temuController.disconnectTemu);
 router.post('/sync-orders', auth, temuController.syncTemuOrders);
 router.get('/orders', auth, temuController.getUserTemuOrders);
 
+// Returns & Performance Fulfillment Issues Routes
+router.get('/returns', auth, temuController.getUserTemuReturns);
+router.post('/returns/:id/resolve', auth, temuController.resolveTemuReturn);
+router.get('/fulfillment-issues', auth, temuController.getUserTemuFulfillmentIssues);
+router.post('/fulfillment-issues/:id/resolve', auth, temuController.resolveTemuFulfillmentIssue);
+
 module.exports = router;
