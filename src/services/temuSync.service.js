@@ -63,8 +63,22 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
           
           if (Array.isArray(list) && list.length > 0) {
             console.log(`✅ Fetched ${list.length} order(s) from ${url} (totalItemNum: ${result.totalItemNum || result.total_item_num || '?'})`);
-            // Log the first item's full structure so we can map the fields correctly
-            console.log(`📦 First order item structure:`, JSON.stringify(list[0]).slice(0, 800));
+            // Detailed structure logging for the first item to understand Temu's field names
+            const firstItem = list[0];
+            console.log(`📦 FULL first pageItem (3000 chars):`, JSON.stringify(firstItem).slice(0, 3000));
+            console.log(`🔑 Top-level keys:`, Object.keys(firstItem));
+            const pom = firstItem.parentOrderMap;
+            if (pom) {
+              console.log(`🔑 parentOrderMap keys:`, Object.keys(pom));
+              console.log(`📋 parentOrderSn:`, pom.parentOrderSn);
+              console.log(`📋 addressInfo:`, JSON.stringify(pom.addressInfo || pom.address_info || 'NOT_FOUND').slice(0, 500));
+              const items = pom.orderItemList || pom.order_item_list || pom.goodsList || pom.goods_list || [];
+              console.log(`📋 orderItemList length:`, items.length);
+              if (items[0]) {
+                console.log(`🔑 First orderItem keys:`, Object.keys(items[0]));
+                console.log(`📋 First orderItem (500 chars):`, JSON.stringify(items[0]).slice(0, 500));
+              }
+            }
             combinedOrders.push(...list);
           } else {
             console.log(`📡 Temu API responded OK from ${url} but 0 items in list. totalItemNum: ${result.totalItemNum || result.total_item_num || '?'}`);
