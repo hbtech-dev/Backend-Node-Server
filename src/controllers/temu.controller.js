@@ -40,11 +40,6 @@ const buildFallbackProducts = (keyword) => {
 };
 
 const seedUserTemuOrders = async (userId) => {
-  const count = await TemuOrder.countDocuments({ user: userId });
-  if (count > 0) {
-    return;
-  }
-
   const sampleOrders = [
     {
       user: userId,
@@ -103,10 +98,218 @@ const seedUserTemuOrders = async (userId) => {
       status: 'open',
       orderDate: '21.07.2026',
       source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-191-16524144333432853',
+      temuOrderId: '191-16524144333432853',
+      name: 'Monica Einarsson',
+      country: 'SE',
+      streetName: 'Storgatan',
+      houseNumber: '12',
+      postcode: '11122',
+      cityName: 'Stockholm',
+      address: 'Storgatan 12, 11122 Stockholm',
+      email: 'm.einarsson@temu.com',
+      phone: '+46 8 123 4567',
+      articleName: 'Shilajit Resin Pure Himalayan 60g Jar',
+      sku: 'TM-SHI-SE-01',
+      quantity: 1,
+      variation: '60g Glass Jar',
+      packaging: 'Small Parcel (25×18×10cm)',
+      productImage: '',
+      price: 29.99,
+      weight: '0.25 kg',
+      shippingMethod: 'DHL EDER International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-191-16524144333432853',
+      barcodeData: '4012345678925',
+      status: 'open',
+      orderDate: '21.07.2026',
+      source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-096-17156251674231261',
+      temuOrderId: '096-17156251674231261',
+      name: 'Earmon Power',
+      country: 'IE',
+      streetName: 'Grafton Street',
+      houseNumber: '4',
+      postcode: 'D02 X285',
+      cityName: 'Dublin',
+      address: 'Grafton Street 4, Dublin',
+      email: 'e.power@temu.com',
+      phone: '+353 1 496 0123',
+      articleName: 'Organic Ashwagandha KSM-66 1000mg Capsules',
+      sku: 'TM-ASH-IE-02',
+      quantity: 2,
+      variation: 'Packung 2',
+      packaging: 'Small Parcel (25×18×10cm)',
+      productImage: '',
+      price: 18.50,
+      weight: '0.40 kg',
+      shippingMethod: 'DHL EDER International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-096-17156251674231261',
+      barcodeData: '4012345678932',
+      status: 'open',
+      orderDate: '21.07.2026',
+      source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-032-16762013453433547',
+      temuOrderId: '032-16762013453433547',
+      name: 'Rosen Achov',
+      country: 'BG',
+      streetName: 'Vitosha Blvd',
+      houseNumber: '89',
+      postcode: '1000',
+      cityName: 'Sofia',
+      address: 'Vitosha Blvd 89, 1000 Sofia',
+      email: 'r.achov@temu.com',
+      phone: '+359 2 981 2345',
+      articleName: 'Creatine Monohydrate Powder 500g Unflavored',
+      sku: 'TM-CRE-BG-03',
+      quantity: 1,
+      variation: '500g Tub',
+      packaging: 'Medium Parcel (35×25×15cm)',
+      productImage: '',
+      price: 22.90,
+      weight: '0.55 kg',
+      shippingMethod: 'DHL EDER International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-032-16762013453433547',
+      barcodeData: '4012345678949',
+      status: 'open',
+      orderDate: '21.07.2026',
+      source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-050-16625445888632185',
+      temuOrderId: '050-16625445888632185',
+      name: 'Stjepan Dukić-Hrvatić',
+      country: 'HR',
+      streetName: 'Ilica',
+      houseNumber: '150',
+      postcode: '10000',
+      cityName: 'Zagreb',
+      address: 'Ilica 150, 10000 Zagreb',
+      email: 's.dukic@temu.com',
+      phone: '+385 1 480 1122',
+      articleName: 'Vitamin D3 + K2 Complex High Potency Softgels',
+      sku: 'TM-VIT-HR-04',
+      quantity: 1,
+      variation: '120 Softgels',
+      packaging: 'Small Parcel (25×18×10cm)',
+      productImage: '',
+      price: 14.20,
+      weight: '0.20 kg',
+      shippingMethod: 'DHL EDER International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-050-16625445888632185',
+      barcodeData: '4012345678956',
+      status: 'open',
+      orderDate: '21.07.2026',
+      source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-163-16740769746553672',
+      temuOrderId: '163-16740769746553672',
+      name: 'Rui Sequeira',
+      country: 'PT',
+      streetName: 'Avenida da Liberdade',
+      houseNumber: '240',
+      postcode: '1250-142',
+      cityName: 'Lisboa',
+      address: 'Avenida da Liberdade 240, 1250-142 Lisboa',
+      email: 'r.sequeira@temu.com',
+      phone: '+351 21 321 9876',
+      articleName: 'Magnesium Glycinate 400mg High Absorption (180 Vegan Capsules)',
+      sku: 'TM-MAG-PT-05',
+      quantity: 1,
+      variation: '180 Capsules',
+      packaging: 'Small Parcel (25×18×10cm)',
+      productImage: '',
+      price: 19.80,
+      weight: '0.30 kg',
+      shippingMethod: 'DHL EDER International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-163-16740769746553672',
+      barcodeData: '4012345678963',
+      status: 'open',
+      orderDate: '21.07.2026',
+      source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-079-16612978028152387',
+      temuOrderId: '079-16612978028152387',
+      name: 'DIMITRIOS Psomas',
+      country: 'GR',
+      streetName: 'Ermou Street',
+      houseNumber: '56',
+      postcode: '10563',
+      cityName: 'Athens',
+      address: 'Ermou Street 56, 10563 Athens',
+      email: 'd.psomas@temu.com',
+      phone: '+30 210 321 4567',
+      articleName: 'Zinc Picolinate 50mg Immunity Booster (100 Tablets)',
+      sku: 'TM-ZNC-GR-06',
+      quantity: 1,
+      variation: '100 Tablets',
+      packaging: 'Small Parcel (25×18×10cm)',
+      productImage: '',
+      price: 11.90,
+      weight: '0.18 kg',
+      shippingMethod: 'DHL EDER International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-079-16612978028152387',
+      barcodeData: '4012345678970',
+      status: 'open',
+      orderDate: '21.07.2026',
+      source: 'Temu'
+    },
+    {
+      user: userId,
+      orderNum: 'PO-162-04086218168951213',
+      temuOrderId: '162-04086176225911213',
+      name: 'Ag***ik',
+      country: 'PL',
+      streetName: 'Marszałkowska',
+      houseNumber: '102',
+      postcode: '00-026',
+      cityName: 'Warszawa',
+      address: 'Marszałkowska 102, 00-026 Warszawa',
+      email: 'ag.ik@temu.com',
+      phone: '+48 22 123 4567',
+      articleName: 'Apple Cider Vinegar Gummies (60 Gummies)',
+      sku: '59043658424548',
+      quantity: 1,
+      variation: '60 Gummies',
+      packaging: 'Small Parcel (25×18×10cm)',
+      productImage: '',
+      price: 55.72,
+      weight: '0.30 kg',
+      shippingMethod: 'DHL Paket International',
+      tracking: '',
+      qrCodeData: 'https://shipstation.dhl.com/track/PO-162-04086218168951213',
+      barcodeData: '4012345678987',
+      status: 'open',
+      orderDate: '22.07.2026',
+      source: 'Temu'
     }
   ];
 
-  await TemuOrder.insertMany(sampleOrders);
+  for (const sample of sampleOrders) {
+    const exists = await TemuOrder.findOne({ user: userId, orderNum: sample.orderNum });
+    if (!exists) {
+      await TemuOrder.create({ ...sample, user: userId });
+    }
+  }
 };
 
 exports.getHealth = catchAsync(async (req, res, next) => {
@@ -328,10 +531,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    const count = await TemuOrder.countDocuments({ user: req.user.id });
-    if (count === 0) {
-      await seedUserTemuOrders(req.user.id);
-    }
+    await seedUserTemuOrders(req.user.id);
     const filter = { user: req.user.id };
     if (req.query.status) {
       filter.status = req.query.status;

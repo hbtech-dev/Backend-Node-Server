@@ -24,6 +24,20 @@ process.on('unhandledRejection', (err) => {
   });
 });
 
+process.once('SIGUSR2', () => {
+  logger.info('Nodemon restart signal received. Closing server...');
+  server.close(() => {
+    process.kill(process.pid, 'SIGUSR2');
+  });
+});
+
+process.on('SIGINT', () => {
+  logger.info('SIGINT received. Closing server...');
+  server.close(() => {
+    process.exit(0);
+  });
+});
+
 process.on('SIGTERM', () => {
   logger.info('SIGTERM RECEIVED. Shutting down gracefully');
   server.close(() => {
