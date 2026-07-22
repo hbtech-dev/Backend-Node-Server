@@ -147,75 +147,85 @@ exports.getTemuStatus = catchAsync(async (req, res, next) => {
 });
 
 exports.connectTemu = catchAsync(async (req, res, next) => {
-  const { appKey, appSecret, sellerId, shopName } = req.body;
+  const { appKey, appSecret, accessToken, sellerId, shopName } = req.body;
 
   if (!appKey || !appSecret) {
     return next(new AppError('App Key and App Secret are required to connect to Temu', 400));
   }
 
-  // --- Validate credentials against Temu Open Platform API ---
-  const crypto = require('crypto');
-  const TEMU_API_BASE = process.env.TEMU_API_BASE_URL || 'https://openapi.temu.com/openapi';
+  const cleanKey = appKey.trim();
+  const cleanSecret = appSecret.trim();
+  const cleanToken = (accessToken || '').trim();
 
-  const buildSign = (secret, params) => {
-    const sortedKeys = Object.keys(params).sort();
-    const signStr = sortedKeys.map(k => `${k}${params[k]}`).join('');
-    return crypto.createHmac('sha256', secret).update(signStr).digest('hex').toUpperCase();
+  // ---- Format validation ----
+  if (cleanKey.length < 8) {
+    return next(new AppError('Invalid App Key: must be at least 8 characters. Please check your Temu Open Platform credentials.', 400));
+  }
+  if (cleanSecret.length < 8) {
+    return next(new AppError('Invalid App Secret: must be at least 8 characters. Please check your Temu Open Platform credentials.', 400));
+  }
+
+  // ---- Attempt live Temu Open Platform Router verification ----
+  const crypto = require('crypto');
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const payload = {
+    app_key: cleanKey,
+    access_token: cleanToken,
+    timestamp: timestamp,
+    type: 'bg.order.list.v2.get'
   };
 
-  const timestamp = Math.floor(Date.now() / 1000).toString();
-  const testParams = { app_key: appKey, timestamp, method: 'bgn.shop.info.get' };
-  testParams.sign = buildSign(appSecret, testParams);
-  const queryStr = Object.entries(testParams)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('&');
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = cleanSecret + sortedKeys.map(k => k + payload[k]).join('') + cleanSecret;
+  const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-  let shopInfo = null;
-  let validationError = null;
+  const routerUrl = process.env.TEMU_ROUTER_URL || 'https://openapi-b-eu.temu.com/openapi/router';
 
   try {
-    const testRes = await fetch(`${TEMU_API_BASE}?${queryStr}`, {
-      method: 'GET',
-      headers: { 'Content-Type': 'application/json' }
+    const testRes = await fetch(routerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, sign }),
+      signal: AbortSignal.timeout(6000)
     });
-    const testBody = await testRes.json();
 
-    // Temu API returns error_code on auth failure
-    if (testBody.error_code && testBody.error_code !== '0') {
-      validationError = testBody.error_msg || testBody.message || `Temu API error: ${testBody.error_code}`;
-    } else {
-      shopInfo = testBody.result || testBody.data || null;
+    if (testRes.ok) {
+      const body = await testRes.json();
+      // If signature invalid or app_key invalid
+      if (body.errorCode && (body.errorCode === 3000010 || body.errorCode === 3000001)) {
+        return next(new AppError(`Invalid Temu credentials: ${body.errorMsg || 'App Key or App Secret is incorrect.'}`, 401));
+      }
     }
-  } catch (err) {
-    // Network error — can't reach Temu API at all
-    validationError = `Cannot reach Temu API: ${err.message}`;
+  } catch (_err) {
+    // Timeout or network unreachable — allow saving
   }
 
-  if (validationError) {
-    return next(new AppError(`Invalid Temu credentials: ${validationError}`, 401));
-  }
-
-  // --- Credentials valid — save and sync ---
+  // ---- Save credentials ----
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
 
   user.temuIntegration = {
     isConnected: true,
-    appKey,
-    appSecret,
-    sellerId: shopInfo?.seller_id || sellerId || `TEMU-SELLER-${Math.floor(100000 + Math.random() * 900000)}`,
-    shopName: shopInfo?.shop_name || shopName || 'Temu Official Store',
+    appKey: cleanKey,
+    appSecret: cleanSecret,
+    accessToken: cleanToken,
+    sellerId: sellerId || '',
+    shopName: shopName || 'Temu Store',
     lastSyncedAt: new Date()
   };
 
   if (mongoose.connection.readyState === 1 && typeof user.save === 'function') {
     await user.save();
+    // Trigger real API sync in background — won't block the response
     const temuSyncService = require('../services/temuSync.service');
-    await temuSyncService.syncUserTemuOrders(user);
+    temuSyncService.syncUserTemuOrders(user).catch(err =>
+      console.warn('Post-connect Temu sync warning:', err.message)
+    );
   }
 
   res.status(200).json({
     status: 'success',
-    message: 'Temu Seller account successfully connected and verified!',
+    message: 'Temu Seller account connected! Syncing orders in background...',
     data: {
       temuIntegration: user.temuIntegration
     }

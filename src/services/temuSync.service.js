@@ -1,8 +1,8 @@
 /**
  * Temu Real-Time Order Sync Service
- * Uses Temu Open Platform API with HMAC-SHA256 signature authentication.
- * Fetches ALL unshipped orders across ALL regions worldwide.
- * Detects orders shipped externally on Temu and removes them from our open queue.
+ * Uses Temu Open Platform API Router with MD5 signature authentication.
+ * Fetches ALL unshipped orders across ALL regions worldwide (EU, Global, US).
+ * Detects orders shipped externally on Temu and removes them from open queue.
  */
 
 const crypto = require('crypto');
@@ -13,41 +13,58 @@ const Notification = require('../models/notification.model');
 let syncInterval = null;
 
 /**
- * Build Temu Open Platform API signature (HMAC-SHA256)
+ * Call Temu Open Platform Router API
  */
-const buildTemuSignature = (appSecret, params) => {
-  const sortedKeys = Object.keys(params).sort();
-  const signStr = sortedKeys.map(k => `${k}${params[k]}`).join('');
-  return crypto.createHmac('sha256', appSecret).update(signStr).digest('hex').toUpperCase();
-};
+const callTemuRouter = async (appKey, appSecret, accessToken, type, params = {}) => {
+  const routerUrls = [
+    'https://openapi-b-eu.temu.com/openapi/router',
+    'https://openapi-b-global.temu.com/openapi/router',
+    'https://openapi-b-us.temu.com/openapi/router'
+  ];
 
-/**
- * Call a Temu Open Platform API method
- */
-const callTemuApi = async (appKey, appSecret, method, apiParams = {}) => {
-  const TEMU_API_BASE = process.env.TEMU_API_BASE_URL || 'https://openapi.temu.com/openapi';
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const params = { app_key: appKey, timestamp, method, ...apiParams };
-  params.sign = buildTemuSignature(appSecret, params);
+  const payload = {
+    app_key: appKey,
+    access_token: accessToken || '',
+    timestamp,
+    type,
+    ...params
+  };
 
-  const queryStr = Object.entries(params)
-    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-    .join('&');
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+  const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-  const response = await fetch(`${TEMU_API_BASE}?${queryStr}`, {
-    method: 'GET',
-    headers: { 'Content-Type': 'application/json' }
-  });
+  const bodyData = { ...payload, sign };
 
-  if (!response.ok) {
-    throw new Error(`Temu API HTTP ${response.status}: ${response.statusText}`);
+  for (const url of routerUrls) {
+    try {
+      const res = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(bodyData),
+        signal: AbortSignal.timeout(10000)
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success || data.result || data.data) {
+          return data;
+        }
+        // If error response, throw or log
+        if (data.errorMsg || data.errorCode) {
+          console.warn(`Temu Router response from ${url}:`, data.errorCode, data.errorMsg);
+        }
+        return data;
+      }
+    } catch (e) {
+      console.warn(`Temu router error hitting ${url}:`, e.message);
+    }
   }
-  return await response.json();
+  return null;
 };
 
 /**
  * Map Temu API order object to our TemuOrder model fields
- * Covers all real Temu Open Platform field names
  */
 const mapTemuOrderToModel = (orderData, userId) => {
   const addr = orderData.recipient_address || orderData.recipientAddress || orderData.address_info || {};
@@ -89,52 +106,50 @@ const syncUserTemuOrders = async (user) => {
 
   const appKey = user.temuIntegration.appKey;
   const appSecret = user.temuIntegration.appSecret;
+  const accessToken = user.temuIntegration.accessToken;
 
   if (!appKey || !appSecret) {
-    console.warn(`Temu sync skipped for user ${user._id}: no API credentials configured.`);
     return;
   }
 
   try {
     // --- 1. Fetch all unshipped orders (ALL countries/regions) ---
     let unshippedOrders = [];
-    try {
-      const payload = await callTemuApi(appKey, appSecret, 'bgn.order.list', {
-        order_status: 'UNSHIPPED',
-        page_size: '100',
-        page_no: '1'
-      });
+    const payload = await callTemuRouter(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+      order_status: '1', // 1 = Unshipped / Pending Fulfillment in Temu API
+      page_size: '100',
+      page_no: '1'
+    });
+
+    if (payload) {
       const result = payload.result || payload.data || payload;
       unshippedOrders = result.order_list || result.orderList || result.orders || result.data || [];
-    } catch (err) {
-      console.warn(`Temu unshipped orders fetch error for user ${user._id}:`, err.message);
     }
 
     // --- 2. Fetch shipped orders to detect externally shipped ones ---
     let shippedOrderNums = [];
-    try {
-      const shippedPayload = await callTemuApi(appKey, appSecret, 'bgn.order.list', {
-        order_status: 'SHIPPED',
-        page_size: '100',
-        page_no: '1'
-      });
+    const shippedPayload = await callTemuRouter(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+      order_status: '2', // 2 = Shipped / Fulfilled in Temu API
+      page_size: '100',
+      page_no: '1'
+    });
+
+    if (shippedPayload) {
       const shippedResult = shippedPayload.result || shippedPayload.data || shippedPayload;
       const shippedList = shippedResult.order_list || shippedResult.orderList || shippedResult.orders || shippedResult.data || [];
       shippedOrderNums = shippedList.map(o => o.order_sn || o.orderSn || o.orderNum).filter(Boolean);
-    } catch (err) {
-      console.warn(`Temu shipped orders fetch error for user ${user._id}:`, err.message);
     }
 
-    // --- 3. Delete from our open queue what Temu already shipped externally ---
+    // --- 3. Delete from open queue what Temu already shipped externally ---
     if (shippedOrderNums.length > 0) {
       await TemuOrder.deleteMany({
         user: user._id,
         orderNum: { $in: shippedOrderNums },
-        status: 'open' // Never touch created_label/printed orders
+        status: 'open'
       });
     }
 
-    // --- 4. Upsert new unshipped orders (any region) ---
+    // --- 4. Upsert new unshipped orders ---
     let newCount = 0;
     for (const orderData of unshippedOrders) {
       const orderNum = orderData.order_sn || orderData.orderSn || orderData.orderNum;
