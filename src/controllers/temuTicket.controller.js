@@ -35,27 +35,6 @@ exports.getTickets = catchAsync(async (req, res, next) => {
       filter.status = req.query.status;
     }
     tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 });
-
-    // Seed 1 active pending Information Ticket matching user screenshot if 0 tickets exist
-    if (tickets.length === 0) {
-      const seededTicket = await TemuTicket.create({
-        user: req.user.id,
-        ticketId: 'TK-162-094028471',
-        orderNum: 'PO-162-03699106217593518',
-        country: 'PL',
-        type: 'Information Ticket',
-        subject: 'Pending Information Ticket: Buyer Delivery Address & Postal Verification',
-        buyerName: 'pa***ak',
-        buyerMessage: 'Buyer requested delivery schedule verification and courier contact info.',
-        articleName: 'Apple Cider Vinegar Gummies 120 Gummies',
-        sku: '59843658408164',
-        deadline: new Date(Date.now() + 36 * 60 * 60 * 1000), // 36 hours remaining
-        status: 'pending',
-        merchantResponse: { responseText: '', trackingInfo: '' },
-        source: 'Temu'
-      });
-      tickets = [seededTicket];
-    }
   }
 
   const pendingCount = tickets.filter(t => t.status === 'pending').length;
