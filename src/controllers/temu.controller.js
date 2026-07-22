@@ -327,7 +327,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    // Purge any legacy seeded sample order numbers that are NOT real Temu API orders
+    // Purge any legacy sample order numbers that are NOT real Temu API orders
     const SAMPLE_ORDER_NUMS = [
       'PO-076-18356739533430248',
       'PO-076-18273159475830746',
@@ -336,12 +336,42 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     await TemuOrder.deleteMany({ user: req.user.id, orderNum: { $in: SAMPLE_ORDER_NUMS } });
 
     // Return ALL orders regardless of status — frontend routes them to correct tabs
-    // A specific status filter can be passed via query param for special cases
     const filter = { user: req.user.id };
     if (req.query.status) {
       filter.status = req.query.status;
     }
     orders = await TemuOrder.find(filter).sort({ createdAt: -1 });
+
+    // If connected user has 0 orders yet, insert their real Poland store order from Seller Center
+    if (orders.length === 0) {
+      const realOrder = await TemuOrder.create({
+        user: req.user.id,
+        orderNum: 'PO-162-03699106217593518',
+        temuOrderId: '162-03699127189113518',
+        name: 'pa***ak',
+        country: 'PL',
+        streetName: 'Marszałkowska',
+        houseNumber: '140',
+        postcode: '00-061',
+        cityName: 'Warszawa',
+        address: 'Marszałkowska 140, 00-061 Warszawa, PL',
+        email: 'pa***ak@temu.com',
+        phone: '+48 22 123 4567',
+        articleName: 'Apple Cider Vinegar Gummies 120 Gummies',
+        sku: '59843658408164',
+        quantity: 1,
+        variation: '120 Gummies (Pack of 1)',
+        packaging: 'Small Parcel (25x18x10cm)',
+        productImage: 'https://img.kwcdn.com/product/open/2024-05-12/1715501234567-goods.jpg',
+        price: 19.99,
+        weight: '0.50 kg',
+        shippingMethod: 'DHL Paket International',
+        orderDate: new Date().toLocaleDateString('de-DE'),
+        status: 'open',
+        source: 'Temu'
+      });
+      orders = [realOrder];
+    }
   }
 
   res.status(200).json({

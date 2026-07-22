@@ -72,23 +72,51 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
  */
 const mapTemuOrderToModel = (orderData, userId) => {
   const addr = orderData.recipient_address || orderData.recipientAddress || orderData.address_info || {};
-  const goods = (orderData.goods_list || orderData.goodsList || [{}])[0] || {};
+  const goods = (orderData.goods_list || orderData.goodsList || orderData.item_list || orderData.itemList || [{}])[0] || {};
+
+  // Extract country code (PL, DE, NL, GB, GR, BG, etc.)
+  let rawCountry = (
+    addr.country_code ||
+    addr.countryCode ||
+    addr.country ||
+    addr.country_id ||
+    orderData.country_code ||
+    orderData.countryCode ||
+    orderData.country ||
+    orderData.region_code ||
+    orderData.regionCode ||
+    orderData.site_id ||
+    orderData.region ||
+    'PL'
+  ).toString().toUpperCase().trim();
+
+  // Clean country code if full country name was passed
+  if (rawCountry.length > 2) {
+    if (rawCountry.includes('POLAND') || rawCountry.includes('POLSKA')) rawCountry = 'PL';
+    else if (rawCountry.includes('GERMANY') || rawCountry.includes('DEUTSCHLAND')) rawCountry = 'DE';
+    else if (rawCountry.includes('NETHERLANDS') || rawCountry.includes('HOLLAND')) rawCountry = 'NL';
+    else if (rawCountry.includes('GREECE')) rawCountry = 'GR';
+    else if (rawCountry.includes('BULGARIA')) rawCountry = 'BG';
+    else rawCountry = rawCountry.substring(0, 2);
+  }
+
+  const orderNumber = orderData.order_sn || orderData.orderSn || orderData.parent_order_sn || orderData.parentOrderSn || orderData.order_id || orderData.orderId || orderData.orderNum || `PO-${Date.now()}`;
 
   return {
     user: userId,
-    orderNum: orderData.order_sn || orderData.orderSn || orderData.orderNum || `PO-${Date.now()}`,
-    temuOrderId: orderData.order_id || orderData.orderId || orderData.order_sn || '',
+    orderNum: orderNumber,
+    temuOrderId: orderData.order_id || orderData.orderId || orderData.order_sn || orderNumber,
     name: addr.name || addr.recipient_name || orderData.buyer_name || orderData.buyerName || 'Temu Customer',
-    country: addr.country_code || addr.countryCode || orderData.country || 'DE',
-    streetName: addr.street_name || addr.streetName || addr.address1 || '',
+    country: rawCountry,
+    streetName: addr.street_name || addr.streetName || addr.address1 || addr.street || '',
     houseNumber: addr.house_number || addr.houseNumber || addr.address2 || '',
-    postcode: addr.zipcode || addr.postcode || addr.zip_code || '',
+    postcode: addr.zipcode || addr.postcode || addr.zip_code || addr.zip || '',
     cityName: addr.city || addr.cityName || addr.city_name || '',
     address: addr.full_address || addr.fullAddress ||
-      [addr.address1, addr.address2, addr.city, addr.zipcode, addr.country_code].filter(Boolean).join(', ') || '',
+      [addr.address1 || addr.street, addr.address2, addr.city, addr.zipcode || addr.postcode, rawCountry].filter(Boolean).join(', ') || '',
     email: addr.email || orderData.buyer_email || '',
     phone: addr.phone || addr.mobile || orderData.buyer_phone || '',
-    articleName: goods.goods_name || goods.goodsName || goods.goods_title || goods.article_name || orderData.goods_name || 'Temu Item',
+    articleName: goods.goods_name || goods.goodsName || goods.goods_title || goods.article_name || orderData.goods_name || orderData.product_name || 'Temu Article',
     sku: goods.sku_id || goods.skuId || goods.goods_id || goods.goodsId || goods.sku || '',
     quantity: goods.goods_num || goods.goodsNum || goods.quantity || 1,
     variation: goods.sku_spec || goods.skuSpec || goods.variation || goods.spec || 'Standard',
@@ -97,8 +125,8 @@ const mapTemuOrderToModel = (orderData, userId) => {
     price: goods.goods_price || goods.goodsPrice || orderData.payment_amount || orderData.order_amount || 0,
     weight: orderData.weight || '0.50 kg',
     shippingMethod: orderData.shipping_method || orderData.logistics_name || 'DHL Paket International',
-    orderDate: orderData.create_time
-      ? new Date(Number(orderData.create_time) * 1000).toLocaleDateString('de-DE')
+    orderDate: orderData.create_time || orderData.createTime || orderData.confirm_time
+      ? new Date(Number(orderData.create_time || orderData.createTime || orderData.confirm_time) * 1000).toLocaleDateString('de-DE')
       : new Date().toLocaleDateString('de-DE'),
     status: 'open',
     source: 'Temu'
@@ -117,12 +145,30 @@ const syncUserTemuOrders = async (user) => {
   }
 
   try {
-    // --- 1. Fetch all unshipped orders (ALL countries/regions: EU, Global, US) ---
-    const unshippedOrders = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-      order_status: '1', // 1 = Unshipped / Pending Fulfillment in Temu API
+    const thirtyDaysAgo = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000).toString();
+
+    // --- 1. Fetch all unshipped orders across all regions (Numeric '1' and String 'UNSHIPPED') ---
+    const unshipped1 = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+      order_status: '1',
+      start_confirm_at: thirtyDaysAgo,
       page_size: '100',
       page_no: '1'
     });
+
+    const unshipped2 = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+      order_status: 'UNSHIPPED',
+      start_confirm_at: thirtyDaysAgo,
+      page_size: '100',
+      page_no: '1'
+    });
+
+    // Deduplicate fetched unshipped orders
+    const combinedMap = new Map();
+    [...unshipped1, ...unshipped2].forEach(o => {
+      const sn = o.order_sn || o.orderSn || o.parent_order_sn || o.order_id || o.orderId;
+      if (sn) combinedMap.set(sn, o);
+    });
+    const unshippedOrders = Array.from(combinedMap.values());
 
     // --- 2. Fetch shipped orders to detect externally shipped ones ---
     const shippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {

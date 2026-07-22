@@ -157,20 +157,6 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   let orders = [];
   if (mongoose.connection.readyState === 1) {
     orders = await EbayOrder.find({ user: req.user.id }).sort({ createdAt: -1 });
-  } else {
-    orders = [
-      {
-        _id: 'ebay-demo-1',
-        orderNum: 'EB-2026-940284',
-        name: 'Anna Schmidt',
-        country: 'DE',
-        address: 'Friedrichstraße 10, 10117 Berlin',
-        articleName: 'Bio Kurkuma Kapseln – High Potency',
-        shippingMethod: 'DHL Paket International',
-        status: 'open',
-        orderDate: '12.07.2026'
-      }
-    ];
   }
 
   res.status(200).json({
