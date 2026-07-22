@@ -51,10 +51,15 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
       });
       if (res.ok) {
         const data = await res.json();
-        if (data.success || data.result || data.data) {
-          const result = data.result || data.data || data;
-          const list = result.order_list || result.orderList || result.orders || result.data || [];
+        console.log(`📡 Temu API Sync (${url}):`, JSON.stringify(data).slice(0, 350));
+        
+        // Temu Open API uses errorCode: 1000000 / 0 / success: true to indicate success
+        const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0 || Boolean(data.result) || Boolean(data.data);
+        if (isOk) {
+          const result = data.result || data.response || data.data || data;
+          const list = result.order_list || result.orderList || result.orders || result.order_sn_list || result.data || [];
           if (Array.isArray(list) && list.length > 0) {
+            console.log(`✅ Fetched ${list.length} order(s) from ${url}`);
             combinedOrders.push(...list);
           }
         }
