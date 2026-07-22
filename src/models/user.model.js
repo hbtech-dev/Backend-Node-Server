@@ -107,6 +107,15 @@ const userSchema = new mongoose.Schema(
       productType: { type: String, default: 'V01PAK' },
       lastTestedAt: { type: Date, default: null }
     },
+    fedexIntegration: {
+      isConnected: { type: Boolean, default: false },
+      apiKey: { type: String, default: '' },
+      apiSecret: { type: String, default: '' },
+      accountNumber: { type: String, default: '' },
+      meterNumber: { type: String, default: '' },
+      serviceType: { type: String, default: 'INTERNATIONAL_PRIORITY' },
+      lastTestedAt: { type: Date, default: null }
+    },
     settings: {
       standardValues: {
         defWeight: { type: String, default: '0.5' },

@@ -7,6 +7,7 @@ const ebayRoutes = require('./ebay.routes');
 const invoiceRoutes = require('./invoice.routes');
 const notificationRoutes = require('./notification.routes');
 const dhlRoutes = require('./dhl.routes');
+const fedexRoutes = require('./fedex.routes');
 
 const router = express.Router();
 
@@ -18,5 +19,6 @@ router.use('/ebay', ebayRoutes);
 router.use('/invoices', invoiceRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/dhl', dhlRoutes);
+router.use('/fedex', fedexRoutes);
 
 module.exports = router;
