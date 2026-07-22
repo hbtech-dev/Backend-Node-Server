@@ -261,6 +261,8 @@ exports.disconnectTemu = catchAsync(async (req, res, next) => {
   if (mongoose.connection.readyState === 1 && typeof user.save === 'function') {
     await user.save();
     await TemuOrder.deleteMany({ user: req.user.id });
+    const TemuTicket = require('../models/temuTicket.model');
+    await TemuTicket.deleteMany({ user: req.user.id });
   }
 
   res.status(200).json({

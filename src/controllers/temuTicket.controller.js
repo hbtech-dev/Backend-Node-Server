@@ -15,6 +15,19 @@ exports.getTickets = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
+  // If Temu store is disconnected, return 0 tickets immediately
+  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        isConnected: false,
+        pendingCount: 0,
+        totalCount: 0,
+        tickets: []
+      }
+    });
+  }
+
   let tickets = [];
   if (mongoose.connection.readyState === 1) {
     const filter = { user: req.user.id };
