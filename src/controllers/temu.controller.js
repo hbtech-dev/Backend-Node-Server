@@ -261,7 +261,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    // Purge any seeded sample order numbers that are NOT real Temu API orders
+    // Purge any legacy seeded sample order numbers that are NOT real Temu API orders
     const SAMPLE_ORDER_NUMS = [
       'PO-076-18356739533430248',
       'PO-076-18273159475830746',
@@ -269,61 +269,13 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     ];
     await TemuOrder.deleteMany({ user: req.user.id, orderNum: { $in: SAMPLE_ORDER_NUMS } });
 
-    const filter = { user: req.user.id, status: 'open' };
+    // Return ALL orders regardless of status — frontend routes them to correct tabs
+    // A specific status filter can be passed via query param for special cases
+    const filter = { user: req.user.id };
     if (req.query.status) {
       filter.status = req.query.status;
     }
     orders = await TemuOrder.find(filter).sort({ createdAt: -1 });
-  } else {
-    // Offline fallback open unshipped orders matching Temu Seller Portal
-    orders = [
-      {
-        _id: 'temu-real-1',
-        orderNum: 'PO-076-18356739533430248',
-        temuOrderId: '076-18356760504950248',
-        name: 'pi***la',
-        country: 'DE',
-        streetName: 'Bahnhofstraße',
-        houseNumber: '14',
-        postcode: '10117',
-        cityName: 'Berlin',
-        address: 'Bahnhofstraße 14, 10117 Berlin',
-        email: 'pi.la@temu.com',
-        phone: '+49 171 9482019',
-        articleName: 'Apple Cider Vinegar Gummies 1200mg, Strawberry Flavor, with Vitamin C, B6, B9, B12 & Beetroot (60 Vegan Bears)',
-        sku: '12343231',
-        quantity: 1,
-        price: 9.55,
-        weight: '0.35 kg',
-        shippingMethod: 'DHL Paket International',
-        status: 'open',
-        orderDate: '21.07.2026',
-        source: 'Temu'
-      },
-      {
-        _id: 'temu-real-2',
-        orderNum: 'PO-076-18273159475830746',
-        temuOrderId: '076-18273235497590746',
-        name: 'h.***ch',
-        country: 'DE',
-        streetName: 'Friedrichstraße',
-        houseNumber: '88',
-        postcode: '80331',
-        cityName: 'München',
-        address: 'Friedrichstraße 88, 80331 München',
-        email: 'h.koch@temu.com',
-        phone: '+49 152 4892011',
-        articleName: 'Apple Cider Vinegar Gummies 1200 mg – 120 Vegan Gummies | 60 Servings | 2-Month Supply (2 Packs)',
-        sku: '67634729082075',
-        quantity: 1,
-        price: 15.76,
-        weight: '0.45 kg',
-        shippingMethod: 'DHL Paket International',
-        status: 'open',
-        orderDate: '21.07.2026',
-        source: 'Temu'
-      }
-    ];
   }
 
   res.status(200).json({

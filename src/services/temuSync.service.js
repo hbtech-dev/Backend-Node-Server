@@ -18,29 +18,55 @@ const syncUserTemuOrders = async (user) => {
     const appSecret = user.temuIntegration.appSecret;
     const baseUrl = process.env.TEMU_API_BASE_URL;
 
-    let newOrdersFetched = [];
+    let unshippedOrders = [];
+    let shippedOrderNums = [];
 
     // If live API credentials exist and base URL configured
     if (baseUrl && appKey && appSecret) {
       try {
-        const response = await fetch(`${baseUrl}/api/v1/orders/unshipped`, {
+        // Fetch unshipped orders from Temu
+        const unshippedRes = await fetch(`${baseUrl}/api/v1/orders/unshipped`, {
           headers: {
             'X-Temu-App-Key': appKey,
             'Authorization': `Bearer ${appSecret}`,
             'Content-Type': 'application/json'
           }
         });
-        if (response.ok) {
-          const payload = await response.json();
-          newOrdersFetched = payload.orders || payload.data || [];
+        if (unshippedRes.ok) {
+          const payload = await unshippedRes.json();
+          unshippedOrders = payload.orders || payload.data || [];
+        }
+
+        // Fetch shipped/fulfilled orders from Temu so we can remove them from open
+        const shippedRes = await fetch(`${baseUrl}/api/v1/orders/shipped`, {
+          headers: {
+            'X-Temu-App-Key': appKey,
+            'Authorization': `Bearer ${appSecret}`,
+            'Content-Type': 'application/json'
+          }
+        });
+        if (shippedRes.ok) {
+          const shippedPayload = await shippedRes.json();
+          const shippedList = shippedPayload.orders || shippedPayload.data || [];
+          shippedOrderNums = shippedList.map(o => o.orderNum).filter(Boolean);
         }
       } catch (err) {
         console.warn(`Temu live API poll error for user ${user._id}:`, err.message);
       }
     }
 
-    // Upsert fetched or simulated unshipped orders
-    for (const orderData of newOrdersFetched) {
+    // Remove orders from our open queue that Temu has marked as shipped externally
+    // (i.e., shipped by seller outside our portal — don't override our portal's created_label)
+    if (shippedOrderNums.length > 0) {
+      await TemuOrder.deleteMany({
+        user: user._id,
+        orderNum: { $in: shippedOrderNums },
+        status: 'open' // Only delete if still open — leave created_label/printed intact
+      });
+    }
+
+    // Upsert truly unshipped orders from Temu live API
+    for (const orderData of unshippedOrders) {
       const exists = await TemuOrder.findOne({ user: user._id, orderNum: orderData.orderNum });
       if (!exists) {
         await TemuOrder.create({
@@ -71,7 +97,7 @@ const syncUserTemuOrders = async (user) => {
         // Notify user of new unshipped order arrival from Temu
         await Notification.create({
           title: 'New Temu Order Received',
-          message: `Order ${orderData.orderNum} received from Temu store. Ready for DHL shipment.`,
+          message: `Order ${orderData.orderNum} received from Temu store. Ready for shipment.`,
           type: 'info',
           user: user._id
         });
