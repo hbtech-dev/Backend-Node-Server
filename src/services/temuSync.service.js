@@ -19,10 +19,11 @@ const httpFetch = require('../utils/httpHelper');
  * and combine orders from all regions so no country's orders are missed.
  */
 const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, params = {}) => {
+  // Your Temu app (EDER) is registered on the EU platform.
+  // Global and US endpoints return errorCode 4000000 ("application information query is abnormal")
+  // because the app only exists on EU. Only query EU to avoid noise errors.
   const routerUrls = [
-    'https://openapi-b-eu.temu.com/openapi/router',
-    'https://openapi-b-global.temu.com/openapi/router',
-    'https://openapi-b-us.temu.com/openapi/router'
+    'https://openapi-b-eu.temu.com/openapi/router'
   ];
 
   const timestamp = Math.floor(Date.now() / 1000).toString();

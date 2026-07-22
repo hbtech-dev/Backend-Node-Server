@@ -283,8 +283,7 @@ exports.syncTemuOrders = catchAsync(async (req, res, next) => {
   }
 
   if (mongoose.connection.readyState === 1) {
-    // Clear out sample open orders so only live unshipped store orders remain
-    await TemuOrder.deleteMany({ user: user._id, status: 'open' });
+    // Sync orders from Temu API — upserts new orders, does NOT delete existing ones
     const temuSyncService = require('../services/temuSync.service');
     await temuSyncService.syncUserTemuOrders(user);
     user.temuIntegration.lastSyncedAt = new Date();
@@ -329,21 +328,11 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    // Purge any legacy sample order numbers that are NOT real Temu API orders
-    const SAMPLE_ORDER_NUMS = [
-      'PO-076-18356739533430248',
-      'PO-076-18273159475830746',
-      'PO-162-04086218168951213',
-    ];
-    await TemuOrder.deleteMany({ user: req.user.id, orderNum: { $in: SAMPLE_ORDER_NUMS } });
-
     // Return ALL orders regardless of status — frontend routes them to correct tabs
     const filter = { user: req.user.id };
     if (req.query.status) {
       filter.status = req.query.status;
     }
-    orders = await TemuOrder.find(filter).sort({ createdAt: -1 });
-
     orders = await TemuOrder.find(filter).sort({ createdAt: -1 });
   }
 
