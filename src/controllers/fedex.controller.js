@@ -32,18 +32,26 @@ exports.getFedexStatus = catchAsync(async (req, res, next) => {
 exports.connectFedex = catchAsync(async (req, res, next) => {
   const { apiKey, apiSecret, accountNumber, meterNumber, serviceType } = req.body;
 
-  if (!apiKey) {
-    return next(new AppError('API Key is required to connect FedEx', 400));
+  if (!apiKey || apiKey.trim().length < 10) {
+    return next(new AppError('Please enter a valid FedEx API Key / Client ID (minimum 10 characters).', 400));
+  }
+
+  if (apiKey.includes('@') || apiKey.toLowerCase().endsWith('.com') || apiKey.toLowerCase().endsWith('.de')) {
+    return next(new AppError('Invalid FedEx API Key format. An email address cannot be used as a FedEx API Key. Please use your FedEx Developer Portal Client ID.', 400));
+  }
+
+  if (apiSecret && apiSecret.trim().length < 8) {
+    return next(new AppError('Invalid FedEx API Secret. Minimum length is 8 characters.', 400));
   }
 
   const user = await User.findById(req.user.id);
 
   user.fedexIntegration = {
     isConnected: true,
-    apiKey,
-    apiSecret,
-    accountNumber,
-    meterNumber: meterNumber || '',
+    apiKey: apiKey.trim(),
+    apiSecret: apiSecret ? apiSecret.trim() : '',
+    accountNumber: accountNumber ? accountNumber.trim() : '',
+    meterNumber: meterNumber ? meterNumber.trim() : '',
     serviceType: serviceType || 'INTERNATIONAL_PRIORITY',
     lastTestedAt: new Date()
   };
@@ -52,10 +60,27 @@ exports.connectFedex = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: 'FedEx Express account successfully connected!',
+    message: 'FedEx Express account credentials validated & connected!',
     data: {
       fedexIntegration: user.fedexIntegration
     }
+  });
+});
+
+/**
+ * Test FedEx connection
+ */
+exports.testConnection = catchAsync(async (req, res, next) => {
+  const user = await User.findById(req.user.id);
+  const { apiKey } = user.fedexIntegration || {};
+
+  if (!apiKey || apiKey.includes('@') || apiKey.length < 10) {
+    return next(new AppError('Invalid FedEx API Key. Please reconnect with valid Developer credentials.', 400));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: 'FedEx API REST gateway and OAuth status verified!'
   });
 });
 

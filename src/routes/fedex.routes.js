@@ -9,6 +9,7 @@ router.use(auth);
 router.get('/status', fedexController.getFedexStatus);
 router.post('/connect', fedexController.connectFedex);
 router.post('/disconnect', fedexController.disconnectFedex);
+router.post('/test-connection', fedexController.testConnection);
 
 // Shipment processing
 router.post('/create-shipment', fedexController.createShipment);
