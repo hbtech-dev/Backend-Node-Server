@@ -184,6 +184,7 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
   const httpFetch = require('../utils/httpHelper');
 
   try {
+    console.log(`🔍 Connecting to Temu Router: ${routerUrl} (AppKey: ${cleanKey})`);
     const testRes = await httpFetch(routerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -192,15 +193,23 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
     });
 
     if (!testRes.ok) {
+      console.warn(`❌ Temu router HTTP Error ${testRes.status}`);
       return next(new AppError(`Temu verification failed (HTTP ${testRes.status}). Please check your credentials and server connection.`, 401));
     }
 
     const body = await testRes.json();
-    if (body.success === false || (body.errorCode && body.errorCode !== 0)) {
+    console.log('📋 Temu Verification Response:', JSON.stringify(body));
+
+    // Temu Open Platform uses errorCode: 1000000 or 0 or success: true to indicate SUCCESS
+    const isSuccess = body.success === true || body.errorCode === 1000000 || body.errorCode === 0;
+    if (!isSuccess) {
       const errorDetail = body.errorMsg || `Error code ${body.errorCode}`;
+      console.warn(`❌ Temu credentials rejected: ${errorDetail}`);
       return next(new AppError(`Invalid Temu credentials: ${errorDetail}`, 401));
     }
+    console.log('✅ Temu credentials verified successfully!');
   } catch (err) {
+    console.error('💥 Temu API verification exception:', err.message);
     return next(new AppError(`Temu API verification failed: ${err.message}`, 401));
   }
 
