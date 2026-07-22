@@ -95,8 +95,32 @@ const mapTemuOrderToModel = (orderData, userId) => {
     if (rawCountry.includes('POLAND') || rawCountry.includes('POLSKA')) rawCountry = 'PL';
     else if (rawCountry.includes('GERMANY') || rawCountry.includes('DEUTSCHLAND')) rawCountry = 'DE';
     else if (rawCountry.includes('NETHERLANDS') || rawCountry.includes('HOLLAND')) rawCountry = 'NL';
+    else if (rawCountry.includes('SPAIN') || rawCountry.includes('ESPAÑA')) rawCountry = 'ES';
+    else if (rawCountry.includes('FRANCE')) rawCountry = 'FR';
+    else if (rawCountry.includes('ITALY') || rawCountry.includes('ITALIA')) rawCountry = 'IT';
+    else if (rawCountry.includes('UNITED KINGDOM') || rawCountry.includes('GREAT BRITAIN')) rawCountry = 'GB';
+    else if (rawCountry.includes('PORTUGAL')) rawCountry = 'PT';
+    else if (rawCountry.includes('SWEDEN') || rawCountry.includes('SVERIGE')) rawCountry = 'SE';
+    else if (rawCountry.includes('SWITZERLAND') || rawCountry.includes('SCHWEIZ')) rawCountry = 'CH';
     else if (rawCountry.includes('GREECE')) rawCountry = 'GR';
+    else if (rawCountry.includes('IRELAND')) rawCountry = 'IE';
+    else if (rawCountry.includes('CYPRUS')) rawCountry = 'CY';
+    else if (rawCountry.includes('CZECH')) rawCountry = 'CZ';
+    else if (rawCountry.includes('HUNGARY')) rawCountry = 'HU';
+    else if (rawCountry.includes('DENMARK') || rawCountry.includes('DANMARK')) rawCountry = 'DK';
+    else if (rawCountry.includes('ROMANIA')) rawCountry = 'RO';
     else if (rawCountry.includes('BULGARIA')) rawCountry = 'BG';
+    else if (rawCountry.includes('BELGIUM')) rawCountry = 'BE';
+    else if (rawCountry.includes('AUSTRIA') || rawCountry.includes('ÖSTERREICH')) rawCountry = 'AT';
+    else if (rawCountry.includes('FINLAND') || rawCountry.includes('SUOMI')) rawCountry = 'FI';
+    else if (rawCountry.includes('SLOVAKIA')) rawCountry = 'SK';
+    else if (rawCountry.includes('CROATIA') || rawCountry.includes('HRVATSKA')) rawCountry = 'HR';
+    else if (rawCountry.includes('SLOVENIA')) rawCountry = 'SI';
+    else if (rawCountry.includes('LITHUANIA')) rawCountry = 'LT';
+    else if (rawCountry.includes('ESTONIA')) rawCountry = 'EE';
+    else if (rawCountry.includes('LATVIA')) rawCountry = 'LV';
+    else if (rawCountry.includes('ICELAND')) rawCountry = 'IS';
+    else if (rawCountry.includes('UNITED STATES') || rawCountry.includes('AMERICA')) rawCountry = 'US';
     else rawCountry = rawCountry.substring(0, 2);
   }
 
