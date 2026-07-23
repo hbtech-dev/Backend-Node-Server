@@ -112,45 +112,65 @@ const TEMU_SITE_ID_TO_COUNTRY = {
 };
 
 /**
+ * Determine country ISO code from order metadata, siteId, regionId, or orderSn prefix
+ */
+const getCountryFromTemuOrder = (rawItem) => {
+  const parentMap = rawItem.parentOrderMap || {};
+  const firstOrder = (rawItem.orderList || [])[0] || {};
+  const addr = parentMap.addressInfo || parentMap.recipientAddress || {};
+
+  // 1. Check explicit country code in address/order
+  let rawCountry = (
+    addr.countryCode || addr.country_code || addr.country ||
+    parentMap.countryCode || parentMap.country_code || parentMap.country ||
+    firstOrder.countryCode || firstOrder.country_code
+  );
+  if (rawCountry && typeof rawCountry === 'string' && rawCountry.length === 2 && !/^\d+$/.test(rawCountry)) {
+    return rawCountry.toUpperCase();
+  }
+
+  // 2. Check order number prefix (e.g., PO-186- = ES, PO-141- = NL, PO-162- = PL, PO-076- = DE)
+  const orderSn = parentMap.parentOrderSn || firstOrder.orderSn || '';
+  if (orderSn.startsWith('PO-186-')) return 'ES';
+  if (orderSn.startsWith('PO-141-')) return 'NL';
+  if (orderSn.startsWith('PO-162-')) return 'PL';
+  if (orderSn.startsWith('PO-076-')) return 'DE';
+  if (orderSn.startsWith('PO-101-')) return 'GB';
+  if (orderSn.startsWith('PO-102-')) return 'DE';
+  if (orderSn.startsWith('PO-103-')) return 'FR';
+  if (orderSn.startsWith('PO-104-')) return 'IT';
+
+  // 3. Check siteId mapping
+  const siteId = parentMap.siteId || parentMap.site_id || firstOrder.siteId;
+  if (siteId && TEMU_SITE_ID_TO_COUNTRY[siteId]) {
+    return TEMU_SITE_ID_TO_COUNTRY[siteId];
+  }
+
+  // 4. Check orderLabel for destination country (e.g., EU_to_UK)
+  const orderLabels = firstOrder.orderLabel || parentMap.parentOrderLabel || [];
+  if (Array.isArray(orderLabels)) {
+    for (const label of orderLabels) {
+      if (label.name && label.name.includes('_to_')) {
+        const dest = label.name.split('_to_')[1];
+        if (dest && dest.length === 2) return dest.toUpperCase();
+      }
+    }
+  }
+
+  return 'DE'; // Default EU country fallback
+};
+
+/**
  * Map Temu API order object to our TemuOrder model fields.
- * 
- * REAL Temu bg.order.list.v2.get structure (from live API logs):
- * {
- *   parentOrderMap: {
- *     parentOrderSn: "PO-076-...",
- *     parentOrderStatus: 1,  // 1=unshipped, 4=shipped
- *     regionId: 76,
- *     siteId: 105,
- *     parentOrderTime: 1784656483,  // unix timestamp
- *     parentConfirmTime: 1784656574,
- *   },
- *   orderList: [
- *     {
- *       orderSn: "076-...",
- *       originalGoodsName: "Apple Cider Vinegar Gummies...",
- *       goodsName: "Жевательные конфеты...",  // translated
- *       skuId: 60685740456090,
- *       goodsId: 604336172154090,
- *       quantity: 1,
- *       originalSpecName: "Packung 1",
- *       thumbUrl: "https://img-eu.kwcdn.com/...",
- *       orderCreateTime: 1784656483,
- *       productList: [{ productSkuId, extCode, productId }]
- *     }
- *   ]
- * }
- * 
- * NOTE: Address/buyer info is NOT returned by bg.order.list.v2.get.
- *       Use bg.logistics.address.get for address data.
  */
 const mapTemuOrderToModel = (rawItem, userId) => {
   const parentMap = rawItem.parentOrderMap || {};
   const orderList = rawItem.orderList || [];
   const firstOrder = orderList[0] || {};
+  const addr = parentMap.addressInfo || parentMap.recipientAddress || rawItem.addressInfo || {};
 
-  // Country: map siteId to ISO country code
-  const siteId = parentMap.siteId || parentMap.site_id;
-  const country = TEMU_SITE_ID_TO_COUNTRY[siteId] || 'EU';
+  // Country
+  const country = getCountryFromTemuOrder(rawItem);
 
   // Order number from parentOrderMap
   const orderNumber = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || `PO-${Date.now()}`;
@@ -161,27 +181,37 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const quantity = firstOrder.quantity || firstOrder.originalOrderQuantity || 1;
   const variation = firstOrder.originalSpecName || firstOrder.spec || 'Standard';
   const thumbUrl = firstOrder.thumbUrl || firstOrder.thumb_url || '';
-  const goodsId = (firstOrder.goodsId || firstOrder.goods_id || '').toString();
+
+  // Recipient / Buyer Info
+  const name = addr.recipientName || addr.recipient_name || addr.name || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName || 'Temu Customer';
+  const streetName = addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
+  const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
+  const postcode = addr.zipCode || addr.zipcode || addr.postcode || addr.zip || '';
+  const cityName = addr.city || addr.cityName || addr.city_name || '';
+  const fullAddress = addr.fullAddress || addr.full_address || addr.detailAddress ||
+    [streetName, cityName, postcode, country].filter(Boolean).join(', ');
+  const email = addr.email || parentMap.buyerEmail || '';
+  const phone = addr.phone || addr.mobile || parentMap.buyerPhone || '';
 
   // Timestamps
   const createTime = parentMap.parentOrderTime || parentMap.parentConfirmTime || firstOrder.orderCreateTime;
   const orderDate = createTime
-    ? new Date(createTime * 1000).toLocaleDateString('de-DE')
+    ? new Date(Number(createTime) * 1000).toLocaleDateString('de-DE')
     : new Date().toLocaleDateString('de-DE');
 
   return {
     user: userId,
     orderNum: orderNumber,
     temuOrderId: firstOrder.orderSn || firstOrder.order_sn || orderNumber,
-    name: 'Temu Buyer',  // Address API needed for real buyer name
+    name,
     country,
-    streetName: '',       // Not available from bg.order.list.v2.get
-    houseNumber: '',
-    postcode: '',
-    cityName: '',
-    address: '',
-    email: '',
-    phone: '',
+    streetName,
+    houseNumber,
+    postcode,
+    cityName,
+    address: fullAddress,
+    email,
+    phone,
     articleName,
     sku,
     quantity,
@@ -209,92 +239,86 @@ const syncUserTemuOrders = async (user) => {
   }
 
   try {
-    const thirtyDaysAgo = Math.floor((Date.now() - 30 * 24 * 60 * 60 * 1000) / 1000).toString();
-
-    // --- 1. Fetch orders from Temu API ---
-    // Note: Temu API may ignore order_status filter and return ALL orders.
-    // We filter client-side by parentOrderStatus to get only unshipped ones.
-    const allOrders = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-      order_status: '1',
-      start_confirm_at: thirtyDaysAgo,
-      page_size: '100',
-      page_no: '1'
+    // --- 1. Query Temu API for UNSHIPPED orders (parent_order_status = 2: UN_SHIPPING) ---
+    // In Temu Open API bg.order.list.v2.get:
+    // parent_order_status values: 1 = PENDING, 2 = UN_SHIPPING (Awaiting shipment), 3 = CANCELED, 4 = SHIPPED, 5 = RECEIPTED, 41 = Partially shipped
+    const unshippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+      parent_order_status: 2,
+      page_number: 1,
+      page_size: 100
     });
 
-    // --- 2. Client-side filter: only keep UNSHIPPED orders (parentOrderStatus === 1) ---
-    // Temu parentOrderStatus values: 1=unshipped, 2=partially shipped, 3=awaiting collection, 4=shipped
-    const unshippedOrders = [];
-    const shippedOrderNums = [];
-    
-    for (const rawItem of allOrders) {
-      const parentMap = rawItem.parentOrderMap || {};
-      const status = parentMap.parentOrderStatus;
-      const orderSn = parentMap.parentOrderSn || '';
+    // --- 2. Also query PENDING orders (parent_order_status = 1: PENDING) ---
+    const pendingList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+      parent_order_status: 1,
+      page_number: 1,
+      page_size: 100
+    });
+
+    // --- 3. Deduplicate fetched unshipped/pending orders ---
+    const activeMap = new Map();
+    [...unshippedList, ...pendingList].forEach(rawItem => {
+      const pm = rawItem.parentOrderMap || {};
+      const ol = (rawItem.orderList || [])[0] || {};
+      const status = pm.parentOrderStatus;
       
-      if (status === 1 || status === 0) {
-        // Unshipped — keep it
-        unshippedOrders.push(rawItem);
-      } else if (status === 4 || status === 3) {
-        // Shipped — track for removal from our DB
-        if (orderSn) shippedOrderNums.push(orderSn);
+      // Keep only status 2 (UN_SHIPPING), status 1 (PENDING), or status 41 (partially shipped)
+      if (status === 2 || status === 1 || status === 41 || status === undefined) {
+        const orderSn = pm.parentOrderSn || ol.orderSn || rawItem.orderSn;
+        if (orderSn) activeMap.set(orderSn, rawItem);
       }
-    }
-
-    console.log(`📊 Temu sync: ${allOrders.length} total from API → ${unshippedOrders.length} unshipped, ${shippedOrderNums.length} shipped`);
-    
-    // Log siteId values for first few unshipped orders to help refine country mapping
-    unshippedOrders.slice(0, 5).forEach((item, i) => {
-      const pm = item.parentOrderMap || {};
-      const ol = (item.orderList || [])[0] || {};
-      console.log(`📍 Unshipped order #${i+1}: sn=${pm.parentOrderSn}, siteId=${pm.siteId}, regionId=${pm.regionId}, goods="${(ol.originalGoodsName || ol.goodsName || '').slice(0, 60)}"`);
     });
 
-    // --- 3. Delete from open queue what Temu already shipped ---
-    if (shippedOrderNums.length > 0) {
-      const deleted = await TemuOrder.deleteMany({
-        user: user._id,
-        orderNum: { $in: shippedOrderNums },
-        status: 'open'
-      });
-      if (deleted.deletedCount > 0) {
-        console.log(`🚛 Removed ${deleted.deletedCount} shipped order(s) from open queue.`);
-      }
+    const activeUnshippedOrders = Array.from(activeMap.values());
+    const validUnshippedNums = new Set(activeMap.keys());
+
+    console.log(`📊 Temu sync: ${activeUnshippedOrders.length} active unshipped/pending order(s) found on Temu API.`);
+
+    // --- 4. Purge any open order in DB that is no longer unshipped on Temu ---
+    const deletedCount = await TemuOrder.deleteMany({
+      user: user._id,
+      status: 'open',
+      orderNum: { $nin: Array.from(validUnshippedNums) }
+    });
+    if (deletedCount.deletedCount > 0) {
+      console.log(`🧹 Cleaned up ${deletedCount.deletedCount} stale/shipped open order(s) from local database.`);
     }
 
-    // --- 4. Upsert new unshipped orders + fetch address ---
+    // --- 5. Upsert active unshipped orders into MongoDB ---
     let newCount = 0;
-    for (const rawItem of unshippedOrders) {
-      const parentMap = rawItem.parentOrderMap || {};
-      const orderNum = parentMap.parentOrderSn || '';
+    for (const rawItem of activeUnshippedOrders) {
+      const pm = rawItem.parentOrderMap || {};
+      const ol = (rawItem.orderList || [])[0] || {};
+      const orderNum = pm.parentOrderSn || ol.orderSn;
       if (!orderNum) continue;
 
-      const exists = await TemuOrder.findOne({ user: user._id, orderNum });
-      if (!exists) {
-        const mapped = mapTemuOrderToModel(rawItem, user._id);
-        
-        // Try to fetch buyer address via bg.logistics.address.get
-        try {
-          const addrResult = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
-            order_sn: (rawItem.orderList || [])[0]?.orderSn || orderNum
-          });
-          if (addrResult.length > 0) {
-            const addrData = addrResult[0].parentOrderMap || addrResult[0];
-            const addr = addrData.addressInfo || addrData.address_info || addrData;
-            if (addr.recipientName || addr.recipient_name || addr.name) {
-              mapped.name = addr.recipientName || addr.recipient_name || addr.name;
-            }
-            if (addr.detailAddress || addr.detail_address || addr.fullAddress) {
-              mapped.address = addr.detailAddress || addr.detail_address || addr.fullAddress || '';
-            }
-            if (addr.zipCode || addr.zipcode) mapped.postcode = addr.zipCode || addr.zipcode;
-            if (addr.city || addr.cityName) mapped.cityName = addr.city || addr.cityName;
-            if (addr.phone || addr.mobile) mapped.phone = addr.phone || addr.mobile;
-          }
-        } catch (addrErr) {
-          // Address fetch failed — not critical, order still gets saved
-          console.warn(`Address fetch failed for ${orderNum}:`, addrErr.message);
-        }
+      const mapped = mapTemuOrderToModel(rawItem, user._id);
 
+      // Try to fetch detailed recipient address via bg.logistics.address.get if needed
+      try {
+        const addrResult = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
+          order_sn: ol.orderSn || orderNum
+        });
+        if (addrResult.length > 0) {
+          const addrData = addrResult[0].parentOrderMap || addrResult[0];
+          const addr = addrData.addressInfo || addrData.address_info || addrData;
+          if (addr.recipientName || addr.recipient_name || addr.name) {
+            mapped.name = addr.recipientName || addr.recipient_name || addr.name;
+          }
+          if (addr.detailAddress || addr.detail_address || addr.fullAddress) {
+            mapped.address = addr.detailAddress || addr.detail_address || addr.fullAddress || mapped.address;
+          }
+          if (addr.zipCode || addr.zipcode) mapped.postcode = addr.zipCode || addr.zipcode;
+          if (addr.city || addr.cityName) mapped.cityName = addr.city || addr.cityName;
+          if (addr.phone || addr.mobile) mapped.phone = addr.phone || addr.mobile;
+        }
+      } catch (addrErr) {
+        // Address fetch failed — ignore and continue
+      }
+
+      // Upsert order in database
+      const existing = await TemuOrder.findOne({ user: user._id, orderNum });
+      if (!existing) {
         await TemuOrder.create(mapped);
         newCount++;
 
@@ -304,6 +328,9 @@ const syncUserTemuOrders = async (user) => {
           type: 'info',
           user: user._id
         });
+      } else {
+        // Update existing record with fresh mapped fields
+        await TemuOrder.updateOne({ _id: existing._id }, { $set: mapped });
       }
     }
 
@@ -311,7 +338,7 @@ const syncUserTemuOrders = async (user) => {
     await user.save();
 
     if (newCount > 0) {
-      console.info(`Temu sync: ${newCount} new order(s) added for user ${user._id}.`);
+      console.info(`Temu sync: ${newCount} new unshipped order(s) added for user ${user._id}.`);
     }
   } catch (error) {
     console.error(`Error background-syncing Temu orders for user ${user._id}:`, error.message);
@@ -347,3 +374,4 @@ exports.stopTemuBackgroundSync = () => {
 };
 
 exports.syncUserTemuOrders = syncUserTemuOrders;
+
