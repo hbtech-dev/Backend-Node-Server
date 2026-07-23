@@ -90,17 +90,20 @@ const userSchema = new mongoose.Schema(
       shopName: { type: String, default: '' },
       lastSyncedAt: { type: Date, default: null }
     },
-    temuIntegrations: [
-      {
-        isConnected: { type: Boolean, default: true },
-        appKey: { type: String, default: '' },
-        appSecret: { type: String, default: '' },
-        accessToken: { type: String, default: '' },
-        sellerId: { type: String, default: '' },
-        shopName: { type: String, default: '' },
-        lastSyncedAt: { type: Date, default: null }
-      }
-    ],
+    temuIntegrations: {
+      type: [
+        {
+          isConnected: { type: Boolean, default: true },
+          appKey: { type: String, default: '' },
+          appSecret: { type: String, default: '' },
+          accessToken: { type: String, default: '' },
+          sellerId: { type: String, default: '' },
+          shopName: { type: String, default: '' },
+          lastSyncedAt: { type: Date, default: null }
+        }
+      ],
+      default: []
+    },
     ebayIntegration: {
       isConnected: { type: Boolean, default: false },
       appId: { type: String, default: '' },
