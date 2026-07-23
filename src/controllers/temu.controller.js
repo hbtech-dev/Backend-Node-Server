@@ -352,7 +352,14 @@ exports.syncTemuOrders = catchAsync(async (req, res, next) => {
     // Sync orders from Temu API — upserts new orders, does NOT delete existing ones
     const temuSyncService = require('../services/temuSync.service');
     await temuSyncService.syncUserTemuOrders(user);
-    user.temuIntegration.lastSyncedAt = new Date();
+    if (user.temuIntegration) {
+      user.temuIntegration.lastSyncedAt = new Date();
+    }
+    if (user.temuIntegrations && user.temuIntegrations.length > 0) {
+      user.temuIntegrations.forEach(i => {
+        if (i.isConnected) i.lastSyncedAt = new Date();
+      });
+    }
     if (typeof user.save === 'function') await user.save();
   }
 
