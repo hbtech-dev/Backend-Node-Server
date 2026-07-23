@@ -268,7 +268,7 @@ const syncUserTemuOrders = async (user) => {
       page_size: 100
     });
 
-    // Deduplicate and filter active unshipped/pending orders
+    // Deduplicate and filter active unshipped/pending orders returned strictly from live Temu API
     const activeMap = new Map();
     [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
       const pm = rawItem.parentOrderMap || {};
@@ -276,78 +276,13 @@ const syncUserTemuOrders = async (user) => {
       const status = pm.parentOrderStatus;
       const orderSn = pm.parentOrderSn || ol.orderSn || rawItem.orderSn;
 
-      // Keep orders that are unshipped (status 2), pending (status 1), partially shipped (status 41),
-      // or specifically match store order prefix (PO-141- / PO-186- / PO-162- / PO-076-)
+      // Keep orders that are unshipped (status 2), pending (status 1), or partially shipped (status 41)
       const isUnshippedStatus = status === 2 || status === 1 || status === 41;
-      const isStorePrefix = orderSn && (orderSn.startsWith('PO-141-') || orderSn.startsWith('PO-186-') || orderSn.startsWith('PO-162-') || orderSn.startsWith('PO-076-'));
 
-      if ((isUnshippedStatus || isStorePrefix) && status !== 4 && status !== 5 && status !== 3) {
+      if (isUnshippedStatus && status !== 4 && status !== 5 && status !== 3) {
         if (orderSn) activeMap.set(orderSn, rawItem);
       }
     });
-
-    // Ensure active unshipped store orders across all active European regions (Poland PL 🇵🇱, Netherlands NL 🇳🇱, Spain ES 🇪🇸) are always present
-    const storeSeedOrders = [
-      {
-        orderNum: 'PO-162-03699106217593518', // Poland PL
-        orderSn: '162-03699127189113518',
-        siteId: 108,
-        regionId: 162,
-        goodsId: 603536217708425,
-        skuId: 59843658408164,
-        goodsName: 'Apple Cider Vinegar Gummies 120 Gummies',
-        originalSpecName: '120 Gummies (Pack of 1)',
-        recipientName: 'pa***ak'
-      },
-      {
-        orderNum: 'PO-141-04016152320631564', // Netherlands NL
-        orderSn: '141-04016257178231564',
-        siteId: 106,
-        regionId: 141,
-        goodsId: 604300453486143,
-        skuId: 66298994281496,
-        goodsName: 'Shilajit Harz 100% Natürlich - Pack 2',
-        originalSpecName: 'Pack 2',
-        recipientName: 'ge***en'
-      },
-      {
-        orderNum: 'PO-186-03626858276474079', // Spain ES
-        orderSn: '186-03626816333434079',
-        siteId: 105,
-        regionId: 186,
-        goodsId: 60421704951108,
-        skuId: 64241704951108,
-        goodsName: 'Apple Cider Vinegar Gummies 60 Gummies',
-        originalSpecName: '60 Gummies (Pack of 1)',
-        recipientName: 'Ma***es'
-      }
-    ];
-
-    for (const seed of storeSeedOrders) {
-      if (!activeMap.has(seed.orderNum)) {
-        activeMap.set(seed.orderNum, {
-          parentOrderMap: {
-            parentOrderSn: seed.orderNum,
-            parentOrderStatus: 2,
-            siteId: seed.siteId,
-            regionId: seed.regionId,
-            parentOrderTime: Math.floor(Date.now() / 1000) - 43200
-          },
-          orderList: [
-            {
-              orderSn: seed.orderSn,
-              goodsId: seed.goodsId,
-              skuId: seed.skuId,
-              goodsName: seed.goodsName,
-              originalGoodsName: seed.goodsName,
-              originalSpecName: seed.originalSpecName,
-              quantity: 1,
-              recipientName: seed.recipientName
-            }
-          ]
-        });
-      }
-    }
 
     const activeUnshippedOrders = Array.from(activeMap.values());
     const validUnshippedNums = new Set(activeMap.keys());
