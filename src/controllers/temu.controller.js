@@ -341,7 +341,10 @@ exports.syncTemuOrders = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
 
-  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
+                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+
+  if (!isConnected) {
     return next(new AppError('Temu account is not connected. Please connect your Temu account first in Settings.', 400));
   }
 
@@ -379,7 +382,10 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     user = await User.findById(req.user.id) || req.user;
   }
   
-  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
+                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+
+  if (!isConnected) {
     return res.status(200).json({
       status: 'success',
       data: {
@@ -421,7 +427,10 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
   }
 
   // If Temu is not connected, clear sample returns and return empty list
-  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
+                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+
+  if (!isConnected) {
     if (mongoose.connection.readyState === 1) {
       // Purge legacy seeded return samples
       const SAMPLE_RETURN_IDS = ['RET-076-948201', 'RET-192-384910'];
@@ -483,7 +492,10 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   }
 
   // If Temu is not connected, clear sample issues and return empty list
-  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
+                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+
+  if (!isConnected) {
     if (mongoose.connection.readyState === 1) {
       const SAMPLE_ISSUE_IDS = ['ISS-076-102948', 'ISS-163-992019'];
       await TemuFulfillmentIssue.deleteMany({ user: req.user.id, issueId: { $in: SAMPLE_ISSUE_IDS } });

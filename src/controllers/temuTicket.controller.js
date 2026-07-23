@@ -15,8 +15,11 @@ exports.getTickets = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
+  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
+                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+
   // If Temu store is disconnected, return 0 tickets immediately
-  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
+  if (!isConnected) {
     return res.status(200).json({
       status: 'success',
       data: {
@@ -58,13 +61,16 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
-  if (!user.temuIntegration || !user.temuIntegration.isConnected) {
-    return next(new AppError('Temu account is not connected.', 400));
+  const integrations = [];
+  if (user.temuIntegrations && user.temuIntegrations.length > 0) {
+    integrations.push(...user.temuIntegrations.filter(i => i.isConnected));
+  } else if (user.temuIntegration && user.temuIntegration.isConnected) {
+    integrations.push(user.temuIntegration);
   }
 
-  const appKey = user.temuIntegration.appKey;
-  const appSecret = user.temuIntegration.appSecret;
-  const accessToken = user.temuIntegration.accessToken;
+  if (integrations.length === 0) {
+    return next(new AppError('Temu account is not connected.', 400));
+  }
 
   const routerUrls = [
     'https://openapi-b-eu.temu.com/openapi/router',
@@ -74,40 +80,48 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
 
   let fetchedTickets = [];
 
-  for (const url of routerUrls) {
-    try {
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const payload = {
-        app_key: appKey,
-        access_token: accessToken || '',
-        timestamp,
-        type: 'bg.aftersales.info.ticket.get',
-        page_size: '50',
-        page_no: '1'
-      };
+  for (const integration of integrations) {
+    const appKey = integration.appKey;
+    const appSecret = integration.appSecret;
+    const accessToken = integration.accessToken;
 
-      const sortedKeys = Object.keys(payload).sort();
-      const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
-      const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+    if (!appKey || !appSecret) continue;
 
-      const response = await httpFetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, sign }),
-        timeout: 8000
-      });
+    for (const url of routerUrls) {
+      try {
+        const timestamp = Math.floor(Date.now() / 1000).toString();
+        const payload = {
+          app_key: appKey,
+          access_token: accessToken || '',
+          timestamp,
+          type: 'bg.aftersales.info.ticket.get',
+          page_size: '50',
+          page_no: '1'
+        };
 
-      if (response.ok) {
-        const body = await response.json();
-        if (body.success || body.result || body.data) {
-          const list = body.result?.ticket_list || body.data?.ticket_list || body.ticket_list || [];
-          if (Array.isArray(list)) {
-            fetchedTickets.push(...list);
+        const sortedKeys = Object.keys(payload).sort();
+        const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+        const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+        const response = await httpFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, sign }),
+          timeout: 8000
+        });
+
+        if (response.ok) {
+          const body = await response.json();
+          if (body.success || body.result || body.data) {
+            const list = body.result?.ticket_list || body.data?.ticket_list || body.ticket_list || [];
+            if (Array.isArray(list)) {
+              fetchedTickets.push(...list);
+            }
           }
         }
+      } catch (e) {
+        console.warn(`Temu Ticket Sync call warning for store ${integration.shopName}:`, e.message);
       }
-    } catch (e) {
-      console.warn('Temu Ticket Sync call warning:', e.message);
     }
   }
 
@@ -173,12 +187,15 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
     return next(new AppError('Ticket not found.', 404));
   }
 
+  // Find corresponding store integration
+  const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+
   // Attempt POST response back to Temu Open Router if credentials present
-  if (user.temuIntegration && user.temuIntegration.isConnected) {
+  if (integration && integration.isConnected) {
     try {
-      const appKey = user.temuIntegration.appKey;
-      const appSecret = user.temuIntegration.appSecret;
-      const accessToken = user.temuIntegration.accessToken;
+      const appKey = integration.appKey;
+      const appSecret = integration.appSecret;
+      const accessToken = integration.accessToken;
       const url = 'https://openapi-b-eu.temu.com/openapi/router';
 
       const timestamp = Math.floor(Date.now() / 1000).toString();
