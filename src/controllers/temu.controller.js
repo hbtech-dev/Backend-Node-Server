@@ -141,7 +141,8 @@ exports.getTemuStatus = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      temuIntegration: user.temuIntegration || { isConnected: true, shopName: 'Temu Official Store' }
+      temuIntegration: user.temuIntegration || { isConnected: false, shopName: '' },
+      temuIntegrations: user.temuIntegrations || []
     }
   });
 });
@@ -217,7 +218,7 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
 
-  user.temuIntegration = {
+  const newIntegration = {
     isConnected: true,
     appKey: cleanKey,
     appSecret: cleanSecret,
@@ -226,6 +227,20 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
     shopName: shopName || 'Temu Store',
     lastSyncedAt: new Date()
   };
+
+  // Add/Update in temuIntegrations array
+  if (!user.temuIntegrations) {
+    user.temuIntegrations = [];
+  }
+  const existingIdx = user.temuIntegrations.findIndex(i => i.shopName === newIntegration.shopName || i.appKey === cleanKey);
+  if (existingIdx > -1) {
+    user.temuIntegrations[existingIdx] = newIntegration;
+  } else {
+    user.temuIntegrations.push(newIntegration);
+  }
+
+  // Keep single temuIntegration as fallback/backwards compatibility
+  user.temuIntegration = newIntegration;
 
   if (mongoose.connection.readyState === 1 && typeof user.save === 'function') {
     await user.save();
@@ -240,7 +255,8 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
     status: 'success',
     message: 'Temu Seller account connected! Syncing orders in background...',
     data: {
-      temuIntegration: user.temuIntegration
+      temuIntegration: user.temuIntegration,
+      temuIntegrations: user.temuIntegrations
     }
   });
 });
@@ -248,28 +264,50 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
 exports.disconnectTemu = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+  const { shopName, appKey } = req.body;
 
-  user.temuIntegration = {
-    isConnected: false,
-    appKey: '',
-    appSecret: '',
-    sellerId: '',
-    shopName: '',
-    lastSyncedAt: null
-  };
+  if (shopName || appKey) {
+    // Disconnect only the specified store integration
+    if (user.temuIntegrations) {
+      user.temuIntegrations = user.temuIntegrations.filter(
+        item => item.shopName !== shopName && item.appKey !== appKey
+      );
+    }
+    // Update fallback if it matches the disconnected store
+    if (user.temuIntegration && (user.temuIntegration.shopName === shopName || user.temuIntegration.appKey === appKey)) {
+      user.temuIntegration = (user.temuIntegrations && user.temuIntegrations.length > 0)
+        ? user.temuIntegrations[0]
+        : { isConnected: false, appKey: '', appSecret: '', sellerId: '', shopName: '', lastSyncedAt: null };
+    }
+  } else {
+    // Clear all integrations
+    user.temuIntegrations = [];
+    user.temuIntegration = {
+      isConnected: false,
+      appKey: '',
+      appSecret: '',
+      sellerId: '',
+      shopName: '',
+      lastSyncedAt: null
+    };
+
+    if (mongoose.connection.readyState === 1) {
+      await TemuOrder.deleteMany({ user: req.user.id });
+      const TemuTicket = require('../models/temuTicket.model');
+      await TemuTicket.deleteMany({ user: req.user.id });
+    }
+  }
 
   if (mongoose.connection.readyState === 1 && typeof user.save === 'function') {
     await user.save();
-    await TemuOrder.deleteMany({ user: req.user.id });
-    const TemuTicket = require('../models/temuTicket.model');
-    await TemuTicket.deleteMany({ user: req.user.id });
   }
 
   res.status(200).json({
     status: 'success',
-    message: 'Temu Seller account disconnected and orders cleared.',
+    message: 'Temu Store integration(s) updated successfully.',
     data: {
-      temuIntegration: user.temuIntegration
+      temuIntegration: user.temuIntegration,
+      temuIntegrations: user.temuIntegrations || []
     }
   });
 });

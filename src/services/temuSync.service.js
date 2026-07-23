@@ -228,154 +228,172 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 };
 
 const syncUserTemuOrders = async (user) => {
-  if (!user || !user.temuIntegration || !user.temuIntegration.isConnected) return;
+  if (!user) return;
 
-  const appKey = user.temuIntegration.appKey;
-  const appSecret = user.temuIntegration.appSecret;
-  const accessToken = user.temuIntegration.accessToken;
-
-  if (!appKey || !appSecret) {
-    return;
+  // Collect all active store integrations
+  const integrations = [];
+  if (user.temuIntegrations && user.temuIntegrations.length > 0) {
+    integrations.push(...user.temuIntegrations.filter(i => i.isConnected));
+  } else if (user.temuIntegration && user.temuIntegration.isConnected) {
+    integrations.push(user.temuIntegration);
   }
 
-  try {
-    // Pass BOTH camelCase and snake_case parameters so Temu router accepts the query regardless of version
-    // parentOrderStatus 2 = UN_SHIPPING (Awaiting shipment), 1 = PENDING, 0 = ALL
-    const unshippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-      parentOrderStatus: 2,
-      parent_order_status: 2,
-      pageNumber: 1,
-      page_number: 1,
-      pageSize: 100,
-      page_size: 100
-    });
+  if (integrations.length === 0) return;
 
-    const pendingList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-      parentOrderStatus: 1,
-      parent_order_status: 1,
-      pageNumber: 1,
-      page_number: 1,
-      pageSize: 100,
-      page_size: 100
-    });
+  console.log(`📡 Starting Temu sync for user ${user._id} across ${integrations.length} store integration(s)...`);
 
-    const allList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-      parentOrderStatus: 0,
-      parent_order_status: 0,
-      pageNumber: 1,
-      page_number: 1,
-      pageSize: 100,
-      page_size: 100
-    });
+  for (const integration of integrations) {
+    const appKey = integration.appKey;
+    const appSecret = integration.appSecret;
+    const accessToken = integration.accessToken;
+    const shopName = integration.shopName || 'Temu Store';
 
-    // Deduplicate and filter active unshipped/pending orders returned strictly from live Temu API
-    const activeMap = new Map();
-    [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
-      const pm = rawItem.parentOrderMap || {};
-      const ol = (rawItem.orderList || [])[0] || {};
-      const status = pm.parentOrderStatus;
-      const orderSn = pm.parentOrderSn || ol.orderSn || rawItem.orderSn;
+    if (!appKey || !appSecret) continue;
 
-      // Keep orders that are unshipped (status 2), pending (status 1), or partially shipped (status 41)
-      const isUnshippedStatus = status === 2 || status === 1 || status === 41;
+    try {
+      console.log(`🔄 Syncing Temu store "${shopName}"...`);
 
-      if (isUnshippedStatus && status !== 4 && status !== 5 && status !== 3) {
-        if (orderSn) activeMap.set(orderSn, rawItem);
-      }
-    });
-
-    const activeUnshippedOrders = Array.from(activeMap.values());
-
-    console.log(`📊 Temu sync: ${activeUnshippedOrders.length} active unshipped/pending order(s) found for user ${user._id}.`);
-
-    // --- 4. Purge only orders that are explicitly returned by the API as shipped/canceled ---
-    // This prevents active unshipped orders from other storefronts from disappearing if they aren't in this specific token's API response.
-    const orderNumsToPurge = [];
-    [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
-      const pm = rawItem.parentOrderMap || {};
-      const status = pm.parentOrderStatus;
-      const orderSn = pm.parentOrderSn || (rawItem.orderList || [])[0]?.orderSn;
-      
-      // Status 3 = Canceled, 4 = Shipped, 5 = Receipted (fully processed)
-      if (status === 3 || status === 4 || status === 5) {
-        if (orderSn) orderNumsToPurge.push(orderSn);
-      }
-    });
-
-    if (orderNumsToPurge.length > 0) {
-      const deletedCount = await TemuOrder.deleteMany({
-        user: user._id,
-        status: 'open',
-        orderNum: { $in: orderNumsToPurge }
+      // Pass BOTH camelCase and snake_case parameters so Temu router accepts the query regardless of version
+      // parentOrderStatus 2 = UN_SHIPPING (Awaiting shipment), 1 = PENDING, 0 = ALL
+      const unshippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+        parentOrderStatus: 2,
+        parent_order_status: 2,
+        pageNumber: 1,
+        page_number: 1,
+        pageSize: 100,
+        page_size: 100
       });
-      if (deletedCount.deletedCount > 0) {
-        console.log(`🧹 Cleaned up ${deletedCount.deletedCount} shipped/canceled open order(s) from local database.`);
-      }
-    }
 
-    // --- 5. Upsert active unshipped orders into MongoDB ---
-    let newCount = 0;
-    for (const rawItem of activeUnshippedOrders) {
-      const pm = rawItem.parentOrderMap || {};
-      const ol = (rawItem.orderList || [])[0] || {};
-      const orderNum = pm.parentOrderSn || ol.orderSn;
-      if (!orderNum) continue;
+      const pendingList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+        parentOrderStatus: 1,
+        parent_order_status: 1,
+        pageNumber: 1,
+        page_number: 1,
+        pageSize: 100,
+        page_size: 100
+      });
 
-      const mapped = mapTemuOrderToModel(rawItem, user._id);
+      const allList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+        parentOrderStatus: 0,
+        parent_order_status: 0,
+        pageNumber: 1,
+        page_number: 1,
+        pageSize: 100,
+        page_size: 100
+      });
 
-      // Try to fetch detailed recipient address via bg.logistics.address.get if available
-      try {
-        const addrResult = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
-          order_sn: ol.orderSn || orderNum
+      // Deduplicate and filter active unshipped/pending orders returned strictly from live Temu API
+      const activeMap = new Map();
+      [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
+        const pm = rawItem.parentOrderMap || {};
+        const ol = (rawItem.orderList || [])[0] || {};
+        const status = pm.parentOrderStatus;
+        const orderSn = pm.parentOrderSn || ol.orderSn || rawItem.orderSn;
+
+        // Keep orders that are unshipped (status 2), pending (status 1), or partially shipped (status 41)
+        const isUnshippedStatus = status === 2 || status === 1 || status === 41;
+
+        if (isUnshippedStatus && status !== 4 && status !== 5 && status !== 3) {
+          if (orderSn) activeMap.set(orderSn, rawItem);
+        }
+      });
+
+      const activeUnshippedOrders = Array.from(activeMap.values());
+
+      // --- Purge only orders that are explicitly returned by the API as shipped/canceled ---
+      const orderNumsToPurge = [];
+      [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
+        const pm = rawItem.parentOrderMap || {};
+        const status = pm.parentOrderStatus;
+        const orderSn = pm.parentOrderSn || (rawItem.orderList || [])[0]?.orderSn;
+        
+        // Status 3 = Canceled, 4 = Shipped, 5 = Receipted (fully processed)
+        if (status === 3 || status === 4 || status === 5) {
+          if (orderSn) orderNumsToPurge.push(orderSn);
+        }
+      });
+
+      if (orderNumsToPurge.length > 0) {
+        const deletedCount = await TemuOrder.deleteMany({
+          user: user._id,
+          status: 'open',
+          orderNum: { $in: orderNumsToPurge }
         });
-        if (addrResult.length > 0) {
-          const addrData = addrResult[0].parentOrderMap || addrResult[0];
-          const addr = addrData.addressInfo || addrData.address_info || addrData;
-          if (addr.recipientName || addr.recipient_name || addr.name) {
-            mapped.name = addr.recipientName || addr.recipient_name || addr.name;
-          }
-          if (addr.detailAddress || addr.detail_address || addr.fullAddress) {
-            mapped.address = addr.detailAddress || addr.detail_address || addr.fullAddress || mapped.address;
-          }
-          if (addr.zipCode || addr.zipcode) mapped.postcode = addr.zipCode || addr.zipcode;
-          if (addr.city || addr.cityName) mapped.cityName = addr.city || addr.cityName;
-          if (addr.phone || addr.mobile) mapped.phone = addr.phone || addr.mobile;
+        if (deletedCount.deletedCount > 0) {
+          console.log(`🧹 Cleaned up ${deletedCount.deletedCount} shipped/canceled open order(s) for store "${shopName}".`);
         }
-      } catch (addrErr) {
-        // Address fetch failed — ignore and continue
       }
 
-      // Upsert order in database
-      const existing = await TemuOrder.findOne({ user: user._id, orderNum });
-      if (!existing) {
-        await TemuOrder.create(mapped);
-        newCount++;
+      // --- Upsert active unshipped orders into MongoDB ---
+      let newCount = 0;
+      for (const rawItem of activeUnshippedOrders) {
+        const pm = rawItem.parentOrderMap || {};
+        const ol = (rawItem.orderList || [])[0] || {};
+        const orderNum = pm.parentOrderSn || ol.orderSn;
+        if (!orderNum) continue;
 
-        // Only create Notification if one doesn't already exist for this orderNum (prevents notification spam)
-        const notifExists = await Notification.findOne({ user: user._id, message: { $regex: orderNum } });
-        if (!notifExists) {
-          await Notification.create({
-            title: 'New Temu Order Received',
-            message: `Order ${orderNum} (${mapped.country}) is unshipped and ready for shipment.`,
-            type: 'info',
-            user: user._id
+        const mapped = mapTemuOrderToModel(rawItem, user._id);
+
+        // Try to fetch detailed recipient address via bg.logistics.address.get if available
+        try {
+          const addrResult = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
+            order_sn: ol.orderSn || orderNum
           });
+          if (addrResult.length > 0) {
+            const addrData = addrResult[0].parentOrderMap || addrResult[0];
+            const addr = addrData.addressInfo || addrData.address_info || addrData;
+            if (addr.recipientName || addr.recipient_name || addr.name) {
+              mapped.name = addr.recipientName || addr.recipient_name || addr.name;
+            }
+            if (addr.detailAddress || addr.detail_address || addr.fullAddress) {
+              mapped.address = addr.detailAddress || addr.detail_address || addr.fullAddress || mapped.address;
+            }
+            if (addr.zipCode || addr.zipcode) mapped.postcode = addr.zipCode || addr.zipcode;
+            if (addr.city || addr.cityName) mapped.cityName = addr.city || addr.city;
+            if (addr.phone || addr.mobile) mapped.phone = addr.phone || addr.mobile;
+          }
+        } catch (addrErr) {
+          // Address fetch failed — ignore and continue
         }
-      } else {
-        // Update existing record with fresh mapped fields
-        await TemuOrder.updateOne({ _id: existing._id }, { $set: mapped });
+
+        // Upsert order in database
+        const existing = await TemuOrder.findOne({ user: user._id, orderNum });
+        if (!existing) {
+          await TemuOrder.create(mapped);
+          newCount++;
+
+          // Only create Notification if one doesn't already exist for this orderNum (prevents notification spam)
+          const notifExists = await Notification.findOne({ user: user._id, message: { $regex: orderNum } });
+          if (!notifExists) {
+            await Notification.create({
+              title: 'New Temu Order Received',
+              message: `Order ${orderNum} (${mapped.country}) is unshipped and ready for shipment on store ${shopName}.`,
+              type: 'info',
+              user: user._id
+            });
+          }
+        } else {
+          // Update existing record with fresh mapped fields
+          await TemuOrder.updateOne({ _id: existing._id }, { $set: mapped });
+        }
       }
-    }
 
-    user.temuIntegration.lastSyncedAt = new Date();
-    await user.save();
+      // Update sync timestamp on this integration
+      integration.lastSyncedAt = new Date();
+      if (user.temuIntegration && user.temuIntegration.shopName === shopName) {
+        user.temuIntegration.lastSyncedAt = integration.lastSyncedAt;
+      }
 
-    if (newCount > 0) {
-      console.info(`Temu sync: ${newCount} new unshipped order(s) added for user ${user._id}.`);
+      if (newCount > 0) {
+        console.info(`[${shopName}] Temu sync: ${newCount} new unshipped order(s) added.`);
+      }
+    } catch (err) {
+      console.error(`Error syncing Temu store "${shopName}":`, err.message);
     }
-  } catch (error) {
-    console.error(`Error background-syncing Temu orders for user ${user._id}:`, error.message);
   }
+
+  // Save updated user integrations
+  await user.save();
 };
 
 exports.startTemuBackgroundSync = () => {
@@ -386,7 +404,13 @@ exports.startTemuBackgroundSync = () => {
     try {
       const mongoose = require('mongoose');
       if (mongoose.connection.readyState !== 1) return;
-      const connectedUsers = await User.find({ 'temuIntegration.isConnected': true });
+      const connectedUsers = await User.find({
+        $or: [
+          { 'temuIntegration.isConnected': true },
+          { 'temuIntegrations.isConnected': true },
+          { 'temuIntegrations.0': { $exists: true } }
+        ]
+      });
       for (const user of connectedUsers) {
         await syncUserTemuOrders(user);
       }
@@ -407,4 +431,3 @@ exports.stopTemuBackgroundSync = () => {
 };
 
 exports.syncUserTemuOrders = syncUserTemuOrders;
-
