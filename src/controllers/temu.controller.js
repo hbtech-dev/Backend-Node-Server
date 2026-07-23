@@ -149,22 +149,50 @@ exports.getTemuStatus = catchAsync(async (req, res, next) => {
 
 exports.connectTemu = catchAsync(async (req, res, next) => {
   const { appKey, appSecret, accessToken, sellerId, shopName } = req.body;
-
-  if (!appKey || !appSecret) {
-    return next(new AppError('App Key and App Secret are required to connect to Temu', 400));
-  }
-
-  const cleanKey = appKey.trim();
-  const cleanSecret = appSecret.trim();
   const cleanToken = (accessToken || '').trim();
 
-  // ---- Format validation ----
-  if (cleanKey.length < 8) {
-    return next(new AppError('Invalid App Key: must be at least 8 characters. Please check your Temu Open Platform credentials.', 400));
+  if (!cleanToken) {
+    return next(new AppError('Access Token is required to connect to Temu', 400));
   }
-  if (cleanSecret.length < 8) {
-    return next(new AppError('Invalid App Secret: must be at least 8 characters. Please check your Temu Open Platform credentials.', 400));
+
+  const mongoose = require('mongoose');
+  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+
+  // --- Auto-resolve developer App Key & App Secret ---
+  let cleanKey = (appKey || '').trim();
+  let cleanSecret = (appSecret || '').trim();
+
+  if (!cleanKey || !cleanSecret) {
+    // 1. Look in existing user integrations
+    const existingDev = (user.temuIntegrations || []).find(i => i.appKey && i.appSecret) || user.temuIntegration;
+    if (existingDev && existingDev.appKey && existingDev.appSecret) {
+      cleanKey = existingDev.appKey.trim();
+      cleanSecret = existingDev.appSecret.trim();
+    } else {
+      // 2. Look in environment variables
+      cleanKey = (process.env.TEMU_APP_KEY || '').trim();
+      cleanSecret = (process.env.TEMU_APP_SECRET || '').trim();
+    }
   }
+
+  // Final check - if still not found, return descriptive error
+  if (!cleanKey || !cleanSecret) {
+    return next(new AppError('Developer App Credentials not configured on server. Please provide App Key & App Secret once or set them in server environment.', 400));
+  }
+
+  // --- Auto-extract Mall/Seller ID from access token ---
+  // Temu tokens often end with or embed the 15-digit Mall ID
+  let resolvedShopName = (shopName || '').trim();
+  const mallIdMatch = cleanToken.match(/\d{10,18}/);
+  if (!resolvedShopName) {
+    if (mallIdMatch) {
+      resolvedShopName = mallIdMatch[0];
+    } else {
+      resolvedShopName = `Shop-${cleanToken.slice(-6)}`;
+    }
+  }
+
+  const resolvedSellerId = sellerId || (mallIdMatch ? mallIdMatch[0] : `seller-${cleanToken.slice(-6)}`);
 
   // ---- Attempt live Temu Open Platform Router verification ----
   const crypto = require('crypto');
@@ -185,7 +213,7 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
   const httpFetch = require('../utils/httpHelper');
 
   try {
-    console.log(`🔍 Connecting to Temu Router: ${routerUrl} (AppKey: ${cleanKey})`);
+    console.log(`🔍 Connecting to Temu Router: ${routerUrl} (AppKey: ${cleanKey}, Mall: ${resolvedShopName})`);
     const testRes = await httpFetch(routerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -215,16 +243,13 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
   }
 
   // ---- Save credentials ----
-  const mongoose = require('mongoose');
-  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
-
   const newIntegration = {
     isConnected: true,
     appKey: cleanKey,
     appSecret: cleanSecret,
     accessToken: cleanToken,
-    sellerId: sellerId || '',
-    shopName: shopName || 'Temu Store',
+    sellerId: resolvedSellerId,
+    shopName: resolvedShopName,
     lastSyncedAt: new Date()
   };
 
