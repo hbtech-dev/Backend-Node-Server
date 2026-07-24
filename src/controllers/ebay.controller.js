@@ -348,3 +348,29 @@ exports.handleEbayOAuthCallback = catchAsync(async (req, res, next) => {
   }
 });
 
+// ============================================================
+// eBay Marketplace Account Deletion / Closure Notification
+// ============================================================
+exports.handleEbayMarketplaceDeletion = catchAsync(async (req, res, next) => {
+  const crypto = require('crypto');
+  const challengeCode = req.query.challenge_code;
+  const verificationToken = process.env.EBAY_VERIFICATION_TOKEN || 'eder_shipstation_ebay_secret_2026';
+  const endpointUrl = process.env.EBAY_DELETION_ENDPOINT_URL || 'https://backend-node-server-production.up.railway.app/api/v1/ebay/marketplace-deletion';
+
+  if (challengeCode) {
+    console.log(`🔐 Received eBay Marketplace Deletion verification challenge: ${challengeCode}`);
+    const hash = crypto.createHash('sha256');
+    hash.update(challengeCode);
+    hash.update(verificationToken);
+    hash.update(endpointUrl);
+    const challengeResponse = hash.digest('hex');
+
+    res.setHeader('Content-Type', 'application/json');
+    return res.status(200).json({ challengeResponse });
+  }
+
+  // Handle POST notifications (account closure notification from eBay)
+  console.log('📩 Received eBay Account Closure Notification payload:', JSON.stringify(req.body));
+  res.status(200).json({ status: 'success', message: 'Notification received' });
+});
+

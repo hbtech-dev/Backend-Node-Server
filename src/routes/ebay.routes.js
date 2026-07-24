@@ -8,6 +8,11 @@ const router = express.Router();
 router.get('/oauth-url', auth, ebayController.getEbayOAuthUrl);
 router.get('/oauth-callback', ebayController.handleEbayOAuthCallback);
 
+// eBay Marketplace Account Deletion / Closure Notification (PUBLIC)
+router.get('/marketplace-deletion', ebayController.handleEbayMarketplaceDeletion);
+router.post('/marketplace-deletion', ebayController.handleEbayMarketplaceDeletion);
+
+
 router.get('/status', auth, ebayController.getEbayStatus);
 router.post('/connect', auth, ebayController.connectEbay);
 router.post('/disconnect', auth, ebayController.disconnectEbay);
