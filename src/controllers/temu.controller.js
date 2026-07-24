@@ -594,7 +594,7 @@ exports.getTemuOAuthUrl = catchAsync(async (req, res, next) => {
 exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
   const { code, state } = req.query;
 
-  const frontendUrl = process.env.FRONTEND_URL || 'https://ship-station-rho.vercel.app';
+  const frontendUrl = process.env.FRONTEND_URL || 'https://ederapp.de';
 
   if (!code) {
     console.warn('❌ Temu OAuth callback: no code received.', req.query);
