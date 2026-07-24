@@ -548,3 +548,171 @@ exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
     message: `Fulfillment issue resolved (${action}) and synced with Temu API!`
   });
 });
+
+// ============================================================
+// Temu OAuth 2.0 Flow — Public Commercial App Authorization
+// ============================================================
+
+/**
+ * Generate the Temu OAuth authorization URL.
+ * The frontend calls this, then redirects the user's browser to the returned URL.
+ * Temu shows a consent screen; the merchant authorizes; Temu redirects back to our callback.
+ */
+exports.getTemuOAuthUrl = catchAsync(async (req, res, next) => {
+  const appKey = process.env.TEMU_APP_KEY;
+  if (!appKey) {
+    return next(new AppError('TEMU_APP_KEY is not configured on the server.', 500));
+  }
+
+  const mongoose = require('mongoose');
+  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+
+  // The redirect URI must EXACTLY match what's registered in the Temu Partner Console
+  const redirectUri = process.env.TEMU_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/v1/temu/oauth-callback`;
+
+  // Build the Temu authorization URL
+  // state param carries user ID so we know who to associate the token with after redirect
+  const authUrl = `https://seller-eu.temu.com/open-platform/client-manage?app_key=${appKey}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${user._id}`;
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      authUrl,
+      appKey,
+      redirectUri
+    }
+  });
+});
+
+/**
+ * OAuth Callback — Temu redirects merchants here after authorization.
+ * This is a PUBLIC endpoint (no auth middleware) because the user arrives via browser redirect.
+ * The user ID is carried in the `state` query parameter.
+ * 
+ * Flow: Temu sends ?code=XXX&state=USER_ID → we exchange code for access_token → save to DB → redirect to frontend
+ */
+exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
+  const { code, state } = req.query;
+
+  const frontendUrl = process.env.FRONTEND_URL || 'https://ship-station-rho.vercel.app';
+
+  if (!code) {
+    console.warn('❌ Temu OAuth callback: no code received.', req.query);
+    return res.redirect(`${frontendUrl}/settings?temu_error=no_code_received`);
+  }
+
+  const appKey = process.env.TEMU_APP_KEY;
+  const appSecret = process.env.TEMU_APP_SECRET;
+
+  if (!appKey || !appSecret) {
+    return res.redirect(`${frontendUrl}/settings?temu_error=server_credentials_missing`);
+  }
+
+  const crypto = require('crypto');
+  const httpFetch = require('../utils/httpHelper');
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+
+  // Build token exchange request
+  const payload = {
+    app_key: appKey,
+    timestamp: timestamp,
+    type: 'bg.open.accesstoken.create',
+    code: code
+  };
+
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = appSecret + sortedKeys.map(k => k + payload[k]).join('') + appSecret;
+  const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+  const routerUrl = process.env.TEMU_ROUTER_URL || 'https://openapi-b-eu.temu.com/openapi/router';
+
+  try {
+    console.log(`🔑 Temu OAuth: Exchanging code for access token via ${routerUrl}...`);
+
+    const tokenRes = await httpFetch(routerUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, sign }),
+      timeout: 15000
+    });
+
+    const body = await tokenRes.json();
+    console.log('📋 Temu token exchange response:', JSON.stringify(body));
+
+    const isSuccess = body.success === true || body.errorCode === 1000000 || body.errorCode === 0;
+    if (!isSuccess) {
+      const errorDetail = body.errorMsg || body.error_msg || `Error code ${body.errorCode}`;
+      console.warn(`❌ Temu token exchange failed: ${errorDetail}`);
+      return res.redirect(`${frontendUrl}/settings?temu_error=${encodeURIComponent(errorDetail)}`);
+    }
+
+    // Extract access token and mall details
+    const result = body.result || body.data || {};
+    const accessToken = result.access_token || result.accessToken;
+    const mallId = result.mall_id || result.mallId || '';
+    const mallName = result.mall_name || result.mallName || '';
+
+    if (!accessToken) {
+      console.warn('❌ Temu OAuth: access_token missing from response.');
+      return res.redirect(`${frontendUrl}/settings?temu_error=no_access_token_in_response`);
+    }
+
+    console.log(`✅ Temu OAuth: Got access_token for mall ${mallId} (${mallName})`);
+
+    // Find the user via the state parameter
+    const mongoose = require('mongoose');
+    let user = null;
+    if (state && mongoose.connection.readyState === 1) {
+      user = await User.findById(state);
+    }
+
+    if (!user) {
+      console.warn(`❌ Temu OAuth: User not found for state=${state}`);
+      return res.redirect(`${frontendUrl}/settings?temu_error=user_not_found`);
+    }
+
+    // Save the new integration
+    const newIntegration = {
+      isConnected: true,
+      appKey: appKey,
+      appSecret: appSecret,
+      accessToken: accessToken,
+      sellerId: mallId.toString(),
+      shopName: mallName || `Temu-${mallId}`,
+      lastSyncedAt: new Date()
+    };
+
+    if (!user.temuIntegrations) user.temuIntegrations = [];
+
+    // Upsert by mall_id to avoid duplicates
+    const existingIdx = user.temuIntegrations.findIndex(i => i.sellerId === mallId.toString());
+    if (existingIdx > -1) {
+      user.temuIntegrations[existingIdx] = newIntegration;
+    } else {
+      user.temuIntegrations.push(newIntegration);
+    }
+
+    // Keep single temuIntegration as legacy fallback
+    user.temuIntegration = newIntegration;
+    await user.save();
+
+    console.log(`✅ Temu OAuth: Saved integration for user ${user.email}, mall ${mallId}`);
+
+    // Trigger background order sync
+    try {
+      const temuSyncService = require('../services/temuSync.service');
+      temuSyncService.syncUserTemuOrders(user).catch(err =>
+        console.warn('Post-OAuth Temu sync warning:', err.message)
+      );
+    } catch (syncErr) {
+      console.warn('Post-OAuth sync init warning:', syncErr.message);
+    }
+
+    // Redirect back to frontend settings with success
+    res.redirect(`${frontendUrl}/settings?temu_success=true&mall_name=${encodeURIComponent(mallName || mallId)}`);
+
+  } catch (err) {
+    console.error('💥 Temu OAuth callback exception:', err.message);
+    res.redirect(`${frontendUrl}/settings?temu_error=${encodeURIComponent(err.message)}`);
+  }
+});

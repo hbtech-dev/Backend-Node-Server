@@ -9,6 +9,10 @@ router.get('/products', temuController.searchProducts);
 router.get('/products/:id', temuController.getProductById);
 router.get('/categories', temuController.getCategories);
 
+// OAuth 2.0 Flow — Public Commercial App
+router.get('/oauth-url', auth, temuController.getTemuOAuthUrl);       // Frontend calls this to get redirect URL
+router.get('/oauth-callback', temuController.handleTemuOAuthCallback); // Temu redirects here (PUBLIC — no auth)
+
 // Authenticated User Temu Store & Order Routes
 router.get('/status', auth, temuController.getTemuStatus);
 router.post('/connect', auth, temuController.connectTemu);
