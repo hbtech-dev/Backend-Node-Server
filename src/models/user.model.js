@@ -110,8 +110,24 @@ const userSchema = new mongoose.Schema(
       certId: { type: String, default: '' },
       devId: { type: String, default: '' },
       userToken: { type: String, default: '' },
+      refreshToken: { type: String, default: '' },
       storeName: { type: String, default: '' },
       lastSyncedAt: { type: Date, default: null }
+    },
+    ebayIntegrations: {
+      type: [
+        {
+          isConnected: { type: Boolean, default: true },
+          appId: { type: String, default: '' },
+          certId: { type: String, default: '' },
+          devId: { type: String, default: '' },
+          userToken: { type: String, default: '' },
+          refreshToken: { type: String, default: '' },
+          storeName: { type: String, default: '' },
+          lastSyncedAt: { type: Date, default: null }
+        }
+      ],
+      default: []
     },
     dhlIntegration: {
       isConnected: { type: Boolean, default: false },
