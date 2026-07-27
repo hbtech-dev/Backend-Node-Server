@@ -12,12 +12,17 @@ router.get('/oauth-callback', ebayController.handleEbayOAuthCallback);
 router.get('/marketplace-deletion', ebayController.handleEbayMarketplaceDeletion);
 router.post('/marketplace-deletion', ebayController.handleEbayMarketplaceDeletion);
 
-
+// Status, Connect, Disconnect
 router.get('/status', auth, ebayController.getEbayStatus);
 router.post('/connect', auth, ebayController.connectEbay);
 router.post('/disconnect', auth, ebayController.disconnectEbay);
+
+// Order Sync & Retrieval
 router.post('/sync-orders', auth, ebayController.syncEbayOrders);
 router.get('/orders', auth, ebayController.getUserEbayOrders);
 
-module.exports = router;
+// Tracking Upload & Token Refresh
+router.post('/upload-tracking', auth, ebayController.uploadTracking);
+router.post('/refresh-token', auth, ebayController.refreshToken);
 
+module.exports = router;

@@ -5,6 +5,7 @@ const TemuOrder = require('../models/temuOrder.model');
 const EbayOrder = require('../models/ebayOrder.model');
 const Notification = require('../models/notification.model');
 const dhlService = require('../services/dhl.service');
+const { uploadTrackingToEbay } = require('./ebay.controller');
 
 exports.getDhlStatus = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
@@ -168,6 +169,13 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     type: 'success',
     user: user._id
   });
+
+  // Auto-upload tracking to eBay if this is an eBay order
+  if (orderType.toLowerCase() === 'ebay' && order.ebayOrderId) {
+    uploadTrackingToEbay(user, order).catch(err => {
+      console.error('⚠️ Background eBay tracking upload failed:', err.message);
+    });
+  }
 
   res.status(200).json({
     status: 'success',

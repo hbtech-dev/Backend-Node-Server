@@ -7,6 +7,14 @@ const ebayOrderSchema = new mongoose.Schema(
       ref: 'User',
       required: true
     },
+    ebayOrderId: {
+      type: String,
+      default: ''
+    },
+    lineItemId: {
+      type: String,
+      default: ''
+    },
     orderNum: {
       type: String,
       required: true
@@ -27,15 +35,67 @@ const ebayOrderSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    streetName: {
+      type: String,
+      default: ''
+    },
+    houseNumber: {
+      type: String,
+      default: ''
+    },
+    postcode: {
+      type: String,
+      default: ''
+    },
+    cityName: {
+      type: String,
+      default: ''
+    },
+    email: {
+      type: String,
+      default: ''
+    },
+    phone: {
+      type: String,
+      default: ''
+    },
     articleName: {
       type: String,
       default: ''
+    },
+    productImage: {
+      type: String,
+      default: ''
+    },
+    sku: {
+      type: String,
+      default: ''
+    },
+    quantity: {
+      type: Number,
+      default: 1
+    },
+    price: {
+      type: Number,
+      default: 0
+    },
+    weight: {
+      type: String,
+      default: '0.30 kg'
     },
     shippingMethod: {
       type: String,
       default: 'DHL Paket International'
     },
     tracking: {
+      type: String,
+      default: ''
+    },
+    qrCodeData: {
+      type: String,
+      default: ''
+    },
+    barcodeData: {
       type: String,
       default: ''
     },
@@ -55,5 +115,6 @@ const ebayOrderSchema = new mongoose.Schema(
 );
 
 ebayOrderSchema.index({ user: 1, orderNum: 1 });
+ebayOrderSchema.index({ user: 1, ebayOrderId: 1 });
 
 module.exports = mongoose.model('EbayOrder', ebayOrderSchema);
