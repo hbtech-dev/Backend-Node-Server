@@ -3,6 +3,7 @@ const AppError = require('../utils/appError');
 const User = require('../models/user.model');
 const TemuOrder = require('../models/temuOrder.model');
 const EbayOrder = require('../models/ebayOrder.model');
+const { uploadTrackingToEbay } = require('./ebay.controller');
 
 /**
  * Get FedEx connection status
@@ -145,6 +146,13 @@ exports.createShipment = catchAsync(async (req, res, next) => {
       type: 'success',
       user: user._id
     }).catch(() => {});
+
+    // Auto-upload tracking to eBay if this is an eBay order
+    if (order.ebayOrderId) {
+      uploadTrackingToEbay(user, order).catch(err => {
+        console.error('⚠️ Background eBay tracking upload (FedEx) failed:', err.message);
+      });
+    }
   }
 
   res.status(200).json({

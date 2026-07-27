@@ -241,6 +241,13 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
 
       await order.save();
       processedOrders.push(order);
+
+      // Auto-upload tracking to eBay if this is an eBay order
+      if (order.ebayOrderId) {
+        uploadTrackingToEbay(user, order).catch(err => {
+          console.error('⚠️ Background eBay tracking upload (bulk DHL) failed:', err.message);
+        });
+      }
     }
   }
 
