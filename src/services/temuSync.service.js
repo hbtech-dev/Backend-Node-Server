@@ -430,4 +430,44 @@ exports.stopTemuBackgroundSync = () => {
   }
 };
 
+const uploadTrackingToTemu = async (user, order) => {
+  if (!user || !order || !order.tracking) return;
+
+  // Find the matching integration for the Temu order
+  let integration = null;
+  if (user.temuIntegrations && user.temuIntegrations.length > 0) {
+    integration = user.temuIntegrations.find(i => i.isConnected);
+  } else if (user.temuIntegration && user.temuIntegration.isConnected) {
+    integration = user.temuIntegration;
+  }
+
+  if (!integration || !integration.appKey || !integration.appSecret) {
+    console.warn('⚠️ Cannot upload Temu tracking: No connected Temu integration found.');
+    return;
+  }
+
+  const { appKey, appSecret, accessToken } = integration;
+
+  // Temu express company IDs (approximates/standard mappings):
+  // DHL is usually 100001 or standard string, FedEx is 100002 or standard string.
+  const isDhl = order.shippingMethod && order.shippingMethod.toLowerCase().includes('dhl');
+  const expressCompanyId = isDhl ? 100001 : 100002;
+
+  console.log(`📤 Pushing tracking number ${order.tracking} to Temu for order ${order.orderNum}...`);
+
+  try {
+    const res = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.shipment.create', {
+      order_sn: order.temuOrderId || order.orderNum,
+      tracking_number: order.tracking,
+      express_company_id: expressCompanyId,
+      shipping_company_id: expressCompanyId
+    });
+    console.log(`📦 Temu tracking upload response:`, JSON.stringify(res));
+  } catch (err) {
+    console.error(`❌ Temu tracking upload failed:`, err.message);
+  }
+};
+
 exports.syncUserTemuOrders = syncUserTemuOrders;
+exports.uploadTrackingToTemu = uploadTrackingToTemu;
+

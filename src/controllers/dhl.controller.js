@@ -177,6 +177,14 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     });
   }
 
+  // Auto-upload tracking to Temu if this is a Temu order
+  if (orderType.toLowerCase() === 'temu' && order.temuOrderId) {
+    const { uploadTrackingToTemu } = require('../services/temuSync.service');
+    uploadTrackingToTemu(user, order).catch(err => {
+      console.error('⚠️ Background Temu tracking upload failed:', err.message);
+    });
+  }
+
   res.status(200).json({
     status: 'success',
     message: `DHL shipment processed successfully! Tracking: ${dhlResult.trackingNumber}`,
@@ -246,6 +254,14 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       if (order.ebayOrderId) {
         uploadTrackingToEbay(user, order).catch(err => {
           console.error('⚠️ Background eBay tracking upload (bulk DHL) failed:', err.message);
+        });
+      }
+
+      // Auto-upload tracking to Temu if this is a Temu order
+      if (order.temuOrderId) {
+        const { uploadTrackingToTemu } = require('../services/temuSync.service');
+        uploadTrackingToTemu(user, order).catch(err => {
+          console.error('⚠️ Background Temu tracking upload (bulk DHL) failed:', err.message);
         });
       }
     }

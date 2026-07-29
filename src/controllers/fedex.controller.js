@@ -153,6 +153,14 @@ exports.createShipment = catchAsync(async (req, res, next) => {
         console.error('⚠️ Background eBay tracking upload (FedEx) failed:', err.message);
       });
     }
+
+    // Auto-upload tracking to Temu if this is a Temu order
+    if (order.temuOrderId) {
+      const { uploadTrackingToTemu } = require('../services/temuSync.service');
+      uploadTrackingToTemu(user, order).catch(err => {
+        console.error('⚠️ Background Temu tracking upload (FedEx) failed:', err.message);
+      });
+    }
   }
 
   res.status(200).json({
@@ -196,6 +204,21 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
         order.tracking = fedexTrackingNumber;
         await order.save();
         processedOrders.push(order);
+
+        // Auto-upload tracking to eBay if this is an eBay order
+        if (order.ebayOrderId) {
+          uploadTrackingToEbay(user, order).catch(err => {
+            console.error('⚠️ Background eBay tracking upload (bulk FedEx) failed:', err.message);
+          });
+        }
+
+        // Auto-upload tracking to Temu if this is a Temu order
+        if (order.temuOrderId) {
+          const { uploadTrackingToTemu } = require('../services/temuSync.service');
+          uploadTrackingToTemu(user, order).catch(err => {
+            console.error('⚠️ Background Temu tracking upload (bulk FedEx) failed:', err.message);
+          });
+        }
       }
     }
   }
