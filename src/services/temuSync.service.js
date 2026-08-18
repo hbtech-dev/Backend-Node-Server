@@ -199,6 +199,16 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     ? new Date(Number(createTime) * 1000).toLocaleDateString('de-DE')
     : new Date().toLocaleDateString('de-DE');
 
+  // Parse actual order price from Temu API
+  let rawPrice = parentMap.orderAmount || parentMap.order_amount || parentMap.payAmount || parentMap.pay_amount || parentMap.totalAmount || firstOrder.goodsPrice || firstOrder.goods_price || 0;
+  let parsedPrice = Number(rawPrice) || 0;
+  if (parsedPrice > 500) {
+    parsedPrice = parsedPrice / 100;
+  }
+  if (parsedPrice <= 0) {
+    parsedPrice = 19.99;
+  }
+
   return {
     user: userId,
     orderNum: orderNumber,
@@ -218,7 +228,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     variation,
     packaging: 'Small Parcel (25x18x10cm)',
     productImage: thumbUrl,
-    price: 0,
+    price: parsedPrice,
     weight: '0.50 kg',
     shippingMethod: 'DHL Paket International',
     orderDate,
@@ -300,28 +310,32 @@ const syncUserTemuOrders = async (user) => {
 
       const activeUnshippedOrders = Array.from(activeMap.values());
 
-      // --- Purge only orders that are explicitly returned by the API as shipped/canceled ---
-      const orderNumsToPurge = [];
+      // Update orders that are shipped or canceled on Temu so they stay in DB for total earnings tracking
+      const shippedNums = [];
+      const canceledNums = [];
       [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
         const pm = rawItem.parentOrderMap || {};
         const status = pm.parentOrderStatus;
         const orderSn = pm.parentOrderSn || (rawItem.orderList || [])[0]?.orderSn;
         
-        // Status 3 = Canceled, 4 = Shipped, 5 = Receipted (fully processed)
-        if (status === 3 || status === 4 || status === 5) {
-          if (orderSn) orderNumsToPurge.push(orderSn);
+        if (status === 4 || status === 5) {
+          if (orderSn) shippedNums.push(orderSn);
+        } else if (status === 3) {
+          if (orderSn) canceledNums.push(orderSn);
         }
       });
 
-      if (orderNumsToPurge.length > 0) {
-        const deletedCount = await TemuOrder.deleteMany({
-          user: user._id,
-          status: 'open',
-          orderNum: { $in: orderNumsToPurge }
-        });
-        if (deletedCount.deletedCount > 0) {
-          console.log(`🧹 Cleaned up ${deletedCount.deletedCount} shipped/canceled open order(s) for store "${shopName}".`);
-        }
+      if (shippedNums.length > 0) {
+        await TemuOrder.updateMany(
+          { user: user._id, status: 'open', orderNum: { $in: shippedNums } },
+          { $set: { status: 'printed' } }
+        );
+      }
+      if (canceledNums.length > 0) {
+        await TemuOrder.updateMany(
+          { user: user._id, status: 'open', orderNum: { $in: canceledNums } },
+          { $set: { status: 'canceled' } }
+        );
       }
 
       // --- Upsert active unshipped orders into MongoDB ---
