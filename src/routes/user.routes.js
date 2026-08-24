@@ -37,6 +37,15 @@ router.post(
   userController.chargeCredit
 );
 
+router.post(
+  '/select-plan',
+  [
+    body('plan').isString().withMessage('Plan name is required')
+  ],
+  validate,
+  userController.selectPlan
+);
+
 router.get('/', userController.getAllUsers);
 
 router.get('/:id', userController.getUserById);

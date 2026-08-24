@@ -21,6 +21,18 @@ const invoiceSchema = new mongoose.Schema(
       type: Number,
       required: [true, 'Invoice amount is required']
     },
+    description: {
+      type: String,
+      default: 'Invoice Payment'
+    },
+    paymentMethod: {
+      type: String,
+      default: 'Stripe Card (Sandbox)'
+    },
+    stripePaymentId: {
+      type: String,
+      default: ''
+    },
     status: {
       type: String,
       enum: ['paid', 'unpaid'],

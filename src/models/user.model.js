@@ -69,8 +69,41 @@ const userSchema = new mongoose.Schema(
     },
     accountType: {
       type: String,
-      enum: ['standard', 'premium'],
-      default: 'standard'
+      enum: ['standard', 'premium', 'trial'],
+      default: 'trial'
+    },
+    subscription: {
+      plan: {
+        type: String,
+        enum: ['free', 'starter', 'basic', 'premium', 'trial'],
+        default: 'trial'
+      },
+      status: {
+        type: String,
+        enum: ['active', 'expired', 'canceled'],
+        default: 'active'
+      },
+      trialStartedAt: {
+        type: Date,
+        default: Date.now
+      },
+      trialEndsAt: {
+        type: Date,
+        default: function () {
+          return new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        }
+      },
+      labelsUsedThisMonth: {
+        type: Number,
+        default: 0
+      },
+      labelsLimit: {
+        type: Number,
+        default: 100
+      },
+      renewDate: {
+        type: Date
+      }
     },
     isActive: {
       type: Boolean,
