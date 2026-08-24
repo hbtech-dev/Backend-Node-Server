@@ -268,6 +268,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
         uploadTrackingToTemu(user, order).catch(err => {
           console.error('⚠️ Background Temu tracking upload (bulk DHL) failed:', err.message);
         });
+      }
     }
   }
 
