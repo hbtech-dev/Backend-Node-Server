@@ -2,6 +2,7 @@ const User = require('../models/user.model');
 const { generateToken, generateRefreshToken } = require('../utils/jwt');
 const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
+const emailService = require('../services/email.service');
 
 exports.register = catchAsync(async (req, res, next) => {
   const { email, password, username, fullName, companyName } = req.body;
@@ -17,6 +18,11 @@ exports.register = catchAsync(async (req, res, next) => {
     username,
     fullName,
     companyName
+  });
+
+  // Send Welcome Email
+  emailService.sendWelcomeEmail(user).catch(err => {
+    console.warn('⚠️ Welcome email sending warning:', err.message);
   });
 
   const token = generateToken(user._id);

@@ -2,6 +2,7 @@ const User = require('../models/user.model');
 const Invoice = require('../models/invoice.model');
 const Notification = require('../models/notification.model');
 const stripeService = require('../services/stripe.service');
+const emailService = require('../services/email.service');
 const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 
@@ -141,6 +142,11 @@ exports.chargeCredit = catchAsync(async (req, res, next) => {
     date: new Date()
   });
 
+  // Send Payment Receipt Email
+  emailService.sendPaymentReceiptEmail(user, invoice).catch(err => {
+    console.warn('⚠️ Payment receipt email sending warning:', err.message);
+  });
+
   // Create notification
   await Notification.create({
     title: 'Stripe Card Payment Successful',
@@ -230,6 +236,11 @@ exports.selectPlan = catchAsync(async (req, res, next) => {
       date: new Date()
     });
   }
+
+  // Send Subscription Confirmation Email
+  emailService.sendSubscriptionUpdateEmail(user, normalizedPlan, invoice).catch(err => {
+    console.warn('⚠️ Subscription email sending warning:', err.message);
+  });
 
   // Create notification
   await Notification.create({
