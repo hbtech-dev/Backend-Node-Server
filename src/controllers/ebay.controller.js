@@ -446,17 +446,7 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
     user = await User.findById(req.user.id) || req.user;
   }
 
-  const isConnected = user.ebayIntegration?.isConnected || (user.ebayIntegrations && user.ebayIntegrations.length > 0);
-
-  if (!isConnected) {
-    return res.status(200).json({
-      status: 'success',
-      data: {
-        isConnected: false,
-        orders: []
-      }
-    });
-  }
+  const isConnected = Boolean(user.ebayIntegration?.isConnected || (user.ebayIntegrations && user.ebayIntegrations.length > 0));
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
@@ -466,7 +456,7 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      isConnected: true,
+      isConnected,
       lastSyncedAt: user.ebayIntegration?.lastSyncedAt || new Date(),
       orders
     }

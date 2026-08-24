@@ -314,10 +314,10 @@ exports.disconnectTemu = catchAsync(async (req, res, next) => {
       sellerId: '',
       shopName: '',
       lastSyncedAt: null
+      /* Do NOT delete historical order records on store disconnect */
     };
 
     if (mongoose.connection.readyState === 1) {
-      await TemuOrder.deleteMany({ user: req.user.id });
       const TemuTicket = require('../models/temuTicket.model');
       await TemuTicket.deleteMany({ user: req.user.id });
     }
@@ -360,21 +360,16 @@ exports.syncTemuOrders = catchAsync(async (req, res, next) => {
         if (i.isConnected) i.lastSyncedAt = new Date();
       });
     }
-    if (typeof user.save === 'function') await user.save();
+    await user.save();
   }
 
-  const filter = { user: user._id };
-  if (req.query.status) {
-    filter.status = req.query.status;
-  }
-
-  const orders = await TemuOrder.find(filter).sort({ createdAt: -1 });
+  const orders = await TemuOrder.find({ user: req.user.id }).sort({ createdAt: -1 });
 
   res.status(200).json({
     status: 'success',
     message: 'Temu orders successfully synced!',
     data: {
-      lastSyncedAt: user.temuIntegration.lastSyncedAt,
+      lastSyncedAt: user.temuIntegration?.lastSyncedAt || new Date(),
       ordersCount: orders.length,
       orders
     }
@@ -389,22 +384,14 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     user = await User.findById(req.user.id) || req.user;
   }
   
-  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
-                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
-
-  if (!isConnected) {
-    return res.status(200).json({
-      status: 'success',
-      data: {
-        isConnected: false,
-        orders: []
-      }
-    });
-  }
+  const isConnected = Boolean(
+    (user.temuIntegration && user.temuIntegration.isConnected) || 
+    (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected))
+  );
 
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    // Return ALL orders regardless of status — frontend routes them to correct tabs
+    // Always return ALL historical orders regardless of status or connection state
     const filter = { user: req.user.id };
     if (req.query.status) {
       filter.status = req.query.status;
@@ -415,7 +402,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     data: {
-      isConnected: true,
+      isConnected,
       lastSyncedAt: user.temuIntegration?.lastSyncedAt || new Date(),
       orders
     }
