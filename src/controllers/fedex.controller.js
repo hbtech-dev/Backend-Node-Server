@@ -139,6 +139,11 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     order.tracking = fedexTrackingNumber;
     await order.save();
 
+    // Increment user subscription label usage
+    user.subscription = user.subscription || {};
+    user.subscription.labelsUsedThisMonth = (user.subscription.labelsUsedThisMonth || 0) + 1;
+    await user.save();
+
     const Notification = require('../models/notification.model');
     await Notification.create({
       title: 'FedEx Express Label Generated',

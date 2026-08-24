@@ -162,6 +162,11 @@ exports.createShipment = catchAsync(async (req, res, next) => {
 
   await order.save();
 
+  // Increment user subscription label usage
+  user.subscription = user.subscription || {};
+  user.subscription.labelsUsedThisMonth = (user.subscription.labelsUsedThisMonth || 0) + 1;
+  await user.save();
+
   // Create notification
   await Notification.create({
     title: 'DHL Label Generated',
@@ -263,8 +268,13 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
         uploadTrackingToTemu(user, order).catch(err => {
           console.error('⚠️ Background Temu tracking upload (bulk DHL) failed:', err.message);
         });
-      }
     }
+  }
+
+  if (processedOrders.length > 0) {
+    user.subscription = user.subscription || {};
+    user.subscription.labelsUsedThisMonth = (user.subscription.labelsUsedThisMonth || 0) + processedOrders.length;
+    await user.save();
   }
 
   res.status(200).json({
