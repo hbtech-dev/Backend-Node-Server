@@ -557,9 +557,9 @@ exports.getTemuOAuthUrl = catchAsync(async (req, res, next) => {
   // The redirect URI must EXACTLY match what's registered in the Temu Partner Console
   const redirectUri = process.env.TEMU_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/v1/temu/oauth-callback`;
 
-  // Build the Temu authorization URL
+  // Build the Temu authorization URL (direct authorization page)
   // state param carries user ID so we know who to associate the token with after redirect
-  const authUrl = `https://seller-eu.temu.com/open-platform/client-manage?app_key=${appKey}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${user._id}`;
+  const authUrl = `https://seller-eu.temu.com/open-platform/authorize?app_key=${appKey}&redirect_uri=${encodeURIComponent(redirectUri)}&state=${user._id}`;
 
   res.status(200).json({
     status: 'success',
