@@ -274,6 +274,43 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   };
 };
 
+/**
+ * Fetch logistics orders from bg.logistics.order.unshipped.list.get
+ * This API returns full address details including recipientName, streetName, city, zip.
+ * Returns a Map of orderSn → address object for fast lookup during sync.
+ */
+const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken) => {
+  const addrMap = new Map();
+  try {
+    const result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.unshipped.list.get', {
+      page_no: 1,
+      pageNo: 1,
+      page_size: 100,
+      pageSize: 100
+    });
+    if (result) {
+      console.log('📬 Logistics API raw result (500 chars):', JSON.stringify(result).slice(0, 500));
+      const logisticsList = result.logisticsOrderList || result.logistics_order_list ||
+        result.orderList || result.order_list || result.pageItems || result.data || [];
+      const list = Array.isArray(logisticsList) ? logisticsList :
+        (Array.isArray(result) ? result : []);
+      for (const item of list) {
+        const sn = item.orderSn || item.order_sn || item.parentOrderSn || item.parent_order_sn;
+        const addr = item.addressInfo || item.address_info || item.recipientInfo ||
+          item.shippingAddress || item.shipping_address || item;
+        if (sn && addr) addrMap.set(sn, addr);
+        // Also key by parent order sn if different
+        const psn = item.parentOrderSn || item.parent_order_sn;
+        if (psn && psn !== sn && addr) addrMap.set(psn, addr);
+      }
+      console.log(`📬 Logistics address map: ${addrMap.size} entries`);
+    }
+  } catch (e) {
+    console.warn('⚠️ bg.logistics.order.unshipped.list.get failed:', e.message);
+  }
+  return addrMap;
+};
+
 const syncUserTemuOrders = async (user) => {
   if (!user) return;
 
@@ -300,46 +337,37 @@ const syncUserTemuOrders = async (user) => {
     try {
       console.log(`🔄 Syncing Temu store "${shopName}"...`);
 
-      // Pass BOTH camelCase and snake_case parameters so Temu router accepts the query regardless of version
-      // parentOrderStatus 2 = UN_SHIPPING (Awaiting shipment), 1 = PENDING, 0 = ALL
+      // --- Step 1: Fetch logistics order list which includes full address details ---
+      const logisticsAddrMap = await fetchTemuLogisticsAddresses(appKey, appSecret, accessToken);
+
+      // --- Step 2: Fetch unshipped & pending order lists ---
+      // parentOrderStatus 2 = UN_SHIPPING, 1 = PENDING, 0 = ALL
       const unshippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-        parentOrderStatus: 2,
-        parent_order_status: 2,
-        pageNumber: 1,
-        page_number: 1,
-        pageSize: 100,
-        page_size: 100
+        parentOrderStatus: 2, parent_order_status: 2,
+        pageNumber: 1, page_number: 1,
+        pageSize: 100, page_size: 100
       });
 
       const pendingList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-        parentOrderStatus: 1,
-        parent_order_status: 1,
-        pageNumber: 1,
-        page_number: 1,
-        pageSize: 100,
-        page_size: 100
+        parentOrderStatus: 1, parent_order_status: 1,
+        pageNumber: 1, page_number: 1,
+        pageSize: 100, page_size: 100
       });
 
       const allList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
-        parentOrderStatus: 0,
-        parent_order_status: 0,
-        pageNumber: 1,
-        page_number: 1,
-        pageSize: 100,
-        page_size: 100
+        parentOrderStatus: 0, parent_order_status: 0,
+        pageNumber: 1, page_number: 1,
+        pageSize: 100, page_size: 100
       });
 
-      // Deduplicate and filter active unshipped/pending orders returned strictly from live Temu API
+      // Deduplicate and filter active unshipped/pending orders
       const activeMap = new Map();
       [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
         const pm = rawItem.parentOrderMap || {};
         const ol = (rawItem.orderList || [])[0] || {};
         const status = pm.parentOrderStatus;
         const orderSn = pm.parentOrderSn || ol.orderSn || rawItem.orderSn;
-
-        // Keep orders that are unshipped (status 2), pending (status 1), or partially shipped (status 41)
         const isUnshippedStatus = status === 2 || status === 1 || status === 41;
-
         if (isUnshippedStatus && status !== 4 && status !== 5 && status !== 3) {
           if (orderSn) activeMap.set(orderSn, rawItem);
         }
@@ -347,21 +375,16 @@ const syncUserTemuOrders = async (user) => {
 
       const activeUnshippedOrders = Array.from(activeMap.values());
 
-      // Update orders that are shipped or canceled on Temu so they stay in DB for total earnings tracking
+      // Update shipped/canceled statuses in DB (preserves history)
       const shippedNums = [];
       const canceledNums = [];
       [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
         const pm = rawItem.parentOrderMap || {};
         const status = pm.parentOrderStatus;
         const orderSn = pm.parentOrderSn || (rawItem.orderList || [])[0]?.orderSn;
-        
-        if (status === 4 || status === 5) {
-          if (orderSn) shippedNums.push(orderSn);
-        } else if (status === 3) {
-          if (orderSn) canceledNums.push(orderSn);
-        }
+        if (status === 4 || status === 5) { if (orderSn) shippedNums.push(orderSn); }
+        else if (status === 3) { if (orderSn) canceledNums.push(orderSn); }
       });
-
       if (shippedNums.length > 0) {
         await TemuOrder.updateMany(
           { user: user._id, status: 'open', orderNum: { $in: shippedNums } },
@@ -375,7 +398,7 @@ const syncUserTemuOrders = async (user) => {
         );
       }
 
-      // --- Upsert active unshipped orders into MongoDB ---
+      // --- Step 3: Upsert active unshipped orders with address enrichment ---
       let newCount = 0;
       for (const rawItem of activeUnshippedOrders) {
         const pm = rawItem.parentOrderMap || {};
@@ -385,34 +408,44 @@ const syncUserTemuOrders = async (user) => {
 
         const mapped = mapTemuOrderToModel(rawItem, user._id);
 
-        // Try to fetch detailed recipient address via bg.logistics.address.get
-        // This API returns a SINGLE object (not a list), so we use callTemuRouterRaw
-        try {
-          const addrResult = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
-            order_sn: ol.orderSn || orderNum,
-            orderSn: ol.orderSn || orderNum
-          });
-          if (addrResult) {
-            console.log(`📬 Address API raw result for ${orderNum}:`, JSON.stringify(addrResult).slice(0, 800));
-            // Response can be flat or nested: { recipientName, detailAddress, ... } or { addressInfo: { ... } }
-            const addr = addrResult.addressInfo || addrResult.address_info || addrResult.recipientInfo || addrResult;
-            const resolvedName = addr.recipientName || addr.recipient_name || addr.name || addr.buyerName;
-            const resolvedStreet = addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1;
-            const resolvedCity = addr.city || addr.cityName || addr.city_name;
-            const resolvedZip = addr.zipCode || addr.zipcode || addr.zip_code || addr.postCode;
-            const resolvedPhone = addr.phone || addr.mobile || addr.phoneNumber;
-            if (resolvedName) mapped.name = resolvedName;
-            if (resolvedStreet) mapped.streetName = resolvedStreet;
-            if (resolvedCity) mapped.cityName = resolvedCity;
-            if (resolvedZip) mapped.postcode = resolvedZip;
-            if (resolvedPhone) mapped.phone = resolvedPhone;
-            // Rebuild full address string
-            if (resolvedStreet || resolvedCity) {
-              mapped.address = [resolvedStreet, resolvedCity, resolvedZip, mapped.country].filter(Boolean).join(', ');
-            }
+        // --- Enrich with address from logistics API map ---
+        const addrData = logisticsAddrMap.get(orderNum) || logisticsAddrMap.get(ol.orderSn);
+        if (addrData) {
+          const resolvedName = addrData.recipientName || addrData.recipient_name || addrData.name || addrData.buyerName;
+          const resolvedStreet = addrData.streetName || addrData.street_name || addrData.detailAddress || addrData.detail_address || addrData.address1;
+          const resolvedCity = addrData.city || addrData.cityName || addrData.city_name;
+          const resolvedZip = addrData.zipCode || addrData.zipcode || addrData.zip_code || addrData.postCode;
+          const resolvedPhone = addrData.phone || addrData.mobile || addrData.phoneNumber;
+          if (resolvedName) { mapped.name = resolvedName; console.log(`✅ Got name for ${orderNum}: ${resolvedName}`); }
+          if (resolvedStreet) mapped.streetName = resolvedStreet;
+          if (resolvedCity) mapped.cityName = resolvedCity;
+          if (resolvedZip) mapped.postcode = resolvedZip;
+          if (resolvedPhone) mapped.phone = resolvedPhone;
+          if (resolvedStreet || resolvedCity) {
+            mapped.address = [resolvedStreet, resolvedCity, resolvedZip, mapped.country].filter(Boolean).join(', ');
           }
-        } catch (addrErr) {
-          // Address fetch failed — ignore and continue with fallback values
+        } else {
+          // Fallback: try bg.logistics.address.get for this specific order
+          try {
+            const singleAddr = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
+              order_sn: ol.orderSn || orderNum,
+              orderSn: ol.orderSn || orderNum,
+              parent_order_sn: orderNum,
+              parentOrderSn: orderNum
+            });
+            if (singleAddr) {
+              console.log(`📬 Fallback address result for ${orderNum}:`, JSON.stringify(singleAddr).slice(0, 400));
+              const addr = singleAddr.addressInfo || singleAddr.address_info || singleAddr;
+              const n = addr.recipientName || addr.recipient_name || addr.name;
+              if (n) { mapped.name = n; }
+              const s = addr.streetName || addr.street_name || addr.detailAddress;
+              if (s) mapped.streetName = s;
+              const c = addr.city || addr.cityName;
+              if (c) mapped.cityName = c;
+              const z = addr.zipCode || addr.zipcode;
+              if (z) mapped.postcode = z;
+            }
+          } catch (_) { /* silent */ }
         }
 
         // Upsert order in database
