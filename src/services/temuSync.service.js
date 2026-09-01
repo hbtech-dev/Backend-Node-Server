@@ -275,39 +275,41 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 };
 
 /**
- * Fetch logistics orders from bg.logistics.order.unshipped.list.get
- * This API returns full address details including recipientName, streetName, city, zip.
+ * Fetch logistics orders from Temu — tries multiple APIs to get address data.
  * Returns a Map of orderSn → address object for fast lookup during sync.
  */
 const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken) => {
   const addrMap = new Map();
+
+  // Try API 1: bg.logistics.order.unshipped.list.get
   try {
-    const result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.unshipped.list.get', {
-      page_no: 1,
-      pageNo: 1,
-      page_size: 100,
-      pageSize: 100
-    });
-    if (result) {
-      console.log('📬 Logistics API raw result (500 chars):', JSON.stringify(result).slice(0, 500));
-      const logisticsList = result.logisticsOrderList || result.logistics_order_list ||
-        result.orderList || result.order_list || result.pageItems || result.data || [];
-      const list = Array.isArray(logisticsList) ? logisticsList :
-        (Array.isArray(result) ? result : []);
-      for (const item of list) {
-        const sn = item.orderSn || item.order_sn || item.parentOrderSn || item.parent_order_sn;
-        const addr = item.addressInfo || item.address_info || item.recipientInfo ||
-          item.shippingAddress || item.shipping_address || item;
-        if (sn && addr) addrMap.set(sn, addr);
-        // Also key by parent order sn if different
+    const url = 'https://openapi-b-eu.temu.com/openapi/router';
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const payload = { app_key: appKey, access_token: accessToken || '', timestamp, type: 'bg.logistics.order.unshipped.list.get', page_no: 1, pageNo: 1, page_size: 20, pageSize: 20 };
+    const sortedKeys = Object.keys(payload).sort();
+    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+    const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+    const res = await httpFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, sign }), timeout: 10000 });
+    const data = await res.json();
+    console.log('📬 [Logistics API 1] Full response:', JSON.stringify(data).slice(0, 600));
+    const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
+    if (isOk && data.result) {
+      const r = data.result;
+      const list = r.logisticsOrderList || r.logistics_order_list || r.orderList || r.order_list || r.pageItems || r.data || [];
+      const arr = Array.isArray(list) ? list : (Array.isArray(r) ? r : []);
+      for (const item of arr) {
+        const sn = item.orderSn || item.order_sn || item.parentOrderSn;
+        const addr = item.addressInfo || item.address_info || item.recipientInfo || item.shippingAddress || item;
+        if (sn && addr) { addrMap.set(sn, addr); }
         const psn = item.parentOrderSn || item.parent_order_sn;
-        if (psn && psn !== sn && addr) addrMap.set(psn, addr);
+        if (psn && psn !== sn) addrMap.set(psn, addr);
       }
-      console.log(`📬 Logistics address map: ${addrMap.size} entries`);
+      console.log(`📬 [Logistics API 1] Address map: ${addrMap.size} entries`);
     }
   } catch (e) {
-    console.warn('⚠️ bg.logistics.order.unshipped.list.get failed:', e.message);
+    console.warn('⚠️ [Logistics API 1] Failed:', e.message);
   }
+
   return addrMap;
 };
 
