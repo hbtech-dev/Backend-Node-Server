@@ -96,6 +96,43 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
 };
 
 /**
+ * Call Temu Router for APIs that return a SINGLE object (not a list/array).
+ * Used for bg.logistics.address.get and similar single-record endpoints.
+ * Returns the raw result object, or null on failure.
+ */
+const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = {}) => {
+  const url = 'https://openapi-b-eu.temu.com/openapi/router';
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const payload = {
+    app_key: appKey,
+    access_token: accessToken || '',
+    timestamp,
+    type,
+    ...params
+  };
+
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+  const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+  try {
+    const res = await httpFetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...payload, sign }),
+      timeout: 10000
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0 || Boolean(data.result);
+    if (!isOk) return null;
+    return data.result || data.response || data.data || null;
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
  * Temu siteId → ISO country code mapping.
  * Temu uses numeric siteId values in API responses instead of ISO codes.
  */
@@ -348,26 +385,34 @@ const syncUserTemuOrders = async (user) => {
 
         const mapped = mapTemuOrderToModel(rawItem, user._id);
 
-        // Try to fetch detailed recipient address via bg.logistics.address.get if available
+        // Try to fetch detailed recipient address via bg.logistics.address.get
+        // This API returns a SINGLE object (not a list), so we use callTemuRouterRaw
         try {
-          const addrResult = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
-            order_sn: ol.orderSn || orderNum
+          const addrResult = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
+            order_sn: ol.orderSn || orderNum,
+            orderSn: ol.orderSn || orderNum
           });
-          if (addrResult.length > 0) {
-            const addrData = addrResult[0].parentOrderMap || addrResult[0];
-            const addr = addrData.addressInfo || addrData.address_info || addrData;
-            if (addr.recipientName || addr.recipient_name || addr.name) {
-              mapped.name = addr.recipientName || addr.recipient_name || addr.name;
+          if (addrResult) {
+            console.log(`📬 Address API raw result for ${orderNum}:`, JSON.stringify(addrResult).slice(0, 800));
+            // Response can be flat or nested: { recipientName, detailAddress, ... } or { addressInfo: { ... } }
+            const addr = addrResult.addressInfo || addrResult.address_info || addrResult.recipientInfo || addrResult;
+            const resolvedName = addr.recipientName || addr.recipient_name || addr.name || addr.buyerName;
+            const resolvedStreet = addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1;
+            const resolvedCity = addr.city || addr.cityName || addr.city_name;
+            const resolvedZip = addr.zipCode || addr.zipcode || addr.zip_code || addr.postCode;
+            const resolvedPhone = addr.phone || addr.mobile || addr.phoneNumber;
+            if (resolvedName) mapped.name = resolvedName;
+            if (resolvedStreet) mapped.streetName = resolvedStreet;
+            if (resolvedCity) mapped.cityName = resolvedCity;
+            if (resolvedZip) mapped.postcode = resolvedZip;
+            if (resolvedPhone) mapped.phone = resolvedPhone;
+            // Rebuild full address string
+            if (resolvedStreet || resolvedCity) {
+              mapped.address = [resolvedStreet, resolvedCity, resolvedZip, mapped.country].filter(Boolean).join(', ');
             }
-            if (addr.detailAddress || addr.detail_address || addr.fullAddress) {
-              mapped.address = addr.detailAddress || addr.detail_address || addr.fullAddress || mapped.address;
-            }
-            if (addr.zipCode || addr.zipcode) mapped.postcode = addr.zipCode || addr.zipcode;
-            if (addr.city || addr.cityName) mapped.cityName = addr.city || addr.city;
-            if (addr.phone || addr.mobile) mapped.phone = addr.phone || addr.mobile;
           }
         } catch (addrErr) {
-          // Address fetch failed — ignore and continue
+          // Address fetch failed — ignore and continue with fallback values
         }
 
         // Upsert order in database
