@@ -132,6 +132,7 @@ const userSchema = new mongoose.Schema(
           accessToken: { type: String, default: '' },
           sellerId: { type: String, default: '' },
           shopName: { type: String, default: '' },
+          region: { type: String, default: '' },
           lastSyncedAt: { type: Date, default: null }
         }
       ],

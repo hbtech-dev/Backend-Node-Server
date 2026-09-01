@@ -254,10 +254,13 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
   };
 
   // Add/Update in temuIntegrations array
+  // Match by accessToken only — each regional store has a UNIQUE access token
+  // even though they share the same appKey. This allows connecting Spain, Germany,
+  // France etc. as separate stores under the same app credentials.
   if (!user.temuIntegrations) {
     user.temuIntegrations = [];
   }
-  const existingIdx = user.temuIntegrations.findIndex(i => i.shopName === newIntegration.shopName || i.appKey === cleanKey);
+  const existingIdx = user.temuIntegrations.findIndex(i => i.accessToken === cleanToken);
   if (existingIdx > -1) {
     user.temuIntegrations[existingIdx] = newIntegration;
   } else {
