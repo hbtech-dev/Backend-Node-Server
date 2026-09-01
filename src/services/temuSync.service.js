@@ -275,43 +275,72 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 };
 
 /**
- * Fetch logistics orders from Temu — tries multiple APIs to get address data.
+ * Fetch address data from Temu — tries multiple API types to find which one works.
  * Returns a Map of orderSn → address object for fast lookup during sync.
  */
 const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken) => {
   const addrMap = new Map();
 
-  // Try API 1: bg.logistics.order.unshipped.list.get
-  try {
-    const url = 'https://openapi-b-eu.temu.com/openapi/router';
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const payload = { app_key: appKey, access_token: accessToken || '', timestamp, type: 'bg.logistics.order.unshipped.list.get', page_no: 1, pageNo: 1, page_size: 20, pageSize: 20 };
-    const sortedKeys = Object.keys(payload).sort();
-    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
-    const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
-    const res = await httpFetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...payload, sign }), timeout: 10000 });
-    const data = await res.json();
-    console.log('📬 [Logistics API 1] Full response:', JSON.stringify(data).slice(0, 600));
-    const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
-    if (isOk && data.result) {
-      const r = data.result;
-      const list = r.logisticsOrderList || r.logistics_order_list || r.orderList || r.order_list || r.pageItems || r.data || [];
-      const arr = Array.isArray(list) ? list : (Array.isArray(r) ? r : []);
-      for (const item of arr) {
-        const sn = item.orderSn || item.order_sn || item.parentOrderSn;
-        const addr = item.addressInfo || item.address_info || item.recipientInfo || item.shippingAddress || item;
-        if (sn && addr) { addrMap.set(sn, addr); }
-        const psn = item.parentOrderSn || item.parent_order_sn;
-        if (psn && psn !== sn) addrMap.set(psn, addr);
+  // List of candidate API types to try — we log ALL responses to find which works
+  const apiTypesToTry = [
+    'bg.logistics.order.unshipped.list.get',
+    'bg.logistics.order.list.get',
+    'bg.order.address.get',
+    'bg.order.recipient.get'
+  ];
+
+  const url = 'https://openapi-b-eu.temu.com/openapi/router';
+
+  for (const apiType of apiTypesToTry) {
+    try {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const payload = {
+        app_key: appKey,
+        access_token: accessToken || '',
+        timestamp,
+        type: apiType,
+        page_no: 1, pageNo: 1,
+        page_size: 10, pageSize: 10
+      };
+      const sortedKeys = Object.keys(payload).sort();
+      const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+      const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+      const res = await httpFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, sign }),
+        timeout: 10000
+      });
+      const data = await res.json();
+      // Log FULL response for every API type so we can see which works
+      console.log(`🔍 [${apiType}] Response:`, JSON.stringify(data).slice(0, 500));
+
+      const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
+      if (isOk && data.result) {
+        const r = data.result;
+        const list = r.logisticsOrderList || r.logistics_order_list ||
+          r.orderList || r.order_list || r.pageItems || r.data || [];
+        const arr = Array.isArray(list) ? list : (Array.isArray(r) ? r : []);
+        for (const item of arr) {
+          const sn = item.orderSn || item.order_sn || item.parentOrderSn;
+          const addr = item.addressInfo || item.address_info || item.recipientInfo || item.shippingAddress || item;
+          if (sn && addr) addrMap.set(sn, addr);
+          const psn = item.parentOrderSn || item.parent_order_sn;
+          if (psn && psn !== sn) addrMap.set(psn, addr);
+        }
+        if (addrMap.size > 0) {
+          console.log(`✅ [${apiType}] SUCCESS! Got ${addrMap.size} addresses`);
+          break; // Found working API — stop trying others
+        }
       }
-      console.log(`📬 [Logistics API 1] Address map: ${addrMap.size} entries`);
+    } catch (e) {
+      console.warn(`⚠️ [${apiType}] Exception:`, e.message);
     }
-  } catch (e) {
-    console.warn('⚠️ [Logistics API 1] Failed:', e.message);
   }
 
   return addrMap;
 };
+
 
 const syncUserTemuOrders = async (user) => {
   if (!user) return;
