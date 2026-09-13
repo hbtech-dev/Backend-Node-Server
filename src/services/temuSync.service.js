@@ -275,63 +275,33 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 };
 
 /**
- * Fetch address data from Temu — tries multiple API types to find which one works.
- * Returns a Map of orderSn → address object for fast lookup during sync.
+ * Fetch address data from Temu for a list of parent order SNs via bg.order.detail.v2.get
+ * Returns a Map of orderSn -> address object
  */
-const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken) => {
+const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, orderSnList = []) => {
   const addrMap = new Map();
+  if (!orderSnList || orderSnList.length === 0) return addrMap;
 
-  // Temu v2 order detail endpoint for addresses & recipient info
-  const apiTypesToTry = [
-    'bg.order.detail.v2.get'
-  ];
-
-  const url = 'https://openapi-b-eu.temu.com/openapi/router';
-
-  for (const apiType of apiTypesToTry) {
+  for (const parentOrderSn of orderSnList) {
     try {
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const payload = {
-        app_key: appKey,
-        access_token: accessToken || '',
-        timestamp,
-        type: apiType,
-        page_no: 1, pageNo: 1,
-        page_size: 10, pageSize: 10
-      };
-      const sortedKeys = Object.keys(payload).sort();
-      const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
-      const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
-      const res = await httpFetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, sign }),
-        timeout: 10000
+      const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
+        parentOrderSn,
+        parent_order_sn: parentOrderSn
       });
-      const data = await res.json();
-      // Log FULL response for every API type so we can see which works
-      console.log(`🔍 [${apiType}] Response:`, JSON.stringify(data).slice(0, 500));
 
-      const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
-      if (isOk && data.result) {
-        const r = data.result;
-        const list = r.logisticsOrderList || r.logistics_order_list ||
-          r.orderList || r.order_list || r.pageItems || r.data || [];
-        const arr = Array.isArray(list) ? list : (Array.isArray(r) ? r : []);
-        for (const item of arr) {
-          const sn = item.orderSn || item.order_sn || item.parentOrderSn;
-          const addr = item.addressInfo || item.address_info || item.recipientInfo || item.shippingAddress || item;
-          if (sn && addr) addrMap.set(sn, addr);
-          const psn = item.parentOrderSn || item.parent_order_sn;
-          if (psn && psn !== sn) addrMap.set(psn, addr);
-        }
-        if (addrMap.size > 0) {
-          console.log(`✅ [${apiType}] SUCCESS! Got ${addrMap.size} addresses`);
-          break; // Found working API — stop trying others
+      if (orderDetail) {
+        console.log(`📦 bg.order.detail.v2.get detail for ${parentOrderSn}:`, JSON.stringify(orderDetail).slice(0, 1000));
+        const pmDetail = orderDetail.parentOrderMap || orderDetail.result?.parentOrderMap || {};
+        const addr = orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress ||
+          orderDetail.address_info || pmDetail.receiptAddressInfo || pmDetail.addressInfo ||
+          pmDetail.recipientAddress || pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail.address_info || orderDetail;
+
+        if (addr) {
+          addrMap.set(parentOrderSn, addr);
         }
       }
     } catch (e) {
-      console.warn(`⚠️ [${apiType}] Exception:`, e.message);
+      console.warn(`⚠️ bg.order.detail.v2.get error for ${parentOrderSn}:`, e.message);
     }
   }
 
@@ -364,9 +334,6 @@ const syncUserTemuOrders = async (user) => {
 
     try {
       console.log(`🔄 Syncing Temu store "${shopName}"...`);
-
-      // --- Step 1: Fetch logistics order list which includes full address details ---
-      const logisticsAddrMap = await fetchTemuLogisticsAddresses(appKey, appSecret, accessToken);
 
       // --- Step 2: Fetch unshipped & pending order lists ---
       // parentOrderStatus 2 = UN_SHIPPING, 1 = PENDING, 0 = ALL
@@ -402,6 +369,10 @@ const syncUserTemuOrders = async (user) => {
       });
 
       const activeUnshippedOrders = Array.from(activeMap.values());
+      const activeOrderSns = activeUnshippedOrders.map(item => item.parentOrderMap?.parentOrderSn || item.orderList?.[0]?.orderSn).filter(Boolean);
+
+      // --- Fetch logistics address details for active orders via bg.order.detail.v2.get ---
+      const logisticsAddrMap = await fetchTemuLogisticsAddresses(appKey, appSecret, accessToken, activeOrderSns);
 
       // Update shipped/canceled statuses in DB (preserves history)
       const shippedNums = [];
