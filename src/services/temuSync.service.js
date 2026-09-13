@@ -443,11 +443,11 @@ const syncUserTemuOrders = async (user) => {
         // --- Enrich with address from logistics API map ---
         const addrData = logisticsAddrMap.get(orderNum) || logisticsAddrMap.get(ol.orderSn);
         if (addrData) {
-          const resolvedName = addrData.recipientName || addrData.recipient_name || addrData.name || addrData.buyerName;
-          const resolvedStreet = addrData.streetName || addrData.street_name || addrData.detailAddress || addrData.detail_address || addrData.address1;
+          const resolvedName = addrData.recipientName || addrData.recipient_name || addrData.name || addrData.buyerName || addrData.consigneeName || addrData.consignee;
+          const resolvedStreet = addrData.streetName || addrData.street_name || addrData.detailAddress || addrData.detail_address || addrData.address1 || addrData.address;
           const resolvedCity = addrData.city || addrData.cityName || addrData.city_name;
-          const resolvedZip = addrData.zipCode || addrData.zipcode || addrData.zip_code || addrData.postCode;
-          const resolvedPhone = addrData.phone || addrData.mobile || addrData.phoneNumber;
+          const resolvedZip = addrData.zipCode || addrData.zipcode || addrData.zip_code || addrData.postCode || addrData.postcode;
+          const resolvedPhone = addrData.phone || addrData.mobile || addrData.phoneNumber || addrData.phone_number;
           if (resolvedName) { mapped.name = resolvedName; console.log(`✅ Got name for ${orderNum}: ${resolvedName}`); }
           if (resolvedStreet) mapped.streetName = resolvedStreet;
           if (resolvedCity) mapped.cityName = resolvedCity;
@@ -457,27 +457,39 @@ const syncUserTemuOrders = async (user) => {
             mapped.address = [resolvedStreet, resolvedCity, resolvedZip, mapped.country].filter(Boolean).join(', ');
           }
         } else {
-          // Fallback: try bg.logistics.address.get for this specific order
+          // Fallback: query order detail via bg.order.detail.v2.get for full recipient name & shipping address
           try {
-            const singleAddr = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', {
-              order_sn: ol.orderSn || orderNum,
-              orderSn: ol.orderSn || orderNum,
+            const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
+              parentOrderSn: orderNum,
               parent_order_sn: orderNum,
-              parentOrderSn: orderNum
+              orderSn: ol.orderSn || orderNum,
+              order_sn: ol.orderSn || orderNum
+            }) || await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', {
+              parentOrderSn: orderNum,
+              parent_order_sn: orderNum
             });
-            if (singleAddr) {
-              console.log(`📬 Fallback address result for ${orderNum}:`, JSON.stringify(singleAddr).slice(0, 400));
-              const addr = singleAddr.addressInfo || singleAddr.address_info || singleAddr;
-              const n = addr.recipientName || addr.recipient_name || addr.name;
+
+            if (orderDetail) {
+              console.log(`📬 Order detail result for ${orderNum}:`, JSON.stringify(orderDetail).slice(0, 500));
+              const pmDetail = orderDetail.parentOrderMap || orderDetail;
+              const addr = orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress ||
+                orderDetail.address_info || pmDetail.receiptAddressInfo || pmDetail.addressInfo || orderDetail;
+
+              const n = addr.recipientName || addr.recipient_name || addr.name || addr.buyerName || addr.consigneeName || addr.consignee;
               if (n) { mapped.name = n; }
-              const s = addr.streetName || addr.street_name || addr.detailAddress;
+              const s = addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1;
               if (s) mapped.streetName = s;
-              const c = addr.city || addr.cityName;
+              const c = addr.city || addr.cityName || addr.city_name;
               if (c) mapped.cityName = c;
-              const z = addr.zipCode || addr.zipcode;
+              const z = addr.zipCode || addr.zipcode || addr.zip_code || addr.postcode;
               if (z) mapped.postcode = z;
+              const p = addr.phone || addr.mobile || addr.phoneNumber;
+              if (p) mapped.phone = p;
+              if (s || c) {
+                mapped.address = [s || mapped.streetName, c || mapped.cityName, z || mapped.postcode, mapped.country].filter(Boolean).join(', ');
+              }
             }
-          } catch (_) { /* silent */ }
+          } catch (_) { /* silent fallback */ }
         }
 
         // Upsert order in database
