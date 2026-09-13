@@ -281,13 +281,9 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken) => {
   const addrMap = new Map();
 
-  // List of candidate API types to try — we log ALL responses to find which works
+  // Temu v2 order detail endpoint for addresses & recipient info
   const apiTypesToTry = [
-    'bg.order.detail.get',
-    'bg.logistics.shipping.address.get',
-    'bg.logistics.order.detail.get',
-    'bg.logistics.order.unshipped.list.get',
-    'bg.logistics.order.list.get'
+    'bg.order.detail.v2.get'
   ];
 
   const url = 'https://openapi-b-eu.temu.com/openapi/router';
