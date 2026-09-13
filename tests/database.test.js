@@ -6,7 +6,8 @@ jest.mock('mongoose', () => {
 
   return {
     connect,
-    connection
+    connection,
+    set: jest.fn()
   };
 });
 

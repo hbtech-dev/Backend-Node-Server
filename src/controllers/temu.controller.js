@@ -558,7 +558,7 @@ exports.getTemuOAuthUrl = catchAsync(async (req, res, next) => {
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
 
   // The redirect URI must EXACTLY match what's registered in the Temu Partner Console
-  const redirectUri = process.env.TEMU_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/v1/temu/oauth-callback`;
+  const redirectUri = process.env.TEMU_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/v1/temu/callback`;
 
   // Build the Temu authorization URL (Temu Seller Center Manage Apps page)
   // state param carries user ID so we know who to associate the token with after redirect
@@ -649,11 +649,15 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
 
     console.log(`✅ Temu OAuth: Got access_token for mall ${mallId} (${mallName})`);
 
-    // Find the user via the state parameter
+    // Find the user via state parameter or fallback to primary user if initiated directly from Temu App Store
     const mongoose = require('mongoose');
     let user = null;
     if (state && mongoose.connection.readyState === 1) {
-      user = await User.findById(state);
+      user = await User.findById(state).catch(() => null);
+    }
+    if (!user && mongoose.connection.readyState === 1) {
+      // Fallback if authorization was initiated directly from Temu Partner Platform Console
+      user = await User.findOne({ role: 'admin' }) || await User.findOne({ email: process.env.SMTP_USER }) || await User.findOne();
     }
 
     if (!user) {
