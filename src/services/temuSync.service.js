@@ -470,16 +470,17 @@ const syncUserTemuOrders = async (user) => {
             });
 
             if (orderDetail) {
-              console.log(`📬 Order detail result for ${orderNum}:`, JSON.stringify(orderDetail).slice(0, 500));
-              const pmDetail = orderDetail.parentOrderMap || orderDetail;
-              const addr = orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress ||
-                orderDetail.address_info || pmDetail.receiptAddressInfo || pmDetail.addressInfo || orderDetail;
+              const pmDetail = orderDetail.parentOrderMap || {};
+              const addr = orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress || orderDetail.address_info ||
+                pmDetail.receiptAddressInfo || pmDetail.addressInfo || pmDetail.recipientAddress || pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail;
 
-              const n = addr.recipientName || addr.recipient_name || addr.name || addr.buyerName || addr.consigneeName || addr.consignee;
+              const n = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name ||
+                addr.receiverName || addr.receiver_name || addr.name || addr.buyerName || addr.buyer_name ||
+                addr.consigneeName || addr.consignee || pmDetail.recipientName || pmDetail.receiptName || pmDetail.buyerName;
               if (n) { mapped.name = n; }
-              const s = addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1;
+              const s = addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1 || addr.address;
               if (s) mapped.streetName = s;
-              const c = addr.city || addr.cityName || addr.city_name;
+              const c = addr.city || addr.cityName || addr.city_name || pmDetail.regionName3;
               if (c) mapped.cityName = c;
               const z = addr.zipCode || addr.zipcode || addr.zip_code || addr.postcode;
               if (z) mapped.postcode = z;
