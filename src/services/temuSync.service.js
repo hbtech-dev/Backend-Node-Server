@@ -285,48 +285,37 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
   if (!orderSnList || orderSnList.length === 0) return addrMap;
 
   for (const parentOrderSn of orderSnList) {
-    const candidateApis = [
-      'bg.logistics.shipment.v2.get',
-      'bg.logistics.shipment.detail.v2.get',
-      'bg.logistics.shipment.list.v2.get',
-      'bg.logistics.shipment.info.v2.get',
-      'bg.logistics.shipment.address.v2.get',
-      'bg.logistics.shipping.document.v2.get',
-      'bg.logistics.shipping.address.v2.get',
-      'bg.logistics.shipment.get.v2',
-      'bg.order.detail.v2.get'
+    const subOrderSn = parentOrderSn.replace(/^PO-/, '');
+
+    const paramPayloads = [
+      { name: 'parent_order_sn', params: { parent_order_sn: parentOrderSn } },
+      { name: 'parent_order_sn_list', params: { parent_order_sn_list: [parentOrderSn], parentOrderSnList: [parentOrderSn] } },
+      { name: 'order_sn', params: { order_sn: subOrderSn, orderSn: subOrderSn } },
+      { name: 'order_sn_list', params: { order_sn_list: [subOrderSn], orderSnList: [subOrderSn] } },
+      { name: 'parent_and_sub_sn', params: { parent_order_sn: parentOrderSn, order_sn: subOrderSn } }
     ];
 
-    for (const apiType of candidateApis) {
+    for (const { name, params } of paramPayloads) {
       try {
-        const res = await callTemuRouterRaw(appKey, appSecret, accessToken, apiType, {
-          parentOrderSn,
-          parent_order_sn: parentOrderSn,
-          orderSn: parentOrderSn,
-          order_sn: parentOrderSn
-        });
-
+        const res = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.v2.get', params);
         if (res) {
+          console.log(`🎉 SUCCESS [bg.logistics.shipment.v2.get] with payload "${name}" for ${parentOrderSn}:`, JSON.stringify(res).slice(0, 2000));
           const pmDetail = res.parentOrderMap || res.result?.parentOrderMap || {};
-          console.log(`🔍 [${apiType}] top-level keys for ${parentOrderSn}:`, Object.keys(res));
-          if (res.parentOrderMap) console.log(`🔍 [${apiType}] parentOrderMap keys:`, Object.keys(pmDetail));
-          console.log(`📦 [${apiType}] FULL response snippet (2000 chars):`, JSON.stringify(res).slice(0, 2000));
-
           const addr = res.receiptAddressInfo || res.addressInfo || res.recipientAddress ||
             res.address_info || res.receipt_address_info || res.receiveAddressInfo || res.receive_address_info ||
-            res.shippingAddress || res.recipientInfo ||
+            res.shippingAddress || res.recipientInfo || res.consignee || res.shipmentAddressInfo ||
             pmDetail.receiptAddressInfo || pmDetail.addressInfo || pmDetail.recipientAddress ||
             pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail.address_info ||
             pmDetail.receipt_address_info || pmDetail.recipient_address_info || pmDetail.receiverAddressInfo;
 
           if (addr) {
-            console.log(`✅ [${apiType}] Found address for ${parentOrderSn}:`, JSON.stringify(addr));
+            console.log(`✅ Found address via bg.logistics.shipment.v2.get:`, JSON.stringify(addr));
             addrMap.set(parentOrderSn, addr);
-            break; // Stop trying other candidate APIs for this order
+            break;
           }
         }
       } catch (e) {
-        // silent fallback to next candidate
+        console.warn(`⚠️ bg.logistics.shipment.v2.get error with ${name}:`, e.message);
       }
     }
   }
