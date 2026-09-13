@@ -574,6 +574,8 @@ exports.getTemuOAuthUrl = catchAsync(async (req, res, next) => {
   });
 });
 
+const processedOAuthCodes = new Map();
+
 /**
  * OAuth Callback — Temu redirects merchants here after authorization.
  * This is a PUBLIC endpoint (no auth middleware) because the user arrives via browser redirect.
@@ -589,6 +591,15 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
   if (!code) {
     console.warn('❌ Temu OAuth callback: no code received.', req.query);
     return res.redirect(`${frontendUrl}/settings?temu_error=no_code_received`);
+  }
+
+  // Handle duplicate callback requests gracefully (e.g. browser prefetch, double GET)
+  if (processedOAuthCodes.has(code)) {
+    const existing = processedOAuthCodes.get(code);
+    if (existing && existing.status === 'success') {
+      console.log(`ℹ️ Temu OAuth: Code ${code.slice(0, 8)}... already exchanged successfully. Redirecting to frontend.`);
+      return res.redirect(`${frontendUrl}/settings?temu_success=true&mall_name=${encodeURIComponent(existing.mallName || '')}`);
+    }
   }
 
   const appKey = process.env.TEMU_APP_KEY;
@@ -702,6 +713,9 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     } catch (syncErr) {
       console.warn('Post-OAuth sync init warning:', syncErr.message);
     }
+
+    // Cache processed code to handle any duplicate GET requests from browser/proxy
+    processedOAuthCodes.set(code, { status: 'success', mallName: mallName || mallId, timestamp: Date.now() });
 
     // Redirect back to frontend settings with success
     res.redirect(`${frontendUrl}/settings?temu_success=true&mall_name=${encodeURIComponent(mallName || mallId)}`);
