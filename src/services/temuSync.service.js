@@ -283,25 +283,45 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
   if (!orderSnList || orderSnList.length === 0) return addrMap;
 
   for (const parentOrderSn of orderSnList) {
-    try {
-      const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
-        parentOrderSn,
-        parent_order_sn: parentOrderSn
-      });
+    const candidateApis = [
+      'bg.order.detail.v2.get',
+      'bg.order.detail.v3.get',
+      'bg.logistics.order.detail.v2.get',
+      'bg.order.receive.address.get',
+      'bg.order.shipping.address.get'
+    ];
 
-      if (orderDetail) {
-        console.log(`📦 bg.order.detail.v2.get detail for ${parentOrderSn}:`, JSON.stringify(orderDetail).slice(0, 1000));
-        const pmDetail = orderDetail.parentOrderMap || orderDetail.result?.parentOrderMap || {};
-        const addr = orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress ||
-          orderDetail.address_info || pmDetail.receiptAddressInfo || pmDetail.addressInfo ||
-          pmDetail.recipientAddress || pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail.address_info || orderDetail;
+    for (const apiType of candidateApis) {
+      try {
+        const res = await callTemuRouterRaw(appKey, appSecret, accessToken, apiType, {
+          parentOrderSn,
+          parent_order_sn: parentOrderSn,
+          orderSn: parentOrderSn,
+          order_sn: parentOrderSn
+        });
 
-        if (addr) {
-          addrMap.set(parentOrderSn, addr);
+        if (res) {
+          const pmDetail = res.parentOrderMap || res.result?.parentOrderMap || {};
+          console.log(`🔍 [${apiType}] top-level keys for ${parentOrderSn}:`, Object.keys(res));
+          if (res.parentOrderMap) console.log(`🔍 [${apiType}] parentOrderMap keys:`, Object.keys(pmDetail));
+          console.log(`📦 [${apiType}] FULL response snippet (2000 chars):`, JSON.stringify(res).slice(0, 2000));
+
+          const addr = res.receiptAddressInfo || res.addressInfo || res.recipientAddress ||
+            res.address_info || res.receipt_address_info || res.receiveAddressInfo || res.receive_address_info ||
+            res.shippingAddress || res.recipientInfo ||
+            pmDetail.receiptAddressInfo || pmDetail.addressInfo || pmDetail.recipientAddress ||
+            pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail.address_info ||
+            pmDetail.receipt_address_info || pmDetail.recipient_address_info || pmDetail.receiverAddressInfo;
+
+          if (addr) {
+            console.log(`✅ [${apiType}] Found address for ${parentOrderSn}:`, JSON.stringify(addr));
+            addrMap.set(parentOrderSn, addr);
+            break; // Stop trying other candidate APIs for this order
+          }
         }
+      } catch (e) {
+        // silent fallback to next candidate
       }
-    } catch (e) {
-      console.warn(`⚠️ bg.order.detail.v2.get error for ${parentOrderSn}:`, e.message);
     }
   }
 
