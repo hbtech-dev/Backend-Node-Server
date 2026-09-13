@@ -283,10 +283,11 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken) => {
 
   // List of candidate API types to try — we log ALL responses to find which works
   const apiTypesToTry = [
+    'bg.order.detail.get',
+    'bg.logistics.shipping.address.get',
+    'bg.logistics.order.detail.get',
     'bg.logistics.order.unshipped.list.get',
-    'bg.logistics.order.list.get',
-    'bg.order.address.get',
-    'bg.order.recipient.get'
+    'bg.logistics.order.list.get'
   ];
 
   const url = 'https://openapi-b-eu.temu.com/openapi/router';

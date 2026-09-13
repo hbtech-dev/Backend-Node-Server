@@ -602,9 +602,10 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
   const httpFetch = require('../utils/httpHelper');
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  // Build token exchange request
+  // Build token exchange request (access_token field is required by Temu router gateway)
   const payload = {
     app_key: appKey,
+    access_token: '',
     timestamp: timestamp,
     type: 'bg.open.accesstoken.create',
     code: code
