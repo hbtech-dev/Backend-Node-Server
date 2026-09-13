@@ -124,10 +124,12 @@ const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = 
     });
     if (!res.ok) return null;
     const data = await res.json();
+    console.log(`🔍 [${type}] Response for ${params.parentOrderSn || params.parent_order_sn || 'query'}:`, JSON.stringify(data).slice(0, 500));
     const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0 || Boolean(data.result);
     if (!isOk) return null;
     return data.result || data.response || data.data || null;
   } catch (e) {
+    console.warn(`⚠️ [${type}] Fetch exception:`, e.message);
     return null;
   }
 };
@@ -284,11 +286,16 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
 
   for (const parentOrderSn of orderSnList) {
     const candidateApis = [
-      'bg.order.detail.v2.get',
-      'bg.order.detail.v3.get',
-      'bg.logistics.order.detail.v2.get',
+      'bg.logistics.shipping.document.get',
+      'bg.logistics.shipping.address.get',
+      'bg.logistics.order.address.get',
+      'bg.logistics.shipment.get',
+      'bg.logistics.waybill.get',
+      'bg.order.shipping.address.get',
       'bg.order.receive.address.get',
-      'bg.order.shipping.address.get'
+      'bg.order.consignee.get',
+      'bg.logistics.consignee.get',
+      'bg.order.detail.v2.get'
     ];
 
     for (const apiType of candidateApis) {
