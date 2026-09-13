@@ -285,38 +285,43 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
   if (!orderSnList || orderSnList.length === 0) return addrMap;
 
   for (const parentOrderSn of orderSnList) {
-    const subOrderSn = parentOrderSn.replace(/^PO-/, '');
+    try {
+      const detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
+        parentOrderSn,
+        parent_order_sn: parentOrderSn
+      });
 
-    const paramPayloads = [
-      { name: 'parent_order_sn', params: { parent_order_sn: parentOrderSn } },
-      { name: 'parent_order_sn_list', params: { parent_order_sn_list: [parentOrderSn], parentOrderSnList: [parentOrderSn] } },
-      { name: 'order_sn', params: { order_sn: subOrderSn, orderSn: subOrderSn } },
-      { name: 'order_sn_list', params: { order_sn_list: [subOrderSn], orderSnList: [subOrderSn] } },
-      { name: 'parent_and_sub_sn', params: { parent_order_sn: parentOrderSn, order_sn: subOrderSn } }
-    ];
+      if (detail) {
+        const fullJson = JSON.stringify(detail);
+        console.log(`🔑 detail top-level keys:`, Object.keys(detail));
+        if (detail.parentOrderMap) console.log(`🔑 parentOrderMap keys:`, Object.keys(detail.parentOrderMap));
+        if (detail.orderList && detail.orderList[0]) console.log(`🔑 orderList[0] keys:`, Object.keys(detail.orderList[0]));
 
-    for (const { name, params } of paramPayloads) {
-      try {
-        const res = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.v2.get', params);
-        if (res) {
-          console.log(`🎉 SUCCESS [bg.logistics.shipment.v2.get] with payload "${name}" for ${parentOrderSn}:`, JSON.stringify(res).slice(0, 2000));
-          const pmDetail = res.parentOrderMap || res.result?.parentOrderMap || {};
-          const addr = res.receiptAddressInfo || res.addressInfo || res.recipientAddress ||
-            res.address_info || res.receipt_address_info || res.receiveAddressInfo || res.receive_address_info ||
-            res.shippingAddress || res.recipientInfo || res.consignee || res.shipmentAddressInfo ||
-            pmDetail.receiptAddressInfo || pmDetail.addressInfo || pmDetail.recipientAddress ||
-            pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail.address_info ||
-            pmDetail.receipt_address_info || pmDetail.recipient_address_info || pmDetail.receiverAddressInfo;
-
-          if (addr) {
-            console.log(`✅ Found address via bg.logistics.shipment.v2.get:`, JSON.stringify(addr));
-            addrMap.set(parentOrderSn, addr);
-            break;
-          }
+        console.log(`📦 bg.order.detail.v2.get HEAD (0-2000):`, fullJson.slice(0, 2000));
+        if (fullJson.length > 2000) {
+          console.log(`📦 bg.order.detail.v2.get TAIL (2000-6000):`, fullJson.slice(2000, 6000));
         }
-      } catch (e) {
-        console.warn(`⚠️ bg.logistics.shipment.v2.get error with ${name}:`, e.message);
+
+        // Try extracting address from all possible sub-trees
+        const pm = detail.parentOrderMap || {};
+        const ol = (detail.orderList || [])[0] || {};
+
+        const addr = detail.receiptAddressInfo || detail.addressInfo || detail.recipientAddress ||
+          detail.address_info || detail.receipt_address_info || detail.receiveAddressInfo ||
+          pm.receiptAddressInfo || pm.addressInfo || pm.recipientAddress || pm.receiverAddress ||
+          pm.receiptAddress || pm.address_info || pm.receipt_address_info || pm.recipient_address_info ||
+          ol.receiptAddressInfo || ol.addressInfo || ol.recipientAddress || ol.address_info ||
+          ol.receipt_address_info || ol.consignee || ol.shippingAddress || ol.recipientInfo;
+
+        if (addr) {
+          console.log(`✅ Found address object for ${parentOrderSn}:`, JSON.stringify(addr));
+          addrMap.set(parentOrderSn, addr);
+        } else {
+          console.log(`⚠️ Address object not found in standard paths for ${parentOrderSn}`);
+        }
       }
+    } catch (e) {
+      console.warn(`⚠️ Error calling bg.order.detail.v2.get for ${parentOrderSn}:`, e.message);
     }
   }
 
