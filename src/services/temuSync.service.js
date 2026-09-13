@@ -286,15 +286,14 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
 
   for (const parentOrderSn of orderSnList) {
     const candidateApis = [
-      'bg.logistics.shipping.document.get',
-      'bg.logistics.shipping.address.get',
-      'bg.logistics.order.address.get',
-      'bg.logistics.shipment.get',
-      'bg.logistics.waybill.get',
-      'bg.order.shipping.address.get',
-      'bg.order.receive.address.get',
-      'bg.order.consignee.get',
-      'bg.logistics.consignee.get',
+      'bg.logistics.shipment.v2.get',
+      'bg.logistics.shipment.detail.v2.get',
+      'bg.logistics.shipment.list.v2.get',
+      'bg.logistics.shipment.info.v2.get',
+      'bg.logistics.shipment.address.v2.get',
+      'bg.logistics.shipping.document.v2.get',
+      'bg.logistics.shipping.address.v2.get',
+      'bg.logistics.shipment.get.v2',
       'bg.order.detail.v2.get'
     ];
 
