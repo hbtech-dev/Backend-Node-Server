@@ -224,9 +224,9 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const streetName = addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
   const postcode = addr.zipCode || addr.zipcode || addr.postcode || addr.zip || '';
-  const cityName = addr.city || addr.cityName || addr.city_name || '';
+  const cityName = addr.city || addr.cityName || addr.city_name || parentMap.regionName3 || '';
   const fullAddress = addr.fullAddress || addr.full_address || addr.detailAddress ||
-    [streetName, cityName, postcode, country].filter(Boolean).join(', ');
+    [streetName, cityName, postcode, country].filter(Boolean).join(', ') || (cityName ? `${cityName}, ${country}` : '');
   const email = addr.email || parentMap.buyerEmail || '';
   const phone = addr.phone || addr.mobile || parentMap.buyerPhone || '';
 
