@@ -602,6 +602,13 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     }
   }
 
+  const appKey = process.env.TEMU_APP_KEY;
+  const appSecret = process.env.TEMU_APP_SECRET;
+
+  if (!appKey || !appSecret) {
+    return res.redirect(`${frontendUrl}/settings?temu_error=server_credentials_missing`);
+  }
+
   const cleanKey = (appKey || '').trim();
   const cleanSecret = (appSecret || '').trim();
   const cleanCode = (code || '').trim();
