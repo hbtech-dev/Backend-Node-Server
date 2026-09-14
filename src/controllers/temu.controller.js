@@ -602,37 +602,29 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     }
   }
 
-  const appKey = process.env.TEMU_APP_KEY;
-  const appSecret = process.env.TEMU_APP_SECRET;
-
-  if (!appKey || !appSecret) {
-    return res.redirect(`${frontendUrl}/settings?temu_error=server_credentials_missing`);
-  }
-
-  const cleanKey = (appKey || '').trim();
-  const cleanSecret = (appSecret || '').trim();
+  const cleanKey = (process.env.TEMU_APP_KEY || '04b2b5794465f5757a2fd5775d15a48e').replace(/['"]/g, '').trim();
+  const cleanSecret = (process.env.TEMU_APP_SECRET || '2d4f6cfc240316114c6efad5b39ee2ee81de9ffb').replace(/['"]/g, '').trim();
   const cleanCode = (code || '').trim();
 
   const crypto = require('crypto');
   const httpFetch = require('../utils/httpHelper');
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  // Signature calculation payload for bg.open.accesstoken.create
-  const signPayload = {
+  // Signature calculation payload for bg.open.accesstoken.create (all body fields included in MD5 calculation)
+  const payload = {
     app_key: cleanKey,
+    access_token: cleanCode,
     timestamp: timestamp,
     type: 'bg.open.accesstoken.create',
     code: cleanCode
   };
 
-  const sortedKeys = Object.keys(signPayload).sort();
-  const signStr = cleanSecret + sortedKeys.map(k => k + signPayload[k]).join('') + cleanSecret;
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = cleanSecret + sortedKeys.map(k => k + payload[k]).join('') + cleanSecret;
   const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-  // Full POST body sent to Temu router gateway (requires access_token = cleanCode for code exchange)
   const fullBody = {
-    ...signPayload,
-    access_token: cleanCode,
+    ...payload,
     sign
   };
 
@@ -690,8 +682,8 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     // Save the new integration
     const newIntegration = {
       isConnected: true,
-      appKey: appKey,
-      appSecret: appSecret,
+      appKey: cleanKey,
+      appSecret: cleanSecret,
       accessToken: accessToken,
       sellerId: mallId.toString(),
       shopName: mallName || `Temu-${mallId}`,
