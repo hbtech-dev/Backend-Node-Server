@@ -254,12 +254,48 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   // Order number from parentOrderMap
   const orderNumber = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || `PO-${Date.now()}`;
 
-  // Product info from first item in orderList
-  const articleName = firstOrder.originalGoodsName || firstOrder.goodsName || firstOrder.goods_name || 'Temu Article';
-  const sku = (firstOrder.skuId || firstOrder.sku_id || firstOrder.goodsId || firstOrder.goods_id || '').toString();
-  const quantity = firstOrder.quantity || firstOrder.originalOrderQuantity || 1;
-  const variation = firstOrder.originalSpecName || firstOrder.spec || 'Standard';
-  const thumbUrl = firstOrder.thumbUrl || firstOrder.thumb_url || '';
+  // Build items array from orderList
+  const items = (orderList.length > 0 ? orderList : [firstOrder]).map(item => {
+    const itemTitle = item.originalGoodsName || item.goodsName || item.goods_name || 'Temu Article';
+    const itemSku = (item.skuId || item.sku_id || item.goodsId || item.goods_id || '').toString();
+    const itemQty = Number(item.quantity || item.originalOrderQuantity || 1);
+    const itemVar = (
+      item.originalSpecName ||
+      item.original_spec_name ||
+      item.specName ||
+      item.spec_name ||
+      item.spec ||
+      item.goodsSpec ||
+      item.goods_spec ||
+      'Standard'
+    );
+    const itemImg = item.thumbUrl || item.thumb_url || '';
+    let itemPrice = Number(item.goodsPrice || item.goods_price || 0);
+    if (itemPrice > 500) itemPrice = itemPrice / 100;
+    return {
+      sku: itemSku,
+      articleName: itemTitle,
+      quantity: itemQty,
+      variation: itemVar,
+      price: itemPrice,
+      productImage: itemImg
+    };
+  });
+
+  const primaryItem = items[0] || {
+    articleName: 'Temu Article',
+    sku: '',
+    quantity: 1,
+    variation: 'Standard',
+    productImage: '',
+    price: 19.99
+  };
+
+  const articleName = primaryItem.articleName;
+  const sku = primaryItem.sku;
+  const quantity = items.reduce((sum, i) => sum + i.quantity, 0);
+  const variation = items.map(i => i.variation).filter(Boolean).join(', ') || primaryItem.variation;
+  const thumbUrl = primaryItem.productImage;
 
   // Recipient / Buyer Info
   const rawBuyerName = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
@@ -287,7 +323,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     parsedPrice = parsedPrice / 100;
   }
   if (parsedPrice <= 0) {
-    parsedPrice = 19.99;
+    parsedPrice = primaryItem.price || 19.99;
   }
 
   return {
@@ -309,6 +345,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     sku,
     quantity,
     variation,
+    items,
     packaging: 'Small Parcel (25x18x10cm)',
     productImage: thumbUrl,
     price: parsedPrice,

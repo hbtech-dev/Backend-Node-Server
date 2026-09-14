@@ -83,6 +83,16 @@ const temuOrderSchema = new mongoose.Schema(
       type: String,
       default: ''
     },
+    items: [
+      {
+        sku: { type: String, default: '' },
+        articleName: { type: String, default: '' },
+        quantity: { type: Number, default: 1 },
+        variation: { type: String, default: '' },
+        price: { type: Number, default: 0 },
+        productImage: { type: String, default: '' }
+      }
+    ],
     packaging: {
       type: String,
       default: 'Small Parcel (25×18×10cm)'
