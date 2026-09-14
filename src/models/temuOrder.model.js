@@ -23,6 +23,14 @@ const temuOrderSchema = new mongoose.Schema(
       type: String,
       required: true
     },
+    recipientName: {
+      type: String,
+      default: ''
+    },
+    buyerName: {
+      type: String,
+      default: ''
+    },
     country: {
       type: String,
       default: 'DE'

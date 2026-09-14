@@ -263,7 +263,8 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 
   // Recipient / Buyer Info
   const rawBuyerName = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
-  const name = (rawBuyerName && rawBuyerName !== 'NOT_FOUND') ? rawBuyerName : 'Temu Customer';
+  const recipientName = (rawBuyerName && rawBuyerName !== 'NOT_FOUND') ? rawBuyerName : 'Temu Customer';
+  const buyerName = parentMap.buyerName || parentMap.buyer_name || parentMap.buyerNickName || parentMap.buyer_nickname || rawItem.buyerName || recipientName;
   const streetName = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
   const postcode = addr.postCode || addr.postcode || addr.zipCode || addr.zipcode || addr.zip || '';
@@ -293,7 +294,9 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     user: userId,
     orderNum: orderNumber,
     temuOrderId: firstOrder.orderSn || firstOrder.order_sn || orderNumber,
-    name,
+    name: recipientName,
+    recipientName,
+    buyerName,
     country,
     streetName,
     houseNumber,
@@ -536,8 +539,12 @@ const syncUserTemuOrders = async (user) => {
 
           if (resolvedName && resolvedName !== 'NOT_FOUND') {
             mapped.name = resolvedName;
+            mapped.recipientName = resolvedName;
             console.log(`✅ Got recipient name for ${orderNum}: ${resolvedName}`);
           }
+          const resolvedBuyer = pm.buyerName || pm.buyer_name || pm.buyerNickName || addrData.buyerName || mapped.buyerName;
+          if (resolvedBuyer) mapped.buyerName = resolvedBuyer;
+
           if (resolvedStreet) mapped.streetName = resolvedStreet;
           if (resolvedCity) mapped.cityName = resolvedCity;
           if (resolvedZip) mapped.postcode = resolvedZip;
