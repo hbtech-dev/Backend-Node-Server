@@ -153,12 +153,28 @@ const TEMU_SITE_ID_TO_COUNTRY = {
 /**
  * Determine country ISO code from order metadata, siteId, regionId, or orderSn prefix
  */
+/**
+ * Determine country ISO code from order metadata, siteId, regionId, or orderSn prefix
+ */
 const getCountryFromTemuOrder = (rawItem) => {
   const parentMap = rawItem.parentOrderMap || {};
   const firstOrder = (rawItem.orderList || [])[0] || {};
   const addr = parentMap.addressInfo || parentMap.recipientAddress || {};
 
-  // 1. Check explicit country code in address/order
+  // 1. Check order number prefix FIRST (100% authoritative in Temu: PO-098- = IT, PO-163- = GR, PO-069- = FR, PO-076- = ES, etc.)
+  const orderSn = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || '';
+  if (orderSn.startsWith('PO-098-') || orderSn.startsWith('PO-104-')) return 'IT';
+  if (orderSn.startsWith('PO-069-') || orderSn.startsWith('PO-103-')) return 'FR';
+  if (orderSn.startsWith('PO-076-') || orderSn.startsWith('PO-105-') || orderSn.startsWith('PO-186-')) return 'ES';
+  if (orderSn.startsWith('PO-163-') || orderSn.startsWith('PO-111-')) return 'GR';
+  if (orderSn.startsWith('PO-102-')) return 'DE';
+  if (orderSn.startsWith('PO-101-')) return 'GB';
+  if (orderSn.startsWith('PO-106-') || orderSn.startsWith('PO-141-')) return 'NL';
+  if (orderSn.startsWith('PO-107-')) return 'PT';
+  if (orderSn.startsWith('PO-108-') || orderSn.startsWith('PO-162-')) return 'PL';
+  if (orderSn.startsWith('PO-120-')) return 'AT';
+
+  // 2. Check explicit country code in address/order
   let rawCountry = (
     addr.countryCode || addr.country_code || addr.country ||
     parentMap.countryCode || parentMap.country_code || parentMap.country ||
@@ -167,18 +183,6 @@ const getCountryFromTemuOrder = (rawItem) => {
   if (rawCountry && typeof rawCountry === 'string' && rawCountry.length === 2 && !/^\d+$/.test(rawCountry)) {
     return rawCountry.toUpperCase();
   }
-
-  // 2. Check order number prefix (e.g., PO-186- = ES, PO-141- = NL, PO-162- = PL, PO-076- = DE)
-  const orderSn = parentMap.parentOrderSn || firstOrder.orderSn || '';
-  if (orderSn.startsWith('PO-069-')) return 'FR';
-  if (orderSn.startsWith('PO-186-')) return 'ES';
-  if (orderSn.startsWith('PO-141-')) return 'NL';
-  if (orderSn.startsWith('PO-162-')) return 'PL';
-  if (orderSn.startsWith('PO-076-')) return 'DE';
-  if (orderSn.startsWith('PO-101-')) return 'GB';
-  if (orderSn.startsWith('PO-102-')) return 'DE';
-  if (orderSn.startsWith('PO-103-')) return 'FR';
-  if (orderSn.startsWith('PO-104-')) return 'IT';
 
   // 3. Check siteId mapping
   const siteId = parentMap.siteId || parentMap.site_id || firstOrder.siteId;
@@ -223,7 +227,8 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const thumbUrl = firstOrder.thumbUrl || firstOrder.thumb_url || '';
 
   // Recipient / Buyer Info
-  const name = addr.recipientName || addr.recipient_name || addr.name || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName || 'Temu Customer';
+  const rawBuyerName = addr.recipientName || addr.recipient_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
+  const name = (rawBuyerName && rawBuyerName !== 'NOT_FOUND') ? rawBuyerName : 'Temu Customer';
   const streetName = addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
   const postcode = addr.zipCode || addr.zipcode || addr.postcode || addr.zip || '';
@@ -278,7 +283,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 };
 
 /**
- * Fetch address data from Temu for a list of parent order SNs via bg.order.detail.v2.get
+ * Fetch address data from Temu for a list of parent order SNs via shippinginfo / decrypt / detail endpoints
  * Returns a Map of orderSn -> address object
  */
 const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, orderSnList = []) => {
@@ -287,27 +292,33 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
 
   for (const parentOrderSn of orderSnList) {
     try {
-      const detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
+      // 1. Try bg.order.shippinginfo.v2.get
+      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', {
         parentOrderSn,
         parent_order_sn: parentOrderSn
       });
 
+      // 2. Try bg.order.decryptshippinginfo.get
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', {
+          parentOrderSn,
+          parent_order_sn: parentOrderSn
+        });
+      }
+
+      // 3. Fallback to bg.order.detail.v2.get
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
+          parentOrderSn,
+          parent_order_sn: parentOrderSn
+        });
+      }
+
       if (detail) {
-        const fullJson = JSON.stringify(detail);
-        console.log(`🔑 detail top-level keys:`, Object.keys(detail));
-        if (detail.parentOrderMap) console.log(`🔑 parentOrderMap keys:`, Object.keys(detail.parentOrderMap));
-        if (detail.orderList && detail.orderList[0]) console.log(`🔑 orderList[0] keys:`, Object.keys(detail.orderList[0]));
-
-        console.log(`📦 bg.order.detail.v2.get HEAD (0-2000):`, fullJson.slice(0, 2000));
-        if (fullJson.length > 2000) {
-          console.log(`📦 bg.order.detail.v2.get TAIL (2000-6000):`, fullJson.slice(2000, 6000));
-        }
-
-        // Try extracting address from all possible sub-trees
         const pm = detail.parentOrderMap || {};
         const ol = (detail.orderList || [])[0] || {};
 
-        const addr = detail.receiptAddressInfo || detail.addressInfo || detail.recipientAddress ||
+        const addr = detail.receiptAddressInfo || detail.shippingInfo || detail.addressInfo || detail.recipientAddress ||
           detail.address_info || detail.receipt_address_info || detail.receiveAddressInfo ||
           pm.receiptAddressInfo || pm.addressInfo || pm.recipientAddress || pm.receiverAddress ||
           pm.receiptAddress || pm.address_info || pm.receipt_address_info || pm.recipient_address_info ||
@@ -322,7 +333,7 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         }
       }
     } catch (e) {
-      console.warn(`⚠️ Error calling bg.order.detail.v2.get for ${parentOrderSn}:`, e.message);
+      console.warn(`⚠️ Error calling address endpoints for ${parentOrderSn}:`, e.message);
     }
   }
 
