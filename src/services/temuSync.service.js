@@ -298,17 +298,44 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const thumbUrl = primaryItem.productImage;
 
   // Recipient / Buyer Info
+  const email = addr.mail || addr.email || parentMap.buyerEmail || '';
+  const phone = addr.mobile || addr.phone || parentMap.buyerPhone || '';
+
   const rawBuyerName = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
   const recipientName = (rawBuyerName && rawBuyerName !== 'NOT_FOUND') ? rawBuyerName : 'Temu Customer';
-  const buyerName = parentMap.buyerName || parentMap.buyer_name || parentMap.buyerNickName || parentMap.buyer_nickname || rawItem.buyerName || recipientName;
+
+  let rawBuyerHandle = (
+    parentMap.buyerName ||
+    parentMap.buyer_name ||
+    parentMap.buyerNickName ||
+    parentMap.buyer_nickname ||
+    parentMap.buyerAccount ||
+    parentMap.buyer_account ||
+    parentMap.userName ||
+    parentMap.user_name ||
+    firstOrder.buyerName ||
+    firstOrder.buyer_name ||
+    firstOrder.buyerNickName ||
+    firstOrder.buyer_nickname ||
+    rawItem.buyerName
+  );
+
+  if (!rawBuyerHandle || rawBuyerHandle === recipientName) {
+    if (email && email.includes('@')) {
+      const prefix = email.split('@')[0];
+      if (prefix && prefix.length > 4) {
+        rawBuyerHandle = `${prefix.slice(0, 3)}***${prefix.slice(-2)}`;
+      }
+    }
+  }
+
+  const buyerName = rawBuyerHandle || 'Temu Buyer';
   const streetName = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
   const postcode = addr.postCode || addr.postcode || addr.zipCode || addr.zipcode || addr.zip || '';
   const cityName = addr.regionName3 || addr.city || addr.cityName || addr.city_name || parentMap.regionName3 || '';
   const fullAddress = addr.fullAddress || addr.full_address || addr.detailAddress ||
     [streetName, cityName, postcode, country].filter(Boolean).join(', ') || (cityName ? `${cityName}, ${country}` : '');
-  const email = addr.mail || addr.email || parentMap.buyerEmail || '';
-  const phone = addr.mobile || addr.phone || parentMap.buyerPhone || '';
 
   // Timestamps
   const createTime = parentMap.parentOrderTime || parentMap.parentConfirmTime || firstOrder.orderCreateTime;
