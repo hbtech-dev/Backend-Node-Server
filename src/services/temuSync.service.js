@@ -374,7 +374,8 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     }
   }
 
-  const buyerName = rawBuyerHandle || 'Temu Buyer';
+  const isGenericHandle = !rawBuyerHandle || rawBuyerHandle === 'Temu Buyer' || rawBuyerHandle === 'Temu Customer';
+  const buyerName = isGenericHandle ? (recipientName && recipientName !== 'NOT_FOUND' ? recipientName : 'Temu Customer') : rawBuyerHandle;
   const streetName = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
   const postcode = addr.postCode || addr.postcode || addr.zipCode || addr.zipcode || addr.zip || '';
@@ -654,7 +655,11 @@ const syncUserTemuOrders = async (user) => {
             console.log(`✅ Got recipient name for ${orderNum}: ${resolvedName}`);
           }
           const resolvedBuyer = pm.buyerName || pm.buyer_name || pm.buyerNickName || addrData.buyerName || mapped.buyerName;
-          if (resolvedBuyer) mapped.buyerName = resolvedBuyer;
+          if (resolvedBuyer && resolvedBuyer !== 'Temu Buyer' && resolvedBuyer !== 'Temu Customer') {
+            mapped.buyerName = resolvedBuyer;
+          } else {
+            mapped.buyerName = mapped.recipientName || mapped.name || 'Temu Customer';
+          }
 
           if (resolvedStreet) mapped.streetName = resolvedStreet;
           if (resolvedCity) mapped.cityName = resolvedCity;
