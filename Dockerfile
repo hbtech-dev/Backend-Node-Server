@@ -1,22 +1,22 @@
-# Use Node 20 LTS Alpine image for fast, reliable builds
+# Use Node 20 LTS Alpine image
 FROM node:20-alpine
 
 # Set working directory
 WORKDIR /app
 
-# Copy dependency manifests
+# Copy package files
 COPY package*.json ./
 
-# Install production dependencies
-RUN npm ci --omit=dev
+# Install production dependencies cleanly
+RUN npm install --omit=dev
 
-# Copy application source code
+# Copy application code
 COPY . .
 
-# Expose port (Railway sets PORT dynamically, defaults to 3000)
+# Expose port
 EXPOSE 3000
 
-# Set Node environment to production
+# Set production environment
 ENV NODE_ENV=production
 
 # Start application
