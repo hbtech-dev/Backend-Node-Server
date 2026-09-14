@@ -240,6 +240,51 @@ const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
 };
 
 /**
+ * Calculate dynamic packaging dimensions and weight based on actual order items and quantities.
+ */
+const calculateTemuPackageInfo = (items = []) => {
+  let totalWeightKg = 0;
+  let totalQty = 0;
+
+  for (const item of items) {
+    const qty = Number(item.quantity || 1);
+    totalQty += qty;
+    const spec = `${item.variation || ''} ${item.articleName || ''}`.toUpperCase();
+
+    let unitWeight = 0.35; // Default fallback unit weight (kg)
+
+    if (spec.includes('720 SOFT') || spec.includes('720 CAPS') || spec.includes('720 COUNT')) {
+      unitWeight = 0.85;
+    } else if (spec.includes('360 SOFT') || spec.includes('360 CAPS') || spec.includes('360 COUNT')) {
+      unitWeight = 0.45;
+    } else if (spec.includes('180 SOFT') || spec.includes('180 CAPS')) {
+      unitWeight = 0.30;
+    } else if (spec.includes('120') || spec.includes('90')) {
+      unitWeight = 0.25;
+    } else if (spec.includes('GUMM') || spec.includes('PACK OF 1') || spec.includes('1 PACK') || spec.includes('60')) {
+      unitWeight = 0.20;
+    }
+
+    totalWeightKg += unitWeight * qty;
+  }
+
+  if (totalWeightKg === 0) totalWeightKg = 0.20;
+
+  const formattedWeight = `${totalWeightKg.toFixed(2)} kg`;
+
+  let packaging = 'Small Box (16×12×8cm)';
+  if (totalWeightKg > 1.50 || totalQty >= 4) {
+    packaging = 'XL Parcel (35×25×15cm)';
+  } else if (totalWeightKg > 0.70 || totalQty >= 2) {
+    packaging = 'Large Box (28×20×12cm)';
+  } else if (totalWeightKg > 0.35) {
+    packaging = 'Medium Box (22×16×10cm)';
+  }
+
+  return { packaging, weight: formattedWeight };
+};
+
+/**
  * Map Temu API order object to our TemuOrder model fields.
  */
 const mapTemuOrderToModel = (rawItem, userId) => {
@@ -353,6 +398,8 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     parsedPrice = primaryItem.price || 19.99;
   }
 
+  const pkgInfo = calculateTemuPackageInfo(items);
+
   return {
     user: userId,
     orderNum: orderNumber,
@@ -373,10 +420,10 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     quantity,
     variation,
     items,
-    packaging: 'Small Parcel (25x18x10cm)',
+    packaging: pkgInfo.packaging,
     productImage: thumbUrl,
     price: parsedPrice,
-    weight: '0.50 kg',
+    weight: pkgInfo.weight,
     shippingMethod: 'DHL Paket International',
     orderDate,
     status: 'open',
@@ -789,4 +836,5 @@ const uploadTrackingToTemu = async (user, order) => {
 
 exports.syncUserTemuOrders = syncUserTemuOrders;
 exports.uploadTrackingToTemu = uploadTrackingToTemu;
+exports.calculateTemuPackageInfo = calculateTemuPackageInfo;
 
