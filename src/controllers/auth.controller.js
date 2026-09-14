@@ -142,6 +142,7 @@ exports.refreshToken = catchAsync(async (req, res, next) => {
   });
 });
 
+// Redeployment trigger: Temu order sync & address enrichment active
 exports.logout = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
