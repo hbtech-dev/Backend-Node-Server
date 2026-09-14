@@ -602,29 +602,32 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     }
   }
 
-  const appKey = process.env.TEMU_APP_KEY;
-  const appSecret = process.env.TEMU_APP_SECRET;
-
-  if (!appKey || !appSecret) {
-    return res.redirect(`${frontendUrl}/settings?temu_error=server_credentials_missing`);
-  }
+  const cleanKey = (appKey || '').trim();
+  const cleanSecret = (appSecret || '').trim();
+  const cleanCode = (code || '').trim();
 
   const crypto = require('crypto');
   const httpFetch = require('../utils/httpHelper');
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  // Build token exchange request (Temu Open Platform requires access_token to equal the authorization code for first-time code exchange)
-  const payload = {
-    app_key: appKey,
-    access_token: code,
+  // Signature calculation payload for bg.open.accesstoken.create
+  const signPayload = {
+    app_key: cleanKey,
     timestamp: timestamp,
     type: 'bg.open.accesstoken.create',
-    code: code
+    code: cleanCode
   };
 
-  const sortedKeys = Object.keys(payload).sort();
-  const signStr = appSecret + sortedKeys.map(k => k + payload[k]).join('') + appSecret;
+  const sortedKeys = Object.keys(signPayload).sort();
+  const signStr = cleanSecret + sortedKeys.map(k => k + signPayload[k]).join('') + cleanSecret;
   const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+  // Full POST body sent to Temu router gateway (requires access_token = cleanCode for code exchange)
+  const fullBody = {
+    ...signPayload,
+    access_token: cleanCode,
+    sign
+  };
 
   const routerUrl = process.env.TEMU_ROUTER_URL || 'https://openapi-b-eu.temu.com/openapi/router';
 
@@ -634,7 +637,7 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     const tokenRes = await httpFetch(routerUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, sign }),
+      body: JSON.stringify(fullBody),
       timeout: 15000
     });
 
