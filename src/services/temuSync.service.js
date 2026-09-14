@@ -153,9 +153,6 @@ const TEMU_SITE_ID_TO_COUNTRY = {
 /**
  * Determine country ISO code from order metadata, siteId, regionId, or orderSn prefix
  */
-/**
- * Determine country ISO code from order metadata, siteId, regionId, or orderSn prefix
- */
 const getCountryFromTemuOrder = (rawItem) => {
   const parentMap = rawItem.parentOrderMap || {};
   const firstOrder = (rawItem.orderList || [])[0] || {};
