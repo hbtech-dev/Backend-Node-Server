@@ -150,42 +150,80 @@ const TEMU_SITE_ID_TO_COUNTRY = {
   1: 'US', 2: 'CA', 3: 'AU', 4: 'NZ',
 };
 
+const COUNTRY_NAME_TO_ISO = {
+  'ITALY': 'IT', 'ITALIA': 'IT',
+  'PORTUGAL': 'PT',
+  'FRANCE': 'FR', 'FRANKREICH': 'FR',
+  'GERMANY': 'DE', 'DEUTSCHLAND': 'DE',
+  'SPAIN': 'ES', 'ESPAÑA': 'ES', 'SPANIEN': 'ES',
+  'UNITED KINGDOM': 'GB', 'GREAT BRITAIN': 'GB', 'UK': 'GB',
+  'NETHERLANDS': 'NL', 'NEDERLAND': 'NL', 'HOLLAND': 'NL',
+  'AUSTRIA': 'AT', 'ÖSTERREICH': 'AT',
+  'POLAND': 'PL', 'POLSKA': 'PL',
+  'BELGIUM': 'BE', 'BELGIË': 'BE', 'BELGIQUE': 'BE',
+  'SWEDEN': 'SE', 'SVERIGE': 'SE',
+  'GREECE': 'GR', 'HELLAS': 'GR',
+  'CZECH REPUBLIC': 'CZ', 'CZECHIA': 'CZ',
+  'ROMANIA': 'RO',
+  'HUNGARY': 'HU', 'MAGYARORSZÁG': 'HU',
+  'DENMARK': 'DK', 'DANMARK': 'DK',
+  'FINLAND': 'FI', 'SUOMI': 'FI',
+  'SLOVAKIA': 'SK',
+  'CROATIA': 'HR', 'HRVATSKA': 'HR',
+  'SLOVENIA': 'SI',
+  'LITHUANIA': 'LT',
+  'LATVIA': 'LV',
+  'ESTONIA': 'EE',
+  'IRELAND': 'IE',
+  'BULGARIA': 'BG',
+  'SWITZERLAND': 'CH', 'SCHWEIZ': 'CH', 'SUISSE': 'CH',
+  'UNITED STATES': 'US', 'USA': 'US',
+  'CANADA': 'CA',
+  'AUSTRALIA': 'AU'
+};
+
+const resolveCountryIso = (val) => {
+  if (!val || typeof val !== 'string') return null;
+  const trimmed = val.trim().toUpperCase();
+  if (trimmed.length === 2 && !/^\d+$/.test(trimmed)) return trimmed;
+  if (COUNTRY_NAME_TO_ISO[trimmed]) return COUNTRY_NAME_TO_ISO[trimmed];
+  return null;
+};
+
 /**
  * Determine country ISO code from order metadata, siteId, regionId, or orderSn prefix
  */
-const getCountryFromTemuOrder = (rawItem) => {
+const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
   const parentMap = rawItem.parentOrderMap || {};
   const firstOrder = (rawItem.orderList || [])[0] || {};
-  const addr = parentMap.addressInfo || parentMap.recipientAddress || {};
+  const addr = addrMapItem || parentMap.addressInfo || parentMap.recipientAddress || {};
 
-  // 1. Check order number prefix FIRST (100% authoritative in Temu: PO-098- = IT, PO-163- = GR, PO-069- = FR, PO-076- = ES, etc.)
-  const orderSn = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || '';
-  if (orderSn.startsWith('PO-098-') || orderSn.startsWith('PO-104-')) return 'IT';
-  if (orderSn.startsWith('PO-069-') || orderSn.startsWith('PO-103-')) return 'FR';
-  if (orderSn.startsWith('PO-076-') || orderSn.startsWith('PO-105-') || orderSn.startsWith('PO-186-')) return 'ES';
-  if (orderSn.startsWith('PO-163-') || orderSn.startsWith('PO-111-')) return 'GR';
-  if (orderSn.startsWith('PO-102-')) return 'DE';
-  if (orderSn.startsWith('PO-101-')) return 'GB';
-  if (orderSn.startsWith('PO-106-') || orderSn.startsWith('PO-141-')) return 'NL';
-  if (orderSn.startsWith('PO-107-')) return 'PT';
-  if (orderSn.startsWith('PO-108-') || orderSn.startsWith('PO-162-')) return 'PL';
-  if (orderSn.startsWith('PO-120-')) return 'AT';
+  // 1. Check explicit regionName1 / country in logistics address or parentMap FIRST
+  const rawCountry = addr.regionName1 || addr.countryName || addr.countryCode || addr.country_code || addr.country ||
+    parentMap.regionName1 || parentMap.countryCode || parentMap.country_code || parentMap.country ||
+    firstOrder.countryCode || firstOrder.country_code;
+  
+  const isoFromCountry = resolveCountryIso(rawCountry);
+  if (isoFromCountry) return isoFromCountry;
 
-  // 2. Check explicit country code in address/order
-  let rawCountry = (
-    addr.countryCode || addr.country_code || addr.country ||
-    parentMap.countryCode || parentMap.country_code || parentMap.country ||
-    firstOrder.countryCode || firstOrder.country_code
-  );
-  if (rawCountry && typeof rawCountry === 'string' && rawCountry.length === 2 && !/^\d+$/.test(rawCountry)) {
-    return rawCountry.toUpperCase();
-  }
-
-  // 3. Check siteId mapping
+  // 2. Check siteId mapping
   const siteId = parentMap.siteId || parentMap.site_id || firstOrder.siteId;
   if (siteId && TEMU_SITE_ID_TO_COUNTRY[siteId]) {
     return TEMU_SITE_ID_TO_COUNTRY[siteId];
   }
+
+  // 3. Check order number prefix
+  const orderSn = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || '';
+  if (orderSn.startsWith('PO-098-') || orderSn.startsWith('PO-104-')) return 'IT';
+  if (orderSn.startsWith('PO-069-') || orderSn.startsWith('PO-103-')) return 'FR';
+  if (orderSn.startsWith('PO-076-') || orderSn.startsWith('PO-105-') || orderSn.startsWith('PO-186-')) return 'ES';
+  if (orderSn.startsWith('PO-107-')) return 'PT';
+  if (orderSn.startsWith('PO-102-')) return 'DE';
+  if (orderSn.startsWith('PO-101-')) return 'GB';
+  if (orderSn.startsWith('PO-106-') || orderSn.startsWith('PO-141-')) return 'NL';
+  if (orderSn.startsWith('PO-108-') || orderSn.startsWith('PO-162-')) return 'PL';
+  if (orderSn.startsWith('PO-120-')) return 'AT';
+  if (orderSn.startsWith('PO-111-')) return 'GR';
 
   // 4. Check orderLabel for destination country (e.g., EU_to_UK)
   const orderLabels = firstOrder.orderLabel || parentMap.parentOrderLabel || [];
@@ -224,16 +262,16 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const thumbUrl = firstOrder.thumbUrl || firstOrder.thumb_url || '';
 
   // Recipient / Buyer Info
-  const rawBuyerName = addr.recipientName || addr.recipient_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
+  const rawBuyerName = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
   const name = (rawBuyerName && rawBuyerName !== 'NOT_FOUND') ? rawBuyerName : 'Temu Customer';
-  const streetName = addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
+  const streetName = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
-  const postcode = addr.zipCode || addr.zipcode || addr.postcode || addr.zip || '';
-  const cityName = addr.city || addr.cityName || addr.city_name || parentMap.regionName3 || '';
+  const postcode = addr.postCode || addr.postcode || addr.zipCode || addr.zipcode || addr.zip || '';
+  const cityName = addr.regionName3 || addr.city || addr.cityName || addr.city_name || parentMap.regionName3 || '';
   const fullAddress = addr.fullAddress || addr.full_address || addr.detailAddress ||
     [streetName, cityName, postcode, country].filter(Boolean).join(', ') || (cityName ? `${cityName}, ${country}` : '');
-  const email = addr.email || parentMap.buyerEmail || '';
-  const phone = addr.phone || addr.mobile || parentMap.buyerPhone || '';
+  const email = addr.mail || addr.email || parentMap.buyerEmail || '';
+  const phone = addr.mobile || addr.phone || parentMap.buyerPhone || '';
 
   // Timestamps
   const createTime = parentMap.parentOrderTime || parentMap.parentConfirmTime || firstOrder.orderCreateTime;
@@ -315,15 +353,22 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         const pm = detail.parentOrderMap || {};
         const ol = (detail.orderList || [])[0] || {};
 
-        const addr = detail.receiptAddressInfo || detail.shippingInfo || detail.addressInfo || detail.recipientAddress ||
+        const isDirectAddressObject = Boolean(
+          detail.receiptName || detail.addressLineAll || detail.addressLine1 ||
+          detail.regionName1 || detail.mobile || detail.mail || detail.addressExtra
+        );
+
+        const addr = isDirectAddressObject ? detail : (
+          detail.receiptAddressInfo || detail.shippingInfo || detail.addressInfo || detail.recipientAddress ||
           detail.address_info || detail.receipt_address_info || detail.receiveAddressInfo ||
           pm.receiptAddressInfo || pm.addressInfo || pm.recipientAddress || pm.receiverAddress ||
           pm.receiptAddress || pm.address_info || pm.receipt_address_info || pm.recipient_address_info ||
           ol.receiptAddressInfo || ol.addressInfo || ol.recipientAddress || ol.address_info ||
-          ol.receipt_address_info || ol.consignee || ol.shippingAddress || ol.recipientInfo;
+          ol.receipt_address_info || ol.consignee || ol.shippingAddress || ol.recipientInfo
+        );
 
         if (addr) {
-          console.log(`✅ Found address object for ${parentOrderSn}:`, JSON.stringify(addr));
+          console.log(`✅ Found address object for ${parentOrderSn}:`, JSON.stringify(addr).slice(0, 300));
           addrMap.set(parentOrderSn, addr);
         } else {
           console.log(`⚠️ Address object not found in standard paths for ${parentOrderSn}`);
@@ -454,18 +499,60 @@ const syncUserTemuOrders = async (user) => {
         // --- Enrich with address from logistics API map ---
         const addrData = logisticsAddrMap.get(orderNum) || logisticsAddrMap.get(ol.orderSn);
         if (addrData) {
-          const resolvedName = addrData.recipientName || addrData.recipient_name || addrData.name || addrData.buyerName || addrData.consigneeName || addrData.consignee;
-          const resolvedStreet = addrData.streetName || addrData.street_name || addrData.detailAddress || addrData.detail_address || addrData.address1 || addrData.address;
-          const resolvedCity = addrData.city || addrData.cityName || addrData.city_name;
-          const resolvedZip = addrData.zipCode || addrData.zipcode || addrData.zip_code || addrData.postCode || addrData.postcode;
-          const resolvedPhone = addrData.phone || addrData.mobile || addrData.phoneNumber || addrData.phone_number;
-          if (resolvedName) { mapped.name = resolvedName; console.log(`✅ Got name for ${orderNum}: ${resolvedName}`); }
+          const nameExtra = addrData.addressExtra
+            ? `${addrData.addressExtra.firstName || ''} ${addrData.addressExtra.lastName || ''}`.trim()
+            : '';
+          const resolvedName = (
+            addrData.receiptName ||
+            addrData.receipt_name ||
+            (nameExtra && nameExtra !== '' ? nameExtra : null) ||
+            addrData.recipientName ||
+            addrData.recipient_name ||
+            addrData.name ||
+            addrData.buyerName ||
+            addrData.consigneeName ||
+            addrData.consignee
+          );
+
+          const resolvedStreet = (
+            addrData.addressLineAll ||
+            addrData.addressLine1 ||
+            addrData.detailAddress ||
+            addrData.detail_address ||
+            addrData.streetName ||
+            addrData.street_name ||
+            addrData.address1 ||
+            addrData.address
+          );
+
+          const resolvedCity = addrData.regionName3 || addrData.city || addrData.cityName || addrData.city_name;
+          const resolvedState = addrData.regionName2 || addrData.province || addrData.state;
+          const resolvedZip = addrData.postCode || addrData.postcode || addrData.zipCode || addrData.zipcode || addrData.zip_code || addrData.zip || addrData.postalCode;
+          const resolvedPhone = addrData.mobile || addrData.phone || addrData.phoneNumber || addrData.phone_number || addrData.backupMobile;
+          const resolvedEmail = addrData.mail || addrData.email || addrData.buyerEmail;
+
+          const rawCountryName = addrData.regionName1 || addrData.country || addrData.countryCode;
+          const resolvedCountry = resolveCountryIso(rawCountryName) || mapped.country;
+
+          if (resolvedName && resolvedName !== 'NOT_FOUND') {
+            mapped.name = resolvedName;
+            console.log(`✅ Got recipient name for ${orderNum}: ${resolvedName}`);
+          }
           if (resolvedStreet) mapped.streetName = resolvedStreet;
           if (resolvedCity) mapped.cityName = resolvedCity;
           if (resolvedZip) mapped.postcode = resolvedZip;
           if (resolvedPhone) mapped.phone = resolvedPhone;
-          if (resolvedStreet || resolvedCity) {
-            mapped.address = [resolvedStreet, resolvedCity, resolvedZip, mapped.country].filter(Boolean).join(', ');
+          if (resolvedEmail) mapped.email = resolvedEmail;
+          if (resolvedCountry) mapped.country = resolvedCountry;
+
+          const addressParts = [];
+          if (resolvedStreet) addressParts.push(resolvedStreet);
+          const cityZipPart = [resolvedZip, resolvedCity].filter(Boolean).join(' ');
+          if (cityZipPart) addressParts.push(cityZipPart);
+          if (resolvedState && resolvedState !== resolvedCity) addressParts.push(resolvedState);
+          if (mapped.country) addressParts.push(mapped.country);
+          if (addressParts.length > 0) {
+            mapped.address = addressParts.join(', ');
           }
         } else {
           // Fallback: query order detail via bg.order.detail.v2.get for full recipient name & shipping address
@@ -482,23 +569,36 @@ const syncUserTemuOrders = async (user) => {
 
             if (orderDetail) {
               const pmDetail = orderDetail.parentOrderMap || {};
-              const addr = orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress || orderDetail.address_info ||
-                pmDetail.receiptAddressInfo || pmDetail.addressInfo || pmDetail.recipientAddress || pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail;
+              const addr = (
+                orderDetail.receiptName || orderDetail.addressLineAll ? orderDetail :
+                (orderDetail.receiptAddressInfo || orderDetail.addressInfo || orderDetail.recipientAddress || orderDetail.address_info ||
+                 pmDetail.receiptAddressInfo || pmDetail.addressInfo || pmDetail.recipientAddress || pmDetail.receiverAddress || pmDetail.receiptAddress || pmDetail)
+              );
 
-              const n = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name ||
-                addr.receiverName || addr.receiver_name || addr.name || addr.buyerName || addr.buyer_name ||
-                addr.consigneeName || addr.consignee || pmDetail.recipientName || pmDetail.receiptName || pmDetail.buyerName;
-              if (n) { mapped.name = n; }
-              const s = addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1 || addr.address;
+              const nameExtra = addr.addressExtra
+                ? `${addr.addressExtra.firstName || ''} ${addr.addressExtra.lastName || ''}`.trim()
+                : '';
+              const n = addr.receiptName || addr.receipt_name || (nameExtra && nameExtra !== '' ? nameExtra : null) ||
+                addr.recipientName || addr.recipient_name || addr.receiverName || addr.receiver_name || addr.name ||
+                addr.buyerName || addr.buyer_name || addr.consigneeName || addr.consignee || pmDetail.recipientName || pmDetail.receiptName || pmDetail.buyerName;
+              if (n && n !== 'NOT_FOUND') { mapped.name = n; }
+
+              const s = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1 || addr.address;
               if (s) mapped.streetName = s;
-              const c = addr.city || addr.cityName || addr.city_name || pmDetail.regionName3;
+              const c = addr.regionName3 || addr.city || addr.cityName || addr.city_name || pmDetail.regionName3;
               if (c) mapped.cityName = c;
-              const z = addr.zipCode || addr.zipcode || addr.zip_code || addr.postcode;
+              const z = addr.postCode || addr.postcode || addr.zipCode || addr.zipcode || addr.zip_code;
               if (z) mapped.postcode = z;
-              const p = addr.phone || addr.mobile || addr.phoneNumber;
+              const p = addr.mobile || addr.phone || addr.phoneNumber;
               if (p) mapped.phone = p;
+              const em = addr.mail || addr.email || pmDetail.buyerEmail;
+              if (em) mapped.email = em;
+
+              const cnt = resolveCountryIso(addr.regionName1 || pmDetail.regionName1) || mapped.country;
+              if (cnt) mapped.country = cnt;
+
               if (s || c) {
-                mapped.address = [s || mapped.streetName, c || mapped.cityName, z || mapped.postcode, mapped.country].filter(Boolean).join(', ');
+                mapped.address = [s || mapped.streetName, [z || mapped.postcode, c || mapped.cityName].filter(Boolean).join(' '), mapped.country].filter(Boolean).join(', ');
               }
             }
           } catch (_) { /* silent fallback */ }
