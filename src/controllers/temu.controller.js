@@ -613,10 +613,10 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
   const httpFetch = require('../utils/httpHelper');
   const timestamp = Math.floor(Date.now() / 1000).toString();
 
-  // Build token exchange request (Temu Router Gateway requires non-empty access_token placeholder for validation)
+  // Build token exchange request (Temu Open Platform requires access_token to equal the authorization code for first-time code exchange)
   const payload = {
     app_key: appKey,
-    access_token: appKey,
+    access_token: code,
     timestamp: timestamp,
     type: 'bg.open.accesstoken.create',
     code: code
