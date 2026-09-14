@@ -655,13 +655,14 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     const accessToken = result.access_token || result.accessToken;
     const mallId = result.mall_id || result.mallId || '';
     const mallName = result.mall_name || result.mallName || '';
+    const associatedMallTokenList = result.associatedMallTokenList || result.associated_mall_token_list || [];
 
     if (!accessToken) {
       console.warn('❌ Temu OAuth: access_token missing from response.');
       return res.redirect(`${frontendUrl}/settings?temu_error=no_access_token_in_response`);
     }
 
-    console.log(`✅ Temu OAuth: Got access_token for mall ${mallId} (${mallName})`);
+    console.log(`✅ Temu OAuth: Got primary access_token for mall ${mallId} (${mallName}) with ${associatedMallTokenList.length} associated regional store token(s).`);
 
     // Find the user via state parameter or fallback to primary user if initiated directly from Temu App Store
     const mongoose = require('mongoose');
@@ -679,32 +680,58 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
       return res.redirect(`${frontendUrl}/settings?temu_error=user_not_found`);
     }
 
-    // Save the new integration
-    const newIntegration = {
-      isConnected: true,
-      appKey: cleanKey,
-      appSecret: cleanSecret,
-      accessToken: accessToken,
-      sellerId: mallId.toString(),
-      shopName: mallName || `Temu-${mallId}`,
-      lastSyncedAt: new Date()
-    };
-
     if (!user.temuIntegrations) user.temuIntegrations = [];
 
-    // Upsert by mall_id to avoid duplicates
-    const existingIdx = user.temuIntegrations.findIndex(i => i.sellerId === mallId.toString());
-    if (existingIdx > -1) {
-      user.temuIntegrations[existingIdx] = newIntegration;
-    } else {
-      user.temuIntegrations.push(newIntegration);
+    // Build array of all store tokens to register (Primary store + all associated regional stores e.g. France, Italy, Spain, etc.)
+    const storesToRegister = [
+      {
+        sellerId: mallId ? mallId.toString() : `Temu-${accessToken.slice(-6)}`,
+        shopName: mallName || `Temu-${mallId || accessToken.slice(-6)}`,
+        accessToken: accessToken
+      }
+    ];
+
+    if (Array.isArray(associatedMallTokenList) && associatedMallTokenList.length > 0) {
+      associatedMallTokenList.forEach(assoc => {
+        const assocToken = assoc.accessToken || assoc.access_token;
+        const assocMallId = (assoc.mallId || assoc.mall_id || '').toString();
+        const assocMallName = assoc.mallName || assoc.mall_name || (assoc.regionName ? `Temu (${assoc.regionName})` : `Temu-${assocMallId}`);
+
+        if (assocToken && !storesToRegister.some(s => s.accessToken === assocToken)) {
+          storesToRegister.push({
+            sellerId: assocMallId || `Temu-${assocToken.slice(-6)}`,
+            shopName: assocMallName,
+            accessToken: assocToken
+          });
+        }
+      });
     }
 
-    // Keep single temuIntegration as legacy fallback
-    user.temuIntegration = newIntegration;
+    // Upsert all regional store integrations for the user
+    for (const store of storesToRegister) {
+      const integrationObj = {
+        isConnected: true,
+        appKey: cleanKey,
+        appSecret: cleanSecret,
+        accessToken: store.accessToken,
+        sellerId: store.sellerId,
+        shopName: store.shopName,
+        lastSyncedAt: new Date()
+      };
+
+      const existingIdx = user.temuIntegrations.findIndex(i => i.accessToken === store.accessToken || (store.sellerId && i.sellerId === store.sellerId));
+      if (existingIdx > -1) {
+        user.temuIntegrations[existingIdx] = integrationObj;
+      } else {
+        user.temuIntegrations.push(integrationObj);
+      }
+    }
+
+    // Keep single temuIntegration as legacy fallback pointing to primary store
+    user.temuIntegration = user.temuIntegrations[0];
     await user.save();
 
-    console.log(`✅ Temu OAuth: Saved integration for user ${user.email}, mall ${mallId}`);
+    console.log(`✅ Temu OAuth: Saved ${storesToRegister.length} regional store integration(s) for user ${user.email}`);
 
     // Trigger background order sync
     try {
