@@ -170,6 +170,7 @@ const getCountryFromTemuOrder = (rawItem) => {
 
   // 2. Check order number prefix (e.g., PO-186- = ES, PO-141- = NL, PO-162- = PL, PO-076- = DE)
   const orderSn = parentMap.parentOrderSn || firstOrder.orderSn || '';
+  if (orderSn.startsWith('PO-069-')) return 'FR';
   if (orderSn.startsWith('PO-186-')) return 'ES';
   if (orderSn.startsWith('PO-141-')) return 'NL';
   if (orderSn.startsWith('PO-162-')) return 'PL';
@@ -355,22 +356,37 @@ const syncUserTemuOrders = async (user) => {
     try {
       console.log(`🔄 Syncing Temu store "${shopName}"...`);
 
-      // --- Step 2: Fetch unshipped & pending order lists ---
+      const nowSec = Math.floor(Date.now() / 1000);
+      const thirtyDaysAgo = nowSec - (30 * 86400);
+
+      // --- Step 2: Fetch unshipped & pending order lists with 30-day historical time window ---
       // parentOrderStatus 2 = UN_SHIPPING, 1 = PENDING, 0 = ALL
       const unshippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
         parentOrderStatus: 2, parent_order_status: 2,
+        updateTimeStart: thirtyDaysAgo, update_time_start: thirtyDaysAgo,
+        updateTimeEnd: nowSec, update_time_end: nowSec,
+        createTimeStart: thirtyDaysAgo, create_time_start: thirtyDaysAgo,
+        createTimeEnd: nowSec, create_time_end: nowSec,
         pageNumber: 1, page_number: 1,
         pageSize: 100, page_size: 100
       });
 
       const pendingList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
         parentOrderStatus: 1, parent_order_status: 1,
+        updateTimeStart: thirtyDaysAgo, update_time_start: thirtyDaysAgo,
+        updateTimeEnd: nowSec, update_time_end: nowSec,
+        createTimeStart: thirtyDaysAgo, create_time_start: thirtyDaysAgo,
+        createTimeEnd: nowSec, create_time_end: nowSec,
         pageNumber: 1, page_number: 1,
         pageSize: 100, page_size: 100
       });
 
       const allList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
         parentOrderStatus: 0, parent_order_status: 0,
+        updateTimeStart: thirtyDaysAgo, update_time_start: thirtyDaysAgo,
+        updateTimeEnd: nowSec, update_time_end: nowSec,
+        createTimeStart: thirtyDaysAgo, create_time_start: thirtyDaysAgo,
+        createTimeEnd: nowSec, create_time_end: nowSec,
         pageNumber: 1, page_number: 1,
         pageSize: 100, page_size: 100
       });
