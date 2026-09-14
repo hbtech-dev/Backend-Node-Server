@@ -269,7 +269,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
       item.goods_spec ||
       'Standard'
     );
-    const itemImg = item.thumbUrl || item.thumb_url || '';
+    const itemImg = item.thumbUrl || item.thumb_url || item.imageUrl || item.image_url || item.goodsImg || item.goods_img || item.goodsThumbUrl || item.goods_thumb_url || '';
     let itemPrice = Number(item.goodsPrice || item.goods_price || 0);
     if (itemPrice > 500) itemPrice = itemPrice / 100;
     return {
