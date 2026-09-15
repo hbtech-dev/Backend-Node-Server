@@ -581,27 +581,36 @@ const syncUserTemuOrders = async (user) => {
       // --- Fetch logistics address details for active orders via bg.order.detail.v2.get ---
       const logisticsAddrMap = await fetchTemuLogisticsAddresses(appKey, appSecret, accessToken, activeOrderSns);
 
-      // Update shipped/canceled statuses in DB (preserves history)
-      const shippedNums = [];
-      const canceledNums = [];
-      [...unshippedList, ...pendingList, ...allList].forEach(rawItem => {
+      // Update shipped/canceled statuses in DB (preserves history and tracking numbers for manual external shipments)
+      for (const rawItem of [...unshippedList, ...pendingList, ...allList]) {
         const pm = rawItem.parentOrderMap || {};
+        const ol = (rawItem.orderList || [])[0] || {};
         const status = pm.parentOrderStatus;
-        const orderSn = pm.parentOrderSn || (rawItem.orderList || [])[0]?.orderSn;
-        if (status === 4 || status === 5) { if (orderSn) shippedNums.push(orderSn); }
-        else if (status === 3) { if (orderSn) canceledNums.push(orderSn); }
-      });
-      if (shippedNums.length > 0) {
-        await TemuOrder.updateMany(
-          { user: user._id, status: 'open', orderNum: { $in: shippedNums } },
-          { $set: { status: 'printed' } }
+        const orderSn = pm.parentOrderSn || ol.orderSn;
+        if (!orderSn) continue;
+
+        const trackingNo = (
+          pm.trackingNo || pm.tracking_no || pm.waybillNo || pm.waybill_no || pm.expressNo || pm.express_no ||
+          rawItem.trackingNo || rawItem.tracking_no || rawItem.waybillNo || rawItem.waybill_no || rawItem.expressNo || rawItem.express_no ||
+          ol.trackingNo || ol.tracking_no || ol.waybillNo || ol.waybill_no || ol.expressNo || ol.express_no || ''
         );
-      }
-      if (canceledNums.length > 0) {
-        await TemuOrder.updateMany(
-          { user: user._id, status: 'open', orderNum: { $in: canceledNums } },
-          { $set: { status: 'canceled' } }
-        );
+
+        if (status === 4 || status === 5) {
+          const $set = { status: 'printed' };
+          if (trackingNo) {
+            $set.tracking = trackingNo;
+            $set.qrCodeData = `https://shipstation.dhl.com/track/${trackingNo}`;
+          }
+          await TemuOrder.updateOne(
+            { user: user._id, orderNum: orderSn },
+            { $set }
+          );
+        } else if (status === 3) {
+          await TemuOrder.updateOne(
+            { user: user._id, orderNum: orderSn },
+            { $set: { status: 'canceled' } }
+          );
+        }
       }
 
       // --- Step 3: Upsert active unshipped orders with address enrichment ---
