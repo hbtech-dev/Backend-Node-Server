@@ -792,32 +792,17 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     }
   };
 
-  const childSn = '163-16693320510072869'; // sub-order SN
-  const rawParent = orderSn;
-  const cleanParent = orderSn.replace(/^PO-/i, '').trim();
-
-  const results = {};
-  results['list_parentOrderSn_raw'] = await callRaw('bg.order.list.v2.get', { parentOrderSn: rawParent });
-  results['list_parentOrderSn_clean'] = await callRaw('bg.order.list.v2.get', { parentOrderSn: cleanParent });
-  results['list_parentOrderSnList_raw'] = await callRaw('bg.order.list.v2.get', { parentOrderSnList: [rawParent] });
-  results['list_parentOrderSnList_clean'] = await callRaw('bg.order.list.v2.get', { parentOrderSnList: [cleanParent] });
-
-  results['detail_parentOrderSn_clean'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: cleanParent });
-  results['detail_parentOrderSn_raw'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: rawParent });
-
-  results['shippinginfo_v2_parentOrderSn'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanParent });
-  results['shippinginfo_v2_parentOrderSnList'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [cleanParent] });
-
-  results['decrypt_parentOrderSn'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: cleanParent });
-  results['decrypt_parentOrderSnList'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [cleanParent] });
-
-  results['logistics_address_get'] = await callRaw('bg.logistics.address.get', { parentOrderSn: cleanParent });
-  results['logistics_address_get_list'] = await callRaw('bg.logistics.address.get', { parentOrderSnList: [cleanParent] });
+  const parent1 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-163-16693273324152869' });
+  const parent2 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-163-16858742979191819' });
+  const parent3 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-053-16739893494392655' });
+  const parent4 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-186-17062840433270728' });
 
   res.status(200).json({
     status: 'success',
     orderSn,
-    cleanSn: cleanParent,
-    results
+    parent1: parent1?.result?.pageItems?.[0] || parent1,
+    parent2: parent2?.result?.pageItems?.[0] || parent2,
+    parent3: parent3?.result?.pageItems?.[0] || parent3,
+    parent4: parent4?.result?.pageItems?.[0] || parent4
   });
 });
