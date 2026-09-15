@@ -291,7 +291,11 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const parentMap = rawItem.parentOrderMap || {};
   const orderList = rawItem.orderList || [];
   const firstOrder = orderList[0] || {};
-  const addr = parentMap.addressInfo || parentMap.recipientAddress || rawItem.addressInfo || {};
+  const addr = (
+    parentMap.receiptAddressInfo || parentMap.receipt_address_info || parentMap.addressInfo || parentMap.recipientAddress || parentMap.shippingInfo || parentMap.receiverAddress || parentMap.receiptAddress ||
+    firstOrder.receiptAddressInfo || firstOrder.receipt_address_info || firstOrder.addressInfo || firstOrder.recipientAddress || firstOrder.shippingAddress ||
+    rawItem.receiptAddressInfo || rawItem.receipt_address_info || rawItem.addressInfo || {}
+  );
 
   // Country
   const country = getCountryFromTemuOrder(rawItem);
@@ -346,7 +350,12 @@ const mapTemuOrderToModel = (rawItem, userId) => {
   const email = addr.mail || addr.email || parentMap.buyerEmail || '';
   const phone = addr.mobile || addr.phone || parentMap.buyerPhone || '';
 
-  const rawBuyerName = addr.recipientName || addr.recipient_name || addr.receiptName || addr.receipt_name || addr.name || addr.consigneeName || addr.consignee || parentMap.buyerName || parentMap.recipientName || firstOrder.recipientName;
+  const nameExtra = addr.addressExtra ? `${addr.addressExtra.firstName || ''} ${addr.addressExtra.lastName || ''}`.trim() : '';
+  const rawBuyerName = (
+    addr.receiptName || addr.receipt_name || (nameExtra && nameExtra !== '' ? nameExtra : null) || addr.recipientName || addr.recipient_name || addr.receiverName || addr.receiver_name || addr.name || addr.consigneeName || addr.consignee ||
+    parentMap.receiptName || parentMap.recipientName || parentMap.buyerName || parentMap.receiverName ||
+    firstOrder.receiptName || firstOrder.recipientName || firstOrder.buyerName
+  );
   const recipientName = (rawBuyerName && rawBuyerName !== 'NOT_FOUND') ? rawBuyerName : 'Temu Customer';
 
   let rawBuyerHandle = (
@@ -376,7 +385,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 
   const isGenericHandle = !rawBuyerHandle || rawBuyerHandle === 'Temu Buyer' || rawBuyerHandle === 'Temu Customer';
   const buyerName = isGenericHandle ? (recipientName && recipientName !== 'NOT_FOUND' ? recipientName : 'Temu Customer') : rawBuyerHandle;
-  const streetName = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.address1 || '';
+  const streetName = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1 || '';
   const houseNumber = addr.houseNumber || addr.house_number || addr.address2 || '';
   const postcode = addr.postCode || addr.postcode || addr.zipCode || addr.zipcode || addr.zip || '';
   const cityName = addr.regionName3 || addr.city || addr.cityName || addr.city_name || parentMap.regionName3 || '';
