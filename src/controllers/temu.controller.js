@@ -797,18 +797,21 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const cleanParent = '163-16693273324152869';
 
   const results = {};
-  results['v2_shippinginfo_list_raw'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
-  results['v2_shippinginfo_list_clean'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
-  results['v2_shippinginfo_parentOrderSn'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: rawParent, parent_order_sn: rawParent });
-  results['v2_shippinginfo_cleanParentSn'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanParent, parent_order_sn: cleanParent });
+  // Test snake_case vs camelCase individually
+  results['v2_snake_parent_list'] = await callRaw('bg.order.shippinginfo.v2.get', { parent_order_sn_list: [rawParent] });
+  results['v2_camel_parent_list'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [rawParent] });
 
-  results['decrypt_list_raw'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
-  results['decrypt_list_clean'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
-  results['decrypt_parentOrderSn'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: rawParent, parent_order_sn: rawParent });
+  results['v2_snake_clean_list'] = await callRaw('bg.order.shippinginfo.v2.get', { parent_order_sn_list: [cleanParent] });
+  results['v2_camel_clean_list'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [cleanParent] });
 
-  results['detail_v2_list_raw'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
-  results['detail_v2_list_clean'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
-  results['detail_v2_parentOrderSn'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: rawParent, parent_order_sn: rawParent });
+  results['v2_snake_single'] = await callRaw('bg.order.shippinginfo.v2.get', { parent_order_sn: rawParent });
+  results['v2_camel_single'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: rawParent });
+
+  results['decrypt_snake_list'] = await callRaw('bg.order.decryptshippinginfo.get', { parent_order_sn_list: [rawParent] });
+  results['decrypt_camel_list'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [rawParent] });
+
+  results['detail_v2_snake_list'] = await callRaw('bg.order.detail.v2.get', { parent_order_sn_list: [rawParent] });
+  results['detail_v2_camel_list'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [rawParent] });
 
   res.status(200).json({
     status: 'success',
