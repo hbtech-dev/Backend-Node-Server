@@ -789,17 +789,28 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     }
   };
 
+  const childSn = '163-16693320510072869'; // sub-order SN
+  const rawParent = 'PO-163-16693273324152869';
+  const cleanParent = '163-16693273324152869';
+
   const results = {};
-  results['shippinginfo_clean'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
-  results['shippinginfo_raw'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: orderSn, parent_order_sn: orderSn, orderSn: orderSn, order_sn: orderSn });
-  results['decryptshippinginfo'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
-  results['detail_v2'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
-  results['logistics_address'] = await callRaw('bg.logistics.address.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
+  results['shippinginfo_only_parentSn'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: rawParent });
+  results['shippinginfo_only_cleanParent'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanParent });
+  results['shippinginfo_only_childSn'] = await callRaw('bg.order.shippinginfo.v2.get', { orderSn: childSn });
+  results['shippinginfo_parent_and_child'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: rawParent, orderSn: childSn });
+
+  results['detail_only_parentSn'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: rawParent });
+  results['detail_only_cleanParent'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: cleanParent });
+  results['detail_only_childSn'] = await callRaw('bg.order.detail.v2.get', { orderSn: childSn });
+  results['detail_parent_and_child'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: rawParent, orderSn: childSn });
+
+  results['list_v2_single'] = await callRaw('bg.order.list.v2.get', { parentOrderSn: rawParent });
 
   res.status(200).json({
     status: 'success',
     orderSn,
     cleanSn,
+    childSn,
     results
   });
 });
