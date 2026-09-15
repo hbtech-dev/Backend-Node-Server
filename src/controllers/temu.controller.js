@@ -754,3 +754,52 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
     res.redirect(`${frontendUrl}/settings?temu_error=${encodeURIComponent(err.message)}`);
   }
 });
+
+exports.debugTemuOrder = catchAsync(async (req, res, next) => {
+  const { orderSn } = req.params;
+  const mongoose = require('mongoose');
+  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+  const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+  if (!integration) return next(new AppError('No connected Temu integration found', 400));
+
+  const { appKey, appSecret, accessToken } = integration;
+  const cleanSn = orderSn.replace(/^PO-/i, '').trim();
+
+  const httpFetch = require('../utils/httpHelper');
+  const crypto = require('crypto');
+
+  const callRaw = async (type, params) => {
+    const url = 'https://openapi-b-eu.temu.com/openapi/router';
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const payload = { app_key: appKey, access_token: accessToken || '', timestamp, type, ...params };
+    const sortedKeys = Object.keys(payload).sort();
+    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+    const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+    try {
+      const r = await httpFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, sign }),
+        timeout: 10000
+      });
+      return await r.json();
+    } catch (e) {
+      return { error: e.message };
+    }
+  };
+
+  const results = {};
+  results['shippinginfo_clean'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
+  results['shippinginfo_raw'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: orderSn, parent_order_sn: orderSn, orderSn: orderSn, order_sn: orderSn });
+  results['decryptshippinginfo'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
+  results['detail_v2'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
+  results['logistics_address'] = await callRaw('bg.logistics.address.get', { parentOrderSn: cleanSn, parent_order_sn: cleanSn, orderSn: cleanSn, order_sn: cleanSn });
+
+  res.status(200).json({
+    status: 'success',
+    orderSn,
+    cleanSn,
+    results
+  });
+});
