@@ -41,7 +41,7 @@ exports.connectDhl = catchAsync(async (req, res, next) => {
     apiKey: apiKey || '',
     apiSecret: apiSecret || '',
     accountNumber: accountNumber || '50000000000101',
-    isSandbox: isSandbox !== undefined ? Boolean(isSandbox) : true,
+    isSandbox: isSandbox !== undefined ? Boolean(isSandbox) : (process.env.DHL_IS_SANDBOX === 'true'),
     productType: productType || 'V01PAK',
     lastTestedAt: new Date()
   };

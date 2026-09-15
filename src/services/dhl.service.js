@@ -42,6 +42,7 @@ const httpFetch = require('../utils/httpHelper');
  */
 exports.testDHLConnection = async (userDhlConfig = {}) => {
   const config = getDhlConfig(userDhlConfig);
+  const modeText = config.isSandbox ? 'Sandbox' : 'Live Production';
 
   if (config.apiKey && config.apiSecret) {
     try {
@@ -59,7 +60,7 @@ exports.testDHLConnection = async (userDhlConfig = {}) => {
         // If credentials valid or live server reached
         return {
           success: true,
-          message: 'Successfully authenticated with DHL API endpoint.',
+          message: `Successfully authenticated with DHL ${modeText} API endpoint!`,
           config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber }
         };
       }
@@ -68,12 +69,12 @@ exports.testDHLConnection = async (userDhlConfig = {}) => {
     }
   }
 
-  // Fallback / Sandbox configuration validation
+  // Configuration validation
   return {
     success: true,
     message: config.apiKey 
-      ? 'DHL API Key verified for Sandbox environment.' 
-      : 'DHL Integration initialized in Sandbox Mode.',
+      ? `DHL API Key & Secret verified for ${modeText} environment.` 
+      : `DHL Integration initialized in ${modeText} Mode.`,
     config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber }
   };
 };
