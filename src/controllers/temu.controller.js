@@ -792,17 +792,27 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     }
   };
 
-  const parent1 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-163-16693273324152869' });
-  const parent2 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-163-16858742979191819' });
-  const parent3 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-053-16739893494392655' });
-  const parent4 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-186-17062840433270728' });
+  const childSn = '163-16693320510072869';
+
+  const tests = {};
+  tests['shippinginfo_v2_orderSn'] = await callRaw('bg.order.shippinginfo.v2.get', { orderSn: childSn });
+  tests['shippinginfo_v2_order_sn'] = await callRaw('bg.order.shippinginfo.v2.get', { order_sn: childSn });
+  tests['shippinginfo_v2_orderSnList'] = await callRaw('bg.order.shippinginfo.v2.get', { orderSnList: [childSn] });
+  tests['shippinginfo_v2_order_sn_list'] = await callRaw('bg.order.shippinginfo.v2.get', { order_sn_list: [childSn] });
+
+  tests['decrypt_orderSn'] = await callRaw('bg.order.decryptshippinginfo.get', { orderSn: childSn });
+  tests['decrypt_order_sn'] = await callRaw('bg.order.decryptshippinginfo.get', { order_sn: childSn });
+  tests['decrypt_orderSnList'] = await callRaw('bg.order.decryptshippinginfo.get', { orderSnList: [childSn] });
+  tests['decrypt_order_sn_list'] = await callRaw('bg.order.decryptshippinginfo.get', { order_sn_list: [childSn] });
+
+  tests['detail_v2_orderSn'] = await callRaw('bg.order.detail.v2.get', { orderSn: childSn });
+  tests['detail_v2_order_sn'] = await callRaw('bg.order.detail.v2.get', { order_sn: childSn });
+  tests['detail_v2_orderSnList'] = await callRaw('bg.order.detail.v2.get', { orderSnList: [childSn] });
+  tests['detail_v2_order_sn_list'] = await callRaw('bg.order.detail.v2.get', { order_sn_list: [childSn] });
 
   res.status(200).json({
     status: 'success',
-    orderSn,
-    parent1: parent1?.result?.pageItems?.[0] || parent1,
-    parent2: parent2?.result?.pageItems?.[0] || parent2,
-    parent3: parent3?.result?.pageItems?.[0] || parent3,
-    parent4: parent4?.result?.pageItems?.[0] || parent4
+    childSn,
+    tests
   });
 });
