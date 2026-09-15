@@ -440,13 +440,15 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
   const addrMap = new Map();
   if (!orderSnList || orderSnList.length === 0) return addrMap;
 
-  for (const parentOrderSn of orderSnList) {
+  for (const rawOrderSn of orderSnList) {
+    if (!rawOrderSn) continue;
+    const cleanSn = rawOrderSn.toString().replace(/^PO-/i, '').trim();
     try {
       const queryParams = {
-        parentOrderSn,
-        parent_order_sn: parentOrderSn,
-        orderSn: parentOrderSn,
-        order_sn: parentOrderSn
+        parentOrderSn: cleanSn,
+        parent_order_sn: cleanSn,
+        orderSn: cleanSn,
+        order_sn: cleanSn
       };
 
       // 1. Try bg.order.shippinginfo.v2.get
@@ -486,14 +488,23 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         );
 
         if (addr) {
-          console.log(`✅ Found address object for ${parentOrderSn}:`, JSON.stringify(addr).slice(0, 300));
-          addrMap.set(parentOrderSn, addr);
+          console.log(`✅ Found address object for ${rawOrderSn} (clean: ${cleanSn}):`, JSON.stringify(addr).slice(0, 300));
+          addrMap.set(rawOrderSn, addr);
+          addrMap.set(cleanSn, addr);
+          if (pm.parentOrderSn) {
+            addrMap.set(pm.parentOrderSn, addr);
+            addrMap.set(pm.parentOrderSn.replace(/^PO-/i, ''), addr);
+          }
+          if (ol.orderSn) {
+            addrMap.set(ol.orderSn, addr);
+            addrMap.set(ol.orderSn.replace(/^PO-/i, ''), addr);
+          }
         } else {
-          console.log(`⚠️ Address object not found in standard paths for ${parentOrderSn}`);
+          console.log(`⚠️ Address object not found in standard paths for ${rawOrderSn}`);
         }
       }
     } catch (e) {
-      console.warn(`⚠️ Error calling address endpoints for ${parentOrderSn}:`, e.message);
+      console.warn(`⚠️ Error calling address endpoints for ${rawOrderSn}:`, e.message);
     }
   }
 
@@ -578,6 +589,22 @@ const syncUserTemuOrders = async (user) => {
       const activeUnshippedOrders = Array.from(activeMap.values());
       const activeOrderSns = activeUnshippedOrders.map(item => item.parentOrderMap?.parentOrderSn || item.orderList?.[0]?.orderSn).filter(Boolean);
 
+      // Also include existing open DB orders with incomplete recipient name/street for auto-repair
+      const incompleteDbOrders = await TemuOrder.find({
+        user: user._id,
+        status: 'open',
+        $or: [
+          { name: 'Temu Customer' },
+          { recipientName: 'Temu Customer' },
+          { streetName: '' },
+          { streetName: { $exists: false } }
+        ]
+      }).select('orderNum temuOrderId');
+      incompleteDbOrders.forEach(o => {
+        if (o.orderNum) activeOrderSns.push(o.orderNum);
+        if (o.temuOrderId) activeOrderSns.push(o.temuOrderId);
+      });
+
       // --- Fetch logistics address details for active orders via bg.order.detail.v2.get ---
       const logisticsAddrMap = await fetchTemuLogisticsAddresses(appKey, appSecret, accessToken, activeOrderSns);
 
@@ -624,7 +651,9 @@ const syncUserTemuOrders = async (user) => {
         const mapped = mapTemuOrderToModel(rawItem, user._id);
 
         // --- Enrich with address from logistics API map ---
-        const addrData = logisticsAddrMap.get(orderNum) || logisticsAddrMap.get(ol.orderSn);
+        const cleanOrderSn = orderNum.replace(/^PO-/i, '');
+        const cleanOlSn = ol.orderSn ? ol.orderSn.replace(/^PO-/i, '') : cleanOrderSn;
+        const addrData = logisticsAddrMap.get(orderNum) || logisticsAddrMap.get(cleanOrderSn) || logisticsAddrMap.get(ol.orderSn) || logisticsAddrMap.get(cleanOlSn);
         if (addrData) {
           const nameExtra = addrData.addressExtra
             ? `${addrData.addressExtra.firstName || ''} ${addrData.addressExtra.lastName || ''}`.trim()
