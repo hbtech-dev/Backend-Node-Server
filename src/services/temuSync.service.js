@@ -681,17 +681,19 @@ const syncUserTemuOrders = async (user) => {
             mapped.address = addressParts.join(', ');
           }
         } else {
-          // Fallback: query order detail via bg.order.detail.v2.get for full recipient name & shipping address
+          // Fallback: query order detail via bg.order.shippinginfo.v2.get / decrypt / detail / shipment for full recipient name & shipping address
           try {
-            const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
+            const queryParams = {
               parentOrderSn: orderNum,
               parent_order_sn: orderNum,
               orderSn: ol.orderSn || orderNum,
               order_sn: ol.orderSn || orderNum
-            }) || await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', {
-              parentOrderSn: orderNum,
-              parent_order_sn: orderNum
-            });
+            };
+
+            const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', queryParams) ||
+              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', queryParams) ||
+              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams) ||
+              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', queryParams);
 
             if (orderDetail) {
               const pmDetail = orderDetail.parentOrderMap || {};
@@ -707,7 +709,13 @@ const syncUserTemuOrders = async (user) => {
               const n = addr.receiptName || addr.receipt_name || (nameExtra && nameExtra !== '' ? nameExtra : null) ||
                 addr.recipientName || addr.recipient_name || addr.receiverName || addr.receiver_name || addr.name ||
                 addr.buyerName || addr.buyer_name || addr.consigneeName || addr.consignee || pmDetail.recipientName || pmDetail.receiptName || pmDetail.buyerName;
-              if (n && n !== 'NOT_FOUND') { mapped.name = n; }
+              if (n && n !== 'NOT_FOUND') {
+                mapped.name = n;
+                mapped.recipientName = n;
+                if (!mapped.buyerName || mapped.buyerName === 'Temu Buyer' || mapped.buyerName === 'Temu Customer') {
+                  mapped.buyerName = n;
+                }
+              }
 
               const s = addr.addressLineAll || addr.addressLine1 || addr.streetName || addr.street_name || addr.detailAddress || addr.detail_address || addr.address1 || addr.address;
               if (s) mapped.streetName = s;
