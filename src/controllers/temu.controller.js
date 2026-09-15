@@ -794,23 +794,15 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const cleanParent = '163-16693273324152869';
 
   const results = {};
-  results['v1_shippinginfo_parent'] = await callRaw('bg.order.shippinginfo.get', { parentOrderSn: rawParent });
-  results['v1_shippinginfo_clean'] = await callRaw('bg.order.shippinginfo.get', { parentOrderSn: cleanParent });
-  results['v1_shippinginfo_child'] = await callRaw('bg.order.shippinginfo.get', { orderSn: childSn });
+  results['v2_shippinginfo_list_raw'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
+  results['v2_shippinginfo_list_clean'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
+  results['v2_shippinginfo_child_list'] = await callRaw('bg.order.shippinginfo.v2.get', { orderSnList: [childSn], order_sn_list: [childSn] });
 
-  results['v2_shippinginfo_parent'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: rawParent });
-  results['v2_shippinginfo_clean'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanParent });
-  results['v2_shippinginfo_child'] = await callRaw('bg.order.shippinginfo.v2.get', { orderSn: childSn });
+  results['decrypt_list_raw'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
+  results['decrypt_list_clean'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
 
-  results['decrypt_parent'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: rawParent });
-  results['decrypt_clean'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: cleanParent });
-
-  results['detail_v2_parent'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: rawParent });
-  results['detail_v2_clean'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: cleanParent });
-  results['detail_v2_child'] = await callRaw('bg.order.detail.v2.get', { orderSn: childSn });
-
-  results['detail_v1_parent'] = await callRaw('bg.order.detail.get', { parentOrderSn: rawParent });
-  results['detail_v1_clean'] = await callRaw('bg.order.detail.get', { parentOrderSn: cleanParent });
+  results['detail_v2_list_raw'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
+  results['detail_v2_list_clean'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
 
   res.status(200).json({
     status: 'success',
