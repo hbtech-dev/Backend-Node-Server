@@ -764,7 +764,7 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const httpFetch = require('../utils/httpHelper');
   const crypto = require('crypto');
 
-  const callRaw = async (type, params) => {
+  const callRaw = async (type, params = {}) => {
     const url = 'https://openapi-b-eu.temu.com/openapi/router';
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = { app_key: appKey, access_token: accessToken || '', timestamp, type, ...params };
@@ -772,23 +772,30 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
     const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-    const r = await httpFetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ ...payload, sign }),
-      timeout: 10000
-    });
-    return await r.json();
+    try {
+      const r = await httpFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, sign }),
+        timeout: 10000
+      });
+      return await r.json();
+    } catch (e) {
+      return { error: e.message };
+    }
   };
 
-  const o1 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-186-17062840433270728' });
-  const o2 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-053-16739893494392655' });
-  const o3 = await callRaw('bg.order.list.v2.get', { parentOrderSn: 'PO-186-17125791027830291' });
+  const nowSec = Math.floor(Date.now() / 1000);
+  const thirtyDaysAgo = nowSec - (30 * 86400);
+
+  const finResults = {};
+  finResults['settlement_list'] = await callRaw('bg.finance.settlement.list.get', { page_number: 1, page_size: 20 });
+  finResults['bill_get'] = await callRaw('bg.finance.bill.get', { page_number: 1, page_size: 20 });
+  finResults['settlement_summary'] = await callRaw('bg.settlement.summary.get', { start_time: thirtyDaysAgo, end_time: nowSec });
+  finResults['finance_statement'] = await callRaw('bg.finance.statement.get', { page_no: 1, page_size: 20 });
 
   res.status(200).json({
     status: 'success',
-    po_186_17062840433270728: o1?.result?.pageItems?.[0] || o1,
-    po_053_16739893494392655: o2?.result?.pageItems?.[0] || o2,
-    po_186_17125791027830291: o3?.result?.pageItems?.[0] || o3
+    finResults
   });
 });
