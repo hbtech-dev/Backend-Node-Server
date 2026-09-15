@@ -773,7 +773,10 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = { app_key: appKey, access_token: accessToken || '', timestamp, type, ...params };
     const sortedKeys = Object.keys(payload).sort();
-    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+    const signStr = appSecret + sortedKeys.map(k => {
+      const val = typeof payload[k] === 'object' ? JSON.stringify(payload[k]) : payload[k];
+      return `${k}${val}`;
+    }).join('') + appSecret;
     const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
     try {
@@ -796,13 +799,16 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const results = {};
   results['v2_shippinginfo_list_raw'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
   results['v2_shippinginfo_list_clean'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
-  results['v2_shippinginfo_child_list'] = await callRaw('bg.order.shippinginfo.v2.get', { orderSnList: [childSn], order_sn_list: [childSn] });
+  results['v2_shippinginfo_parentOrderSn'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: rawParent, parent_order_sn: rawParent });
+  results['v2_shippinginfo_cleanParentSn'] = await callRaw('bg.order.shippinginfo.v2.get', { parentOrderSn: cleanParent, parent_order_sn: cleanParent });
 
   results['decrypt_list_raw'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
   results['decrypt_list_clean'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
+  results['decrypt_parentOrderSn'] = await callRaw('bg.order.decryptshippinginfo.get', { parentOrderSn: rawParent, parent_order_sn: rawParent });
 
   results['detail_v2_list_raw'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [rawParent], parent_order_sn_list: [rawParent] });
   results['detail_v2_list_clean'] = await callRaw('bg.order.detail.v2.get', { parentOrderSnList: [cleanParent], parent_order_sn_list: [cleanParent] });
+  results['detail_v2_parentOrderSn'] = await callRaw('bg.order.detail.v2.get', { parentOrderSn: rawParent, parent_order_sn: rawParent });
 
   res.status(200).json({
     status: 'success',
