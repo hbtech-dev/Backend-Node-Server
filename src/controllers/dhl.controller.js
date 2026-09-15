@@ -10,10 +10,18 @@ const { uploadTrackingToEbay } = require('./ebay.controller');
 exports.getDhlStatus = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+  const dhlConfig = user.dhlIntegration || {};
+  const isConnected = dhlConfig.isConnected !== false;
+  const apiKey = dhlConfig.apiKey || process.env.DHL_API_KEY || 'QkLYX6G92E6avPGYov9Pyk7fpWeAvRb7';
   res.status(200).json({
     status: 'success',
     data: {
-      dhlIntegration: user.dhlIntegration || { isConnected: true }
+      dhlIntegration: {
+        isConnected,
+        apiKey,
+        accountNumber: dhlConfig.accountNumber || '50000000000101',
+        isSandbox: dhlConfig.isSandbox !== undefined ? dhlConfig.isSandbox : false
+      }
     }
   });
 });
