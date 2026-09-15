@@ -442,26 +442,29 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
 
   for (const parentOrderSn of orderSnList) {
     try {
-      // 1. Try bg.order.shippinginfo.v2.get
-      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', {
+      const queryParams = {
         parentOrderSn,
-        parent_order_sn: parentOrderSn
-      });
+        parent_order_sn: parentOrderSn,
+        orderSn: parentOrderSn,
+        order_sn: parentOrderSn
+      };
+
+      // 1. Try bg.order.shippinginfo.v2.get
+      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', queryParams);
 
       // 2. Try bg.order.decryptshippinginfo.get
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', {
-          parentOrderSn,
-          parent_order_sn: parentOrderSn
-        });
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', queryParams);
       }
 
       // 3. Fallback to bg.order.detail.v2.get
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', {
-          parentOrderSn,
-          parent_order_sn: parentOrderSn
-        });
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams);
+      }
+
+      // 4. Fallback to bg.logistics.shipment.get
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', queryParams);
       }
 
       if (detail) {
@@ -744,8 +747,42 @@ const syncUserTemuOrders = async (user) => {
             });
           }
         } else {
-          // Update existing record with fresh mapped fields
-          await TemuOrder.updateOne({ _id: existing._id }, { $set: mapped });
+          // Update existing record with safe payload — NEVER overwrite valid recipient names/addresses with fallbacks
+          const updatePayload = { ...mapped };
+
+          const existingHasRealName = existing.name && existing.name !== 'Temu Customer' && existing.name !== 'NOT_FOUND';
+          const mappedIsFallbackName = !mapped.name || mapped.name === 'Temu Customer' || mapped.name === 'NOT_FOUND';
+          if (existingHasRealName && mappedIsFallbackName) {
+            updatePayload.name = existing.name;
+            updatePayload.recipientName = existing.recipientName || existing.name;
+          }
+
+          const existingHasRealBuyer = existing.buyerName && existing.buyerName !== 'Temu Buyer' && existing.buyerName !== 'Temu Customer';
+          const mappedIsFallbackBuyer = !mapped.buyerName || mapped.buyerName === 'Temu Buyer' || mapped.buyerName === 'Temu Customer';
+          if (existingHasRealBuyer && mappedIsFallbackBuyer) {
+            updatePayload.buyerName = existing.buyerName;
+          }
+
+          if (existing.streetName && !mapped.streetName) {
+            updatePayload.streetName = existing.streetName;
+          }
+          if (existing.houseNumber && !mapped.houseNumber) {
+            updatePayload.houseNumber = existing.houseNumber;
+          }
+          if (existing.postcode && !mapped.postcode) {
+            updatePayload.postcode = existing.postcode;
+          }
+          if (existing.address && existing.address.includes(',') && (!mapped.address || !mapped.streetName)) {
+            updatePayload.address = existing.address;
+          }
+          if (existing.email && (!mapped.email || mapped.email.includes('customer@temu.com'))) {
+            updatePayload.email = existing.email;
+          }
+          if (existing.phone && (!mapped.phone || mapped.phone.includes('+49 151'))) {
+            updatePayload.phone = existing.phone;
+          }
+
+          await TemuOrder.updateOne({ _id: existing._id }, { $set: updatePayload });
         }
       }
 
