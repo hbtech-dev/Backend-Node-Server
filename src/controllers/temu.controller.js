@@ -756,46 +756,5 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
 });
 
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
-  const mongoose = require('mongoose');
-  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
-  const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
-  const { appKey, appSecret, accessToken } = integration;
-
-  const httpFetch = require('../utils/httpHelper');
-  const crypto = require('crypto');
-
-  const callRaw = async (type, params = {}) => {
-    const url = 'https://openapi-b-eu.temu.com/openapi/router';
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const payload = { app_key: appKey, access_token: accessToken || '', timestamp, type, ...params };
-    const sortedKeys = Object.keys(payload).sort();
-    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
-    const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
-
-    try {
-      const r = await httpFetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, sign }),
-        timeout: 10000
-      });
-      return await r.json();
-    } catch (e) {
-      return { error: e.message };
-    }
-  };
-
-  const nowSec = Math.floor(Date.now() / 1000);
-  const thirtyDaysAgo = nowSec - (30 * 86400);
-
-  const finResults = {};
-  finResults['settlement_list'] = await callRaw('bg.finance.settlement.list.get', { page_number: 1, page_size: 20 });
-  finResults['bill_get'] = await callRaw('bg.finance.bill.get', { page_number: 1, page_size: 20 });
-  finResults['settlement_summary'] = await callRaw('bg.settlement.summary.get', { start_time: thirtyDaysAgo, end_time: nowSec });
-  finResults['finance_statement'] = await callRaw('bg.finance.statement.get', { page_no: 1, page_size: 20 });
-
-  res.status(200).json({
-    status: 'success',
-    finResults
-  });
+  res.status(200).json({ status: 'success', message: 'Debug endpoint active' });
 });
