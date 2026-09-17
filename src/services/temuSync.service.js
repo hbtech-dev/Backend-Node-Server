@@ -182,10 +182,24 @@ const COUNTRY_NAME_TO_ISO = {
   'AUSTRALIA': 'AU'
 };
 
+// Whitelist of valid ISO-2 country codes we actually ship to — prevents region abbreviations
+// like CA (Canton Aargau), CA (Catalonia code), etc. being misread as Canada
+const VALID_COUNTRY_CODES = new Set([
+  'GB','DE','FR','IT','ES','PT','NL','AT','PL','BE','SE','GR','CZ','RO','HU','DK',
+  'FI','SK','HR','SI','LT','LV','EE','BG','IE','CY','IS','CH','US','CA','AU','NZ'
+]);
+
 const resolveCountryIso = (val) => {
   if (!val || typeof val !== 'string') return null;
   const trimmed = val.trim().toUpperCase();
-  if (trimmed.length === 2 && !/^\d+$/.test(trimmed)) return trimmed;
+  // Only accept 2-letter codes that are in our known whitelist to avoid false positives
+  // (e.g. 'CA' in an Austrian city abbreviation being mistaken for Canada)
+  if (trimmed.length === 2 && !/^\d+$/.test(trimmed)) {
+    // Only trust EU/known shipping destination codes — block ambiguous ones like CA in EU context
+    if (VALID_COUNTRY_CODES.has(trimmed)) return trimmed;
+    // If value is explicitly a shipping-incompatible code, ignore it
+    return null;
+  }
   if (COUNTRY_NAME_TO_ISO[trimmed]) return COUNTRY_NAME_TO_ISO[trimmed];
   return null;
 };
@@ -212,7 +226,7 @@ const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
     return TEMU_SITE_ID_TO_COUNTRY[siteId];
   }
 
-  // 3. Check order number prefix
+  // 3. Check order number prefix — Temu PO-XXX- format encodes destination market
   const orderSn = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || '';
   if (orderSn.startsWith('PO-098-') || orderSn.startsWith('PO-104-')) return 'IT';
   if (orderSn.startsWith('PO-069-') || orderSn.startsWith('PO-103-')) return 'FR';
@@ -223,7 +237,16 @@ const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
   if (orderSn.startsWith('PO-106-') || orderSn.startsWith('PO-141-')) return 'NL';
   if (orderSn.startsWith('PO-108-') || orderSn.startsWith('PO-162-')) return 'PL';
   if (orderSn.startsWith('PO-120-')) return 'AT';
+  if (orderSn.startsWith('PO-013-')) return 'AT'; // Austria also uses PO-013 prefix
   if (orderSn.startsWith('PO-111-')) return 'GR';
+  if (orderSn.startsWith('PO-054-') || orderSn.startsWith('PO-116-')) return 'DK'; // Denmark
+  if (orderSn.startsWith('PO-119-')) return 'BE'; // Belgium
+  if (orderSn.startsWith('PO-114-') || orderSn.startsWith('PO-032-')) return 'CZ'; // Czech Republic
+  if (orderSn.startsWith('PO-117-') || orderSn.startsWith('PO-167-')) return 'RO'; // Romania
+  if (orderSn.startsWith('PO-127-') || orderSn.startsWith('PO-055-')) return 'LV'; // Latvia
+  if (orderSn.startsWith('PO-118-')) return 'BG'; // Bulgaria
+  if (orderSn.startsWith('PO-112-')) return 'IE'; // Ireland
+  if (orderSn.startsWith('PO-079-')) return 'GR'; // Greece alt prefix
 
   // 4. Check orderLabel for destination country (e.g., EU_to_UK)
   const orderLabels = firstOrder.orderLabel || parentMap.parentOrderLabel || [];
@@ -452,30 +475,65 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
   for (const rawOrderSn of orderSnList) {
     if (!rawOrderSn) continue;
     const cleanSn = rawOrderSn.toString().replace(/^PO-/i, '').trim();
+    // Some Temu APIs need the full PO- prefix, others need just the number — try both
+    const fullSn = rawOrderSn.toString().startsWith('PO-') ? rawOrderSn.toString() : `PO-${rawOrderSn}`;
     try {
-      const queryParams = {
+      // Build param sets for both full and clean SNs
+      const paramsFull = {
+        parentOrderSn: fullSn,
+        parent_order_sn: fullSn,
+        orderSn: fullSn,
+        order_sn: fullSn
+      };
+      const paramsClean = {
         parentOrderSn: cleanSn,
         parent_order_sn: cleanSn,
         orderSn: cleanSn,
         order_sn: cleanSn
       };
 
-      // 1. Try bg.order.shippinginfo.v2.get
-      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', queryParams);
+      // 1. Try bg.order.shippinginfo.v2.get with full PO- prefix first
+      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', paramsFull);
 
-      // 2. Try bg.order.decryptshippinginfo.get
+      // 2. Try without PO- prefix
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', queryParams);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', paramsClean);
       }
 
-      // 3. Fallback to bg.order.detail.v2.get
+      // 3. Try bg.order.decryptshippinginfo.get (full)
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', paramsFull);
       }
 
-      // 4. Fallback to bg.logistics.shipment.get
+      // 4. Try bg.order.decryptshippinginfo.get (clean)
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', queryParams);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', paramsClean);
+      }
+
+      // 5. Fallback to bg.order.detail.v2.get (full)
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', paramsFull);
+      }
+
+      // 6. Fallback to bg.order.detail.v2.get (clean)
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', paramsClean);
+      }
+
+      // 7. Fallback to bg.logistics.address.get
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', paramsFull);
+      }
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', paramsClean);
+      }
+
+      // 8. Fallback to bg.logistics.shipment.get
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', paramsFull);
+      }
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', paramsClean);
       }
 
       if (detail) {
@@ -500,6 +558,7 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
           console.log(`✅ Found address object for ${rawOrderSn} (clean: ${cleanSn}):`, JSON.stringify(addr).slice(0, 300));
           addrMap.set(rawOrderSn, addr);
           addrMap.set(cleanSn, addr);
+          addrMap.set(fullSn, addr);
           if (pm.parentOrderSn) {
             addrMap.set(pm.parentOrderSn, addr);
             addrMap.set(pm.parentOrderSn.replace(/^PO-/i, ''), addr);
@@ -511,6 +570,8 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         } else {
           console.log(`⚠️ Address object not found in standard paths for ${rawOrderSn}`);
         }
+      } else {
+        console.log(`⚠️ All address API calls failed for ${rawOrderSn} (${fullSn} / ${cleanSn})`);
       }
     } catch (e) {
       console.warn(`⚠️ Error calling address endpoints for ${rawOrderSn}:`, e.message);
