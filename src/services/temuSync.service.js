@@ -226,22 +226,28 @@ const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
     return TEMU_SITE_ID_TO_COUNTRY[siteId];
   }
 
-  // 3. Check order number prefix — Temu PO-XXX- format encodes destination market
+  // 3. Check order number prefix — these are approximate hints only; address data takes priority above.
+  // NOTE: Many prefixes are NOT reliable (same prefix used across countries), so only check
+  // well-known unambiguous prefixes. Address regionName1 above is always preferred.
   const orderSn = parentMap.parentOrderSn || parentMap.parent_order_sn || firstOrder.orderSn || firstOrder.order_sn || '';
   if (orderSn.startsWith('PO-098-') || orderSn.startsWith('PO-104-')) return 'IT';
   if (orderSn.startsWith('PO-069-') || orderSn.startsWith('PO-103-')) return 'FR';
-  if (orderSn.startsWith('PO-076-') || orderSn.startsWith('PO-105-') || orderSn.startsWith('PO-186-')) return 'ES';
+  // NOTE: PO-076 removed — it's used by Germany DE store, not ES; address data is authoritative
+  if (orderSn.startsWith('PO-105-') || orderSn.startsWith('PO-186-')) return 'ES';
   if (orderSn.startsWith('PO-107-')) return 'PT';
-  if (orderSn.startsWith('PO-102-')) return 'DE';
+  if (orderSn.startsWith('PO-278-') || orderSn.startsWith('PO-102-')) return 'DE'; // Germany - PO-278 confirmed from DE store
   if (orderSn.startsWith('PO-101-')) return 'GB';
   if (orderSn.startsWith('PO-106-') || orderSn.startsWith('PO-141-')) return 'NL';
-  if (orderSn.startsWith('PO-108-') || orderSn.startsWith('PO-162-')) return 'PL';
+  if (orderSn.startsWith('PO-108-')) return 'PL';
+  // NOTE: PO-162 removed — used by both PL and IE, unreliable; address data handles this
   if (orderSn.startsWith('PO-120-')) return 'AT';
-  if (orderSn.startsWith('PO-013-')) return 'AT'; // Austria also uses PO-013 prefix
+  // NOTE: PO-013 removed — not reliable as AT; address handles Austria correctly
   if (orderSn.startsWith('PO-111-')) return 'GR';
-  if (orderSn.startsWith('PO-054-') || orderSn.startsWith('PO-116-')) return 'DK'; // Denmark
+  if (orderSn.startsWith('PO-116-')) return 'DK'; // Denmark
+  // NOTE: PO-054 removed — used by DK but address data should provide this; avoid false positives
   if (orderSn.startsWith('PO-119-')) return 'BE'; // Belgium
-  if (orderSn.startsWith('PO-114-') || orderSn.startsWith('PO-032-')) return 'CZ'; // Czech Republic
+  if (orderSn.startsWith('PO-114-')) return 'CZ'; // Czech Republic
+  // NOTE: PO-032 removed — was incorrectly mapping BG orders to CZ
   if (orderSn.startsWith('PO-117-') || orderSn.startsWith('PO-167-')) return 'RO'; // Romania
   if (orderSn.startsWith('PO-127-') || orderSn.startsWith('PO-055-')) return 'LV'; // Latvia
   if (orderSn.startsWith('PO-118-')) return 'BG'; // Bulgaria
