@@ -167,8 +167,10 @@ const userSchema = new mongoose.Schema(
       isConnected: { type: Boolean, default: false },
       apiKey: { type: String, default: '' },
       apiSecret: { type: String, default: '' },
+      gkpUser: { type: String, default: '' },
+      gkpPassword: { type: String, default: '' },
       accountNumber: { type: String, default: '' },
-      isSandbox: { type: Boolean, default: true },
+      isSandbox: { type: Boolean, default: false },
       productType: { type: String, default: 'V01PAK' },
       lastTestedAt: { type: Date, default: null }
     },
