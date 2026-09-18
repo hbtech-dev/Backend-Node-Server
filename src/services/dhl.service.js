@@ -167,7 +167,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             ...(activeProduct === 'V53WPAK' ? {
               services: {
                 endorsement: 'RETURN',
-                premium: true
+                premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : true
               }
             } : {})
           }
