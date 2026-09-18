@@ -115,6 +115,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
   const gkpUser = userDhlConfig.gkpUser || 'eder01';
   const gkpPass = userDhlConfig.gkpPassword || 'NewpassEDER1903!';
   const billingNumber = config.accountNumber || '63866404860101';
+  const authHeader = 'Basic ' + Buffer.from(`${gkpUser}:${gkpPass}`).toString('base64');
 
   if (apiKey) {
     try {
