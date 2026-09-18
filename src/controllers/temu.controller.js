@@ -439,6 +439,12 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
     });
   }
 
+  // Sync returns across all connected Temu stores
+  const temuSyncService = require('../services/temuSync.service');
+  if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
+    await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
+  }
+
   let returnsList = [];
   if (mongoose.connection.readyState === 1) {
     returnsList = await TemuReturn.find({ user: req.user.id }).sort({ createdAt: -1 });
@@ -501,6 +507,12 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       status: 'success',
       data: { issues: [] }
     });
+  }
+
+  // Sync fulfillment issues across all connected Temu stores
+  const temuSyncService = require('../services/temuSync.service');
+  if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
+    await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Issue sync warning:', err.message));
   }
 
   let issuesList = [];
