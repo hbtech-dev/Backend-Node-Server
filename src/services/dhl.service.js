@@ -163,7 +163,13 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             },
             details: {
               weight: { uom: 'g', value: Math.round((parseFloat(weight) || 0.5) * 1000) }
-            }
+            },
+            ...(activeProduct === 'V53WPAK' ? {
+              services: {
+                endorsement: 'RETURN',
+                premium: true
+              }
+            } : {})
           }
         ]
       };
