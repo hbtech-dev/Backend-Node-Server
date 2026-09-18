@@ -38,44 +38,76 @@ const generateDHLTrackingNumber = (country = 'DE') => {
 const httpFetch = require('../utils/httpHelper');
 
 /**
- * Test DHL API Credentials
+ * Test DHL API Credentials against official DHL REST API endpoints
  */
 exports.testDHLConnection = async (userDhlConfig = {}) => {
   const config = getDhlConfig(userDhlConfig);
   const modeText = config.isSandbox ? 'Sandbox' : 'Live Production';
 
-  if (config.apiKey && config.apiSecret) {
+  if (!config.apiKey) {
+    return {
+      success: false,
+      message: '❌ DHL API Key / Client ID is missing. Please enter your API Key from developer.dhl.com.',
+      config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber }
+    };
+  }
+
+  const authHeader = 'Basic ' + Buffer.from(`${config.apiKey}:${config.apiSecret || ''}`).toString('base64');
+
+  const testEndpoints = config.isSandbox ? [
+    { url: 'https://api-sandbox.dhl.com/parcel/de/shipping/v2/orders', name: 'DHL Parcel Germany Sandbox' },
+    { url: 'https://api-sandbox.dhl.com/express/v1/rates?originCountryCode=DE&originCity=Dortmund&destinationCountryCode=DE&destinationCity=Berlin&weight=0.5', name: 'DHL Express Sandbox' }
+  ] : [
+    { url: 'https://api-eu.dhl.com/parcel/de/shipping/v2/orders', name: 'DHL Parcel Germany Production' },
+    { url: 'https://express.api.dhl.com/mydhlapi/v1/rates?originCountryCode=DE&originCity=Dortmund&destinationCountryCode=DE&destinationCity=Berlin&weight=0.5', name: 'DHL Express Production' }
+  ];
+
+  let lastStatus = 0;
+  let lastErrorDetail = '';
+
+  for (const ep of testEndpoints) {
     try {
-      const authHeader = 'Basic ' + Buffer.from(`${config.apiKey}:${config.apiSecret}`).toString('base64');
-      const response = await httpFetch(`${config.baseUrl}/rates?originCountryCode=DE&originCity=Dortmund&destinationCountryCode=DE&destinationCity=Berlin&weight=0.5`, {
+      const response = await httpFetch(ep.url, {
         method: 'GET',
         headers: {
           'Authorization': authHeader,
           'DHL-API-Key': config.apiKey,
+          'dhl-api-key': config.apiKey,
           'Accept': 'application/json'
-        }
+        },
+        timeout: 10000
       });
 
-      if (response.ok || response.status === 200 || response.status === 401) {
-        // If credentials valid or live server reached
+      lastStatus = response.status;
+
+      // 200, 201, 400 (bad query parameters), 422 (validation error) mean AUTHENTICATION PASSED!
+      if (response.ok || response.status === 200 || response.status === 201 || response.status === 400 || response.status === 422) {
         return {
           success: true,
-          message: `Successfully authenticated with DHL ${modeText} API endpoint!`,
+          message: `✅ DHL API Key & Secret successfully authenticated with ${ep.name} (${modeText} mode)! Ready to generate live shipping labels.`,
           config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber }
         };
       }
+
+      if (response.status === 401 || response.status === 403) {
+        try {
+          const errBody = await response.json();
+          lastErrorDetail = errBody.detail || errBody.message || errBody.title || 'Invalid credentials';
+        } catch (_) {
+          lastErrorDetail = '401 Unauthorized / 403 Forbidden';
+        }
+      }
     } catch (err) {
-      console.warn('DHL API test call warning, falling back to configuration check:', err.message);
+      lastErrorDetail = err.message;
     }
   }
 
-  // Configuration validation
+  // Authentication failed on all endpoints
   return {
-    success: true,
-    message: config.apiKey 
-      ? `DHL API Key & Secret verified for ${modeText} environment.` 
-      : `DHL Integration initialized in ${modeText} Mode.`,
-    config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber }
+    success: false,
+    message: `❌ DHL API Authentication Failed (${lastStatus || 401}): ${lastErrorDetail || 'Invalid API Key or Secret for ' + modeText + ' mode'}. Please check your credentials on developer.dhl.com.`,
+    config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber },
+    errorCode: lastStatus || 401
   };
 };
 
