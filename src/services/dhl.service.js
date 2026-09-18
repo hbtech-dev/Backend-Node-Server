@@ -118,28 +118,45 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
 
   if (apiKey) {
     try {
-      const authHeader = 'Basic ' + Buffer.from(`${gkpUser}:${gkpPass}`).toString('base64');
-      const iso3Country = recipient.country === 'ES' ? 'ESP' : (recipient.country === 'FR' ? 'FRA' : (recipient.country === 'IT' ? 'ITA' : (recipient.country === 'DE' ? 'DEU' : 'DEU')));
+      const isDomestic = !recipient.country || recipient.country === 'DE';
+      const baseEkp = (config.accountNumber || '63866404860101').slice(0, 10);
+      const activeBillingNumber = isDomestic ? `${baseEkp}0101` : `${baseEkp}5301`;
+      const activeProduct = isDomestic ? 'V01PAK' : 'V53WPAK';
+
+      const ISO2_TO_3 = {
+        'DE': 'DEU', 'ES': 'ESP', 'FR': 'FRA', 'IT': 'ITA', 'PT': 'PRT',
+        'NL': 'NLD', 'AT': 'AUT', 'PL': 'POL', 'BE': 'BEL', 'SE': 'SWE',
+        'GR': 'GRC', 'CZ': 'CZE', 'RO': 'ROU', 'HU': 'HUN', 'DK': 'DNK',
+        'FI': 'FIN', 'SK': 'SVK', 'HR': 'HRV', 'SI': 'SVN', 'LT': 'LTU',
+        'LV': 'LVA', 'EE': 'EST', 'BG': 'BGR', 'IE': 'IRL', 'CY': 'CYP'
+      };
+      const iso3Country = ISO2_TO_3[recipient.country] || (recipient.country?.length === 3 ? recipient.country : 'DEU');
+
+      const cleanName = (recipient.name || 'Valued Customer').slice(0, 35).trim();
+      const rawStreet = recipient.streetName || recipient.address || 'Stauffenbergstraße 3';
+      const cleanStreet = rawStreet.split(',')[0].slice(0, 35).trim();
+      const cleanCity = (recipient.cityName || 'Aachen').slice(0, 35).trim();
+      const cleanZip = (recipient.postcode || '52078').slice(0, 10).trim();
 
       const parcelPayload = {
         shipments: [
           {
-            product: config.productType || 'V01PAK',
-            billingNumber,
-            refNo: orderNum || `PO-${Date.now()}`,
+            product: activeProduct,
+            billingNumber: activeBillingNumber,
+            refNo: (orderNum || `PO-${Date.now()}`).slice(0, 35),
             shipper: {
-              name1: sender.companyName || 'Vitanow (Isik)',
-              addressStreet: `${sender.streetName || 'Clarenberg'} ${sender.houseNumber || '1'}`.trim(),
-              postalCode: sender.postcode || '44263',
-              city: sender.cityName || 'Dortmund',
+              name1: (sender.companyName || 'Vitanow (Isik)').slice(0, 35),
+              addressStreet: `${sender.streetName || 'Clarenberg'} ${sender.houseNumber || '1'}`.trim().slice(0, 35),
+              postalCode: (sender.postcode || '44263').slice(0, 10),
+              city: (sender.cityName || 'Dortmund').slice(0, 35),
               country: 'DEU',
               email: sender.contactEmail || 'shipper@vitanow.com'
             },
             consignee: {
-              name1: recipient.name || 'Valued Customer',
-              addressStreet: recipient.streetName || recipient.address || 'Stauffenbergstraße 3',
-              postalCode: recipient.postcode || '52078',
-              city: recipient.cityName || 'Aachen',
+              name1: cleanName,
+              addressStreet: cleanStreet,
+              postalCode: cleanZip,
+              city: cleanCity,
               country: iso3Country,
               email: recipient.email || 'customer@temu.com'
             },
