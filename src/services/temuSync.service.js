@@ -350,8 +350,8 @@ const mapTemuOrderToModel = (rawItem, userId) => {
       'Standard'
     );
     const itemImg = item.thumbUrl || item.thumb_url || item.imageUrl || item.image_url || item.goodsImg || item.goods_img || item.goodsThumbUrl || item.goods_thumb_url || '';
-    let itemPrice = Number(item.goodsPrice || item.goods_price || 0);
-    if (itemPrice > 500) itemPrice = itemPrice / 100;
+    let itemPrice = Number(item.goodsPrice || item.goods_price || item.goodsAmount || item.goods_amount || item.itemAmount || item.item_amount || item.unitPrice || item.price || 0);
+    if (itemPrice > 100) itemPrice = itemPrice / 100;
     return {
       sku: itemSku,
       articleName: itemTitle,
@@ -368,7 +368,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     quantity: 1,
     variation: 'Standard',
     productImage: '',
-    price: 19.99
+    price: 0.00
   };
 
   const articleName = primaryItem.articleName;
@@ -430,13 +430,13 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     : new Date().toLocaleDateString('de-DE');
 
   // Parse actual order price from Temu API
-  let rawPrice = parentMap.orderAmount || parentMap.order_amount || parentMap.payAmount || parentMap.pay_amount || parentMap.totalAmount || firstOrder.goodsPrice || firstOrder.goods_price || 0;
+  let rawPrice = parentMap.orderAmount || parentMap.order_amount || parentMap.payAmount || parentMap.pay_amount || parentMap.goodsAmount || parentMap.goods_amount || parentMap.totalAmount || (firstOrder && (firstOrder.goodsPrice || firstOrder.goods_price)) || 0;
   let parsedPrice = Number(rawPrice) || 0;
-  if (parsedPrice > 500) {
+  if (parsedPrice > 100) {
     parsedPrice = parsedPrice / 100;
   }
-  if (parsedPrice <= 0) {
-    parsedPrice = primaryItem.price || 19.99;
+  if (parsedPrice <= 0 && primaryItem && primaryItem.price > 0) {
+    parsedPrice = primaryItem.price;
   }
 
   const pkgInfo = calculateTemuPackageInfo(items);
@@ -1087,9 +1087,63 @@ const syncUserTemuReturnsAndIssues = async (user) => {
   }
 };
 
+const submitTemuReturnResolution = async (integration, returnDoc, action, answerText) => {
+  const routerUrls = [
+    'https://openapi-b-eu.temu.com/openapi/router',
+    'https://openapi-b-global.temu.com/openapi/router',
+    'https://openapi-b-us.temu.com/openapi/router'
+  ];
+
+  const appKey = integration.appKey;
+  const appSecret = integration.appSecret;
+  const accessToken = integration.accessToken;
+
+  if (!appKey || !appSecret) return false;
+
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const apiType = action === 'reject' ? 'bg.aftersales.return.reject' : action === 'approve' ? 'bg.aftersales.return.approve' : 'bg.aftersales.ticket.reply.v2';
+
+  const payload = {
+    app_key: appKey,
+    access_token: accessToken || '',
+    timestamp,
+    type: apiType,
+    return_id: (returnDoc.returnId || returnDoc._id || '').toString(),
+    order_sn: (returnDoc.orderNum || '').toString(),
+    ticket_id: (returnDoc.returnId || '').toString(),
+    reply_content: answerText || '',
+    reason: answerText || '',
+    remarks: answerText || ''
+  };
+
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+  const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+  for (const url of routerUrls) {
+    try {
+      const response = await httpFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, sign }),
+        timeout: 10000
+      });
+      if (response.ok) {
+        console.log(`✅ Submitted return resolution (${action}) to Temu router at ${url} for Return ${returnDoc.returnId}: "${answerText}"`);
+        return true;
+      }
+    } catch (e) {
+      console.warn(`Temu return submission error at ${url}:`, e.message);
+    }
+  }
+
+  return false;
+};
+
 exports.syncUserTemuOrders = syncUserTemuOrders;
 exports.syncUserTemuReturnsAndIssues = syncUserTemuReturnsAndIssues;
 exports.uploadTrackingToTemu = uploadTrackingToTemu;
 exports.calculateTemuPackageInfo = calculateTemuPackageInfo;
+exports.submitTemuReturnResolution = submitTemuReturnResolution;
 
 

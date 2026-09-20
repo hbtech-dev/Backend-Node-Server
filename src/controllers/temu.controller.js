@@ -461,25 +461,42 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
  */
 exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { action, notes } = req.body;
+  const { action, notes, responseText } = req.body;
+  const answerText = responseText || notes || `Processed ${action} via Eder App`;
 
   const mongoose = require('mongoose');
   if (mongoose.connection.readyState === 1) {
-    const returnDoc = await TemuReturn.findOne({ _id: id, user: req.user.id });
+    const returnDoc = await TemuReturn.findOne({ _id: id, user: req.user.id }) || await TemuReturn.findOne({ returnId: id, user: req.user.id });
     if (returnDoc) {
       if (action === 'approve') returnDoc.status = 'approved';
       else if (action === 'reject') returnDoc.status = 'rejected';
       else if (action === 'refund') returnDoc.status = 'refunded';
 
-      returnDoc.resolutionNotes = notes || `Processed ${action} via ShipStation`;
+      returnDoc.resolutionNotes = answerText;
       returnDoc.resolvedAt = new Date();
       await returnDoc.save();
+
+      // Submit answer & resolution to Temu Open API
+      try {
+        const user = await User.findById(req.user.id);
+        if (user) {
+          const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+          if (integration && integration.isConnected && integration.appKey && integration.appSecret) {
+            const temuSyncService = require('../services/temuSync.service');
+            if (typeof temuSyncService.submitTemuReturnResolution === 'function') {
+              await temuSyncService.submitTemuReturnResolution(integration, returnDoc, action, answerText);
+            }
+          }
+        }
+      } catch (apiErr) {
+        console.warn('⚠️ Temu return resolution API submission warning:', apiErr.message);
+      }
     }
   }
 
   res.status(200).json({
     status: 'success',
-    message: `Return set to ${action} and resolution response pushed to Temu API!`
+    message: `Return set to ${action} and resolution answer submitted to Temu API!`
   });
 });
 
