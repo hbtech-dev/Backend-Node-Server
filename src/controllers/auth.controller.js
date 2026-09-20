@@ -81,7 +81,7 @@ exports.login = catchAsync(async (req, res, next) => {
       data: {
         user: { id: mockId, email: email || 'test@example.com', username: 'testuser', fullName: 'Test User', balance: 0, accountType: 'standard' },
         token,
-        refreshToken
+        refreshTokenre
       }
     });
   }

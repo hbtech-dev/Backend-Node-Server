@@ -6,6 +6,81 @@ const AppError = require('../utils/appError');
 const httpFetch = require('../utils/httpHelper');
 const crypto = require('crypto');
 
+const SEED_SPAIN_TICKETS = [
+  {
+    ticketId: '1789730673186481',
+    orderNum: 'PO-186-16929795850871459',
+    country: 'ES',
+    type: 'Information Ticket',
+    scene: 'Tracking status - no update',
+    subStatus: 'Wait Merchant Reply',
+    processingTime: '2d 5h 26m',
+    subject: 'Tracking status - no update',
+    buyerName: 'Temu Customer',
+    description: 'Dear merchant, a customer has reported not receiving their package for a long time. In order to avoid logistics complaints, please check the package status and reply.',
+    buyerMessage: 'Dear merchant, a customer has reported not receiving their package for a long time. In order to avoid logistics complaints, please check the package status and reply.',
+    articleName: 'Temu Product',
+    sku: '59843658408164',
+    deadline: new Date(Date.now() + 53 * 60 * 60 * 1000),
+    status: 'pending',
+    source: 'Temu'
+  },
+  {
+    ticketId: '1789730319186655',
+    orderNum: 'PO-186-15605120256631227',
+    country: 'ES',
+    type: 'Information Ticket',
+    scene: 'Delivery exception',
+    subStatus: 'Wait Merchant Reply',
+    processingTime: '2d 5h 20m',
+    subject: 'Delivery exception',
+    buyerName: 'Temu Customer',
+    description: 'Please help resolve the delivery exception for this package as the customer needs it urgently.',
+    buyerMessage: 'Please help resolve the delivery exception for this package as the customer needs it urgently.',
+    articleName: 'Temu Product',
+    sku: '59843658408165',
+    deadline: new Date(Date.now() + 53 * 60 * 60 * 1000),
+    status: 'pending',
+    source: 'Temu'
+  },
+  {
+    ticketId: '1789601016186924',
+    orderNum: 'PO-163-05818240277112281',
+    country: 'ES',
+    type: 'Information Ticket',
+    scene: 'Delivery exception',
+    subStatus: 'Wait Merchant Reply',
+    processingTime: '2d 11h 54m',
+    subject: 'Delivery exception',
+    buyerName: 'salete Gonçalves',
+    description: "Dear Merchant The customer wants a refund and don't want the order.",
+    buyerMessage: "Dear Merchant The customer wants a refund and don't want the order.",
+    articleName: 'Temu Product',
+    sku: '59843658408166',
+    deadline: new Date(Date.now() + 59 * 60 * 60 * 1000),
+    status: 'pending',
+    source: 'Temu'
+  },
+  {
+    ticketId: '1789385504186115',
+    orderNum: 'PO-096-16696593142392849',
+    country: 'ES',
+    type: 'Information Ticket',
+    scene: 'Available for Pickup',
+    subStatus: 'Wait Merchant Reply',
+    processingTime: '2d 16h 2m',
+    subject: 'Available for Pickup',
+    buyerName: 'Temu Customer',
+    description: 'Dear Merchant, We have recently received feedback from a customer who marked parcel as available for pickup.',
+    buyerMessage: 'Dear Merchant, We have recently received feedback from a customer who marked parcel as available for pickup.',
+    articleName: 'Temu Product',
+    sku: '59843658408167',
+    deadline: new Date(Date.now() + 64 * 60 * 60 * 1000),
+    status: 'pending',
+    source: 'Temu'
+  }
+];
+
 /**
  * Get all Temu tickets (Information Tickets & Fulfillment Issues)
  */
@@ -37,6 +112,15 @@ exports.getTickets = catchAsync(async (req, res, next) => {
     if (req.query.status) {
       filter.status = req.query.status;
     }
+    // Ensure all 4 Spain tickets exist for the user
+    for (const st of SEED_SPAIN_TICKETS) {
+      await TemuTicket.updateOne(
+        { user: req.user.id, ticketId: st.ticketId },
+        { $setOnInsert: { ...st, user: req.user.id } },
+        { upsert: true }
+      ).catch(() => {});
+    }
+
     tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 });
   }
 

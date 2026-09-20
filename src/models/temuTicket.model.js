@@ -37,6 +37,26 @@ const temuTicketSchema = new mongoose.Schema({
     type: String,
     default: 'Customer requested additional shipping detail / delivery status clarification.'
   },
+  scene: {
+    type: String,
+    default: 'Delivery Exception'
+  },
+  summary: {
+    type: String,
+    default: ''
+  },
+  description: {
+    type: String,
+    default: ''
+  },
+  processingTime: {
+    type: String,
+    default: '2d 5h 20m'
+  },
+  subStatus: {
+    type: String,
+    default: 'Wait Merchant Reply'
+  },
   articleName: {
     type: String,
     default: 'Apple Cider Vinegar Gummies 120 Gummies'
