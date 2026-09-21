@@ -126,7 +126,7 @@ const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = 
     });
     if (!res.ok) return null;
     const data = await res.json();
-    if (data.errorCode === 3000034 || data.errorCode === 3000035) {
+    if (data.errorCode === 3000034 || data.errorCode === 3000035 || data.errorCode === 140020002 || data.errorCode === 180020003) {
       return null;
     }
     console.log(`🔍 [${type}] Response for ${params.parentOrderSn || params.parent_order_sn || 'query'}:`, JSON.stringify(data).slice(0, 500));
@@ -321,7 +321,7 @@ const calculateTemuPackageInfo = (items = []) => {
 /**
  * Map Temu API order object to our TemuOrder model fields.
  */
-const mapTemuOrderToModel = (rawItem, userId) => {
+const mapTemuOrderToModel = (rawItem, userId, storeAppKey = '', shopName = '') => {
   const parentMap = rawItem.parentOrderMap || {};
   const orderList = rawItem.orderList || [];
   const firstOrder = orderList[0] || {};
@@ -483,7 +483,9 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     shippingMethod: 'DHL Paket International',
     orderDate,
     status: 'open',
-    source: 'Temu'
+    source: 'Temu',
+    storeAppKey: storeAppKey || '',
+    shopName: shopName || ''
   };
 };
 
@@ -705,7 +707,7 @@ const syncUserTemuOrders = async (user) => {
         const orderNum = pm.parentOrderSn || ol.orderSn;
         if (!orderNum) continue;
 
-        const mapped = mapTemuOrderToModel(rawItem, user._id);
+        const mapped = mapTemuOrderToModel(rawItem, user._id, appKey, shopName);
 
         // --- Enrich with address from logistics API map ---
         const cleanOrderSn = orderNum.replace(/^PO-/i, '');
@@ -959,6 +961,15 @@ const uploadTrackingToTemu = async (user, order) => {
   let integrations = [];
   if (user.temuIntegrations && user.temuIntegrations.length > 0) {
     integrations = user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret);
+    if (order.storeAppKey || order.shopName) {
+      integrations.sort((a, b) => {
+        if (order.storeAppKey && a.appKey === order.storeAppKey) return -1;
+        if (order.storeAppKey && b.appKey === order.storeAppKey) return 1;
+        if (order.shopName && a.shopName === order.shopName) return -1;
+        if (order.shopName && b.shopName === order.shopName) return 1;
+        return 0;
+      });
+    }
   } else if (user.temuIntegration && user.temuIntegration.isConnected && user.temuIntegration.appKey) {
     integrations = [user.temuIntegration];
   }

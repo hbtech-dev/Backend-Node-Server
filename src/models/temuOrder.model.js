@@ -153,6 +153,14 @@ const temuOrderSchema = new mongoose.Schema(
     manuallyRevertedToOpen: {
       type: Boolean,
       default: false
+    },
+    storeAppKey: {
+      type: String,
+      default: ''
+    },
+    shopName: {
+      type: String,
+      default: ''
     }
   },
   {
