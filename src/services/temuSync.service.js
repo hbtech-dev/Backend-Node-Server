@@ -126,6 +126,9 @@ const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = 
     });
     if (!res.ok) return null;
     const data = await res.json();
+    if (data.errorCode === 3000034 || data.errorCode === 3000035) {
+      return null;
+    }
     console.log(`🔍 [${type}] Response for ${params.parentOrderSn || params.parent_order_sn || 'query'}:`, JSON.stringify(data).slice(0, 500));
     const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0 || Boolean(data.result);
     if (!isOk) return null;
@@ -498,62 +501,26 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
     // Some Temu APIs need the full PO- prefix, others need just the number — try both
     const fullSn = rawOrderSn.toString().startsWith('PO-') ? rawOrderSn.toString() : `PO-${rawOrderSn}`;
     try {
-      // Build param sets for both full and clean SNs
-      const paramsFull = {
-        parentOrderSn: fullSn,
-        parent_order_sn: fullSn,
-        orderSn: fullSn,
-        order_sn: fullSn
-      };
-      const paramsClean = {
-        parentOrderSn: cleanSn,
-        parent_order_sn: cleanSn,
-        orderSn: cleanSn,
-        order_sn: cleanSn
-      };
-
-      // 1. Try bg.order.shippinginfo.v2.get with full PO- prefix first
-      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', paramsFull);
-
-      // 2. Try without PO- prefix
+      // 1. Try bg.order.shippinginfo.v2.get with parentOrderSn (full PO- prefix)
+      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn: fullSn });
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', paramsClean);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn: cleanSn });
       }
 
-      // 3. Try bg.order.decryptshippinginfo.get (full)
+      // 2. Try bg.order.decryptshippinginfo.get
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', paramsFull);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', { parentOrderSn: fullSn });
+      }
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', { parentOrderSn: cleanSn });
       }
 
-      // 4. Try bg.order.decryptshippinginfo.get (clean)
+      // 3. Fallback to bg.order.detail.v2.get
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', paramsClean);
-      }
-
-      // 5. Fallback to bg.order.detail.v2.get (full)
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', paramsFull);
-      }
-
-      // 6. Fallback to bg.order.detail.v2.get (clean)
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', paramsClean);
-      }
-
-      // 7. Fallback to bg.logistics.address.get
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', paramsFull);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: fullSn });
       }
       if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.address.get', paramsClean);
-      }
-
-      // 8. Fallback to bg.logistics.shipment.get
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', paramsFull);
-      }
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', paramsClean);
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: cleanSn });
       }
 
       if (detail) {
@@ -809,19 +776,12 @@ const syncUserTemuOrders = async (user) => {
             mapped.address = addressParts.join(', ');
           }
         } else {
-          // Fallback: query order detail via bg.order.shippinginfo.v2.get / decrypt / detail / shipment for full recipient name & shipping address
+          // Fallback: query order detail via bg.order.shippinginfo.v2.get / decrypt / detail
           try {
-            const queryParams = {
-              parentOrderSn: orderNum,
-              parent_order_sn: orderNum,
-              orderSn: ol.orderSn || orderNum,
-              order_sn: ol.orderSn || orderNum
-            };
-
+            const queryParams = { parentOrderSn: orderNum };
             const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', queryParams) ||
               await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', queryParams) ||
-              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams) ||
-              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.get', queryParams);
+              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams);
 
             if (orderDetail) {
               const pmDetail = orderDetail.parentOrderMap || {};
