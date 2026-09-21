@@ -228,7 +228,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
 
   for (const id of orderIds) {
     let order = await TemuOrder.findOne({ _id: id, user: user._id }) || await EbayOrder.findOne({ _id: id, user: user._id });
-    if (order && order.status === 'open') {
+    if (order) {
       const dhlResult = await dhlService.createDHLShipment({
         sender: {
           companyName: user.companyName,
@@ -317,6 +317,7 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
   }
 
   const user = await User.findById(req.user.id);
+  const updatedOrders = [];
 
   const mongoose = require('mongoose');
   if (mongoose.connection.readyState === 1) {
@@ -325,9 +326,17 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
       if (order) {
         order.status = 'printed';
         if (!order.tracking) {
-          order.tracking = `JJD00030${Math.floor(10000000 + Math.random() * 90000000)}`;
+          const dhlResult = await dhlService.createDHLShipment({
+            sender: { companyName: user.companyName, streetName: user.streetName, houseNumber: user.houseNumber, postcode: user.postcode, cityName: user.cityName },
+            recipient: { name: order.name, address: order.address, streetName: order.streetName, houseNumber: order.houseNumber, postcode: order.postcode, cityName: order.cityName, country: order.country },
+            orderNum: order.orderNum,
+            userDhlConfig: user.dhlIntegration || {}
+          });
+          order.tracking = dhlResult.trackingNumber;
+          order.shippingMethod = dhlResult.shippingMethod;
         }
         await order.save();
+        updatedOrders.push(order);
 
         // Auto-upload tracking to Temu if this is a Temu order that now has a tracking number
         const isTemu = Boolean(order.temuOrderId) ||
@@ -346,7 +355,8 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: 'Order status updated to printed.'
+    message: 'Order status updated to printed.',
+    data: { orders: updatedOrders }
   });
 });
 
