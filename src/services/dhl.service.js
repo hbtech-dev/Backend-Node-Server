@@ -182,9 +182,10 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
 
       if (isNonEu) {
         shipmentItem.customs = {
-          exportType: 'OTHER',
-          exportTypeDescription: 'Commercial Goods Sale',
+          exportType: 'COMMERCIAL_GOODS',
+          exportDescription: 'Sale of goods',
           placeOfCommittal: (sender.cityName || 'Dortmund').slice(0, 35),
+          postalCharges: { currency: 'EUR', value: 0.00 },
           items: [
             {
               itemDescription: (items[0]?.articleName || 'Food Supplement / Goods').slice(0, 45),
