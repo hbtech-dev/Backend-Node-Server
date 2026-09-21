@@ -349,3 +349,41 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
     message: 'Order status updated to printed.'
   });
 });
+
+/**
+ * Revert orders from created_label or printed back to open status
+ */
+exports.revertToOpen = catchAsync(async (req, res, next) => {
+  const { orderId, orderIds = [], all = false } = req.body;
+  const idsToProcess = orderIds.length > 0 ? orderIds : (orderId ? [orderId] : []);
+
+  const mongoose = require('mongoose');
+  if (mongoose.connection.readyState === 1) {
+    const updatePayload = {
+      $set: {
+        status: 'open',
+        tracking: '',
+        dhlShipmentId: '',
+        dhlLabelUrl: '',
+        qrCodeData: '',
+        barcodeData: '',
+        shippedAt: null,
+        trackingUploadedToTemu: false
+      }
+    };
+
+    if (all) {
+      await TemuOrder.updateMany({ user: req.user.id, status: { $in: ['created_label', 'printed'] } }, updatePayload);
+      await EbayOrder.updateMany({ user: req.user.id, status: { $in: ['created_label', 'printed'] } }, updatePayload);
+    } else if (idsToProcess.length > 0) {
+      await TemuOrder.updateMany({ _id: { $in: idsToProcess }, user: req.user.id }, updatePayload);
+      await EbayOrder.updateMany({ _id: { $in: idsToProcess }, user: req.user.id }, updatePayload);
+    }
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Orders successfully moved back to open orders.'
+  });
+});
+

@@ -15,5 +15,6 @@ router.post('/test-connection', dhlController.testConnection);
 router.post('/create-shipment', dhlController.createShipment);
 router.post('/bulk-create-shipments', dhlController.bulkCreateShipments);
 router.post('/mark-printed', dhlController.markPrinted);
+router.post('/revert-to-open', dhlController.revertToOpen);
 
 module.exports = router;
