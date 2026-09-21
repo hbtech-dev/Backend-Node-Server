@@ -160,7 +160,11 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     }
 
     // Auto-upload tracking to Temu if this is a Temu order
-    if (order.temuOrderId) {
+    const isTemu = Boolean(order.temuOrderId) ||
+                   (order.source && order.source.toLowerCase() === 'temu') ||
+                   (order.orderNum && /^PO-/i.test(order.orderNum));
+
+    if (isTemu) {
       const { uploadTrackingToTemu } = require('../services/temuSync.service');
       uploadTrackingToTemu(user, order).catch(err => {
         console.error('⚠️ Background Temu tracking upload (FedEx) failed:', err.message);
@@ -218,7 +222,11 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
         }
 
         // Auto-upload tracking to Temu if this is a Temu order
-        if (order.temuOrderId) {
+        const isTemu = Boolean(order.temuOrderId) ||
+                       (order.source && order.source.toLowerCase() === 'temu') ||
+                       (order.orderNum && /^PO-/i.test(order.orderNum));
+
+        if (isTemu) {
           const { uploadTrackingToTemu } = require('../services/temuSync.service');
           uploadTrackingToTemu(user, order).catch(err => {
             console.error('⚠️ Background Temu tracking upload (bulk FedEx) failed:', err.message);

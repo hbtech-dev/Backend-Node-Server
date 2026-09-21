@@ -129,7 +129,7 @@ const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = 
     console.log(`🔍 [${type}] Response for ${params.parentOrderSn || params.parent_order_sn || 'query'}:`, JSON.stringify(data).slice(0, 500));
     const isOk = data.success === true || data.errorCode === 1000000 || data.errorCode === 0 || Boolean(data.result);
     if (!isOk) return null;
-    return data.result || data.response || data.data || null;
+    return data.result !== undefined && data.result !== null ? data.result : (data.response || data.data || data);
   } catch (e) {
     console.warn(`⚠️ [${type}] Fetch exception:`, e.message);
     return null;
@@ -1033,43 +1033,53 @@ const uploadTrackingToTemu = async (user, order) => {
     for (const orderSn of orderSnCandidates) {
       console.log(`📤 [Temu Tracking] Pushing tracking ${order.tracking} → order SN "${orderSn}" via store "${integration.shopName || appKey}"...`);
 
-      try {
-        // Try the modern logistics.trace.create endpoint first (Temu Open Platform)
-        // Params: parentOrderSn + trackingNumber + expressCompanyId
-        const result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shipment.create', {
-          parentOrderSn: orderSn,
-          parent_order_sn: orderSn,
-          order_sn: orderSn,
-          orderSn: orderSn,
-          tracking_number: order.tracking,
-          trackingNumber: order.tracking,
-          express_company_id: expressCompanyId,
-          shipping_company_id: expressCompanyId,
-          expressCompanyId,
-          shippingCompanyId: expressCompanyId
-        });
+      const endpointsToTry = [
+        'bg.logistics.shipment.create',
+        'bg.logistics.shipment.send',
+        'bg.order.shipment.create',
+        'bg.logistics.order.shipping.confirm'
+      ];
 
-        console.log(`📦 [Temu Tracking] bg.order.shipment.create response for "${orderSn}":`, JSON.stringify(result));
-
-        // Check response — Temu returns success: true OR errorCode 1000000/0 inside callTemuRouterRaw
-        if (result !== null) {
-          console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu for order ${orderSn}`);
-          uploadedSuccessfully = true;
-
-          // Also try the confirm-ship endpoint to mark the order as SHIPPED on Temu seller dashboard
-          callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.shipping.confirm', {
+      for (const endpoint of endpointsToTry) {
+        try {
+          const result = await callTemuRouterRaw(appKey, appSecret, accessToken, endpoint, {
             parentOrderSn: orderSn,
             parent_order_sn: orderSn,
             order_sn: orderSn,
+            orderSn: orderSn,
             tracking_number: order.tracking,
-            express_company_id: expressCompanyId
-          }).catch(() => {});
+            trackingNumber: order.tracking,
+            express_company_id: expressCompanyId,
+            shipping_company_id: expressCompanyId,
+            expressCompanyId,
+            shippingCompanyId: expressCompanyId
+          });
 
-          break; // Stop trying other SNs once one succeeds
+          console.log(`📦 [Temu Tracking] ${endpoint} response for "${orderSn}":`, JSON.stringify(result));
+
+          if (result !== null) {
+            console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu (${endpoint}) for order ${orderSn}`);
+            uploadedSuccessfully = true;
+
+            // Also send shipping confirm if endpoint wasn't already shipping confirm
+            if (endpoint !== 'bg.logistics.order.shipping.confirm') {
+              callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.shipping.confirm', {
+                parentOrderSn: orderSn,
+                parent_order_sn: orderSn,
+                order_sn: orderSn,
+                tracking_number: order.tracking,
+                express_company_id: expressCompanyId
+              }).catch(() => {});
+            }
+
+            break; // Stop trying endpoints once one succeeds
+          }
+        } catch (err) {
+          console.warn(`⚠️ [Temu Tracking] Error for ${endpoint} on SN "${orderSn}":`, err.message);
         }
-      } catch (err) {
-        console.warn(`⚠️ [Temu Tracking] Error for SN "${orderSn}" on store "${integration.shopName || appKey}":`, err.message);
       }
+
+      if (uploadedSuccessfully) break; // Stop trying other SNs once one succeeds
     }
 
     if (uploadedSuccessfully) break; // Stop trying other integrations once one succeeds

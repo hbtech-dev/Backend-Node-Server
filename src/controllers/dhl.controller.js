@@ -191,7 +191,12 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   }
 
   // Auto-upload tracking to Temu if this is a Temu order
-  if (orderType.toLowerCase() === 'temu' && order.temuOrderId) {
+  const isTemu = (orderType && orderType.toLowerCase() === 'temu') ||
+                 Boolean(order.temuOrderId) ||
+                 (order.source && order.source.toLowerCase() === 'temu') ||
+                 (order.orderNum && /^PO-/i.test(order.orderNum));
+
+  if (isTemu) {
     const { uploadTrackingToTemu } = require('../services/temuSync.service');
     uploadTrackingToTemu(user, order).catch(err => {
       console.error('⚠️ Background Temu tracking upload failed:', err.message);
@@ -271,7 +276,11 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       }
 
       // Auto-upload tracking to Temu if this is a Temu order
-      if (order.temuOrderId) {
+      const isTemu = Boolean(order.temuOrderId) ||
+                     (order.source && order.source.toLowerCase() === 'temu') ||
+                     (order.orderNum && /^PO-/i.test(order.orderNum));
+
+      if (isTemu) {
         const { uploadTrackingToTemu } = require('../services/temuSync.service');
         uploadTrackingToTemu(user, order).catch(err => {
           console.error('⚠️ Background Temu tracking upload (bulk DHL) failed:', err.message);
@@ -321,7 +330,11 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
         await order.save();
 
         // Auto-upload tracking to Temu if this is a Temu order that now has a tracking number
-        if (order.temuOrderId || (order.source && order.source.toLowerCase() === 'temu')) {
+        const isTemu = Boolean(order.temuOrderId) ||
+                       (order.source && order.source.toLowerCase() === 'temu') ||
+                       (order.orderNum && /^PO-/i.test(order.orderNum));
+
+        if (isTemu) {
           const { uploadTrackingToTemu } = require('../services/temuSync.service');
           uploadTrackingToTemu(user, order).catch(err => {
             console.error('⚠️ Background Temu tracking upload (markPrinted) failed:', err.message);
