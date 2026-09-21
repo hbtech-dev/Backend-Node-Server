@@ -129,9 +129,19 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
         'NL': 'NLD', 'AT': 'AUT', 'PL': 'POL', 'BE': 'BEL', 'SE': 'SWE',
         'GR': 'GRC', 'CZ': 'CZE', 'RO': 'ROU', 'HU': 'HUN', 'DK': 'DNK',
         'FI': 'FIN', 'SK': 'SVK', 'HR': 'HRV', 'SI': 'SVN', 'LT': 'LTU',
-        'LV': 'LVA', 'EE': 'EST', 'BG': 'BGR', 'IE': 'IRL', 'CY': 'CYP'
+        'LV': 'LVA', 'EE': 'EST', 'BG': 'BGR', 'IE': 'IRL', 'CY': 'CYP',
+        'LU': 'LUX', 'MT': 'MLT',
+        'CH': 'CHE', 'GB': 'GBR', 'NO': 'NOR', 'US': 'USA', 'CA': 'CAN',
+        'AU': 'AUS', 'NZ': 'NZL', 'TR': 'TUR', 'UA': 'UKR', 'IS': 'ISL'
       };
       const iso3Country = ISO2_TO_3[recipient.country] || (recipient.country?.length === 3 ? recipient.country : 'DEU');
+
+      const EU_ISO3 = new Set([
+        'DEU', 'ESP', 'FRA', 'ITA', 'PRT', 'NLD', 'AUT', 'POL', 'BEL', 'SWE',
+        'GRC', 'CZE', 'ROU', 'HUN', 'DNK', 'FIN', 'SVK', 'HRV', 'SVN', 'LTU',
+        'LVA', 'EST', 'BGR', 'IRL', 'CYP', 'LUX', 'MLT'
+      ]);
+      const isNonEu = !EU_ISO3.has(iso3Country);
 
       const cleanName = (recipient.name || 'Valued Customer').slice(0, 35).trim();
       const rawStreet = recipient.streetName || recipient.address || 'Stauffenbergstraße 3';
@@ -139,39 +149,55 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
       const cleanCity = (recipient.cityName || 'Aachen').slice(0, 35).trim();
       const cleanZip = (recipient.postcode || '52078').slice(0, 10).trim();
 
-      const parcelPayload = {
-        shipments: [
-          {
-            product: activeProduct,
-            billingNumber: activeBillingNumber,
-            refNo: (orderNum || `PO-${Date.now()}`).slice(0, 35),
-            shipper: {
-              name1: (sender.companyName || 'Vitanow (Isik)').slice(0, 35),
-              addressStreet: `${sender.streetName || 'Clarenberg'} ${sender.houseNumber || '1'}`.trim().slice(0, 35),
-              postalCode: (sender.postcode || '44263').slice(0, 10),
-              city: (sender.cityName || 'Dortmund').slice(0, 35),
-              country: 'DEU',
-              email: sender.contactEmail || 'shipper@vitanow.com'
-            },
-            consignee: {
-              name1: cleanName,
-              addressStreet: cleanStreet,
-              postalCode: cleanZip,
-              city: cleanCity,
-              country: iso3Country,
-              email: recipient.email || 'customer@temu.com'
-            },
-            details: {
-              weight: { uom: 'g', value: Math.round((parseFloat(weight) || 0.5) * 1000) }
-            },
-            ...(activeProduct === 'V53WPAK' ? {
-              services: {
-                endorsement: 'RETURN',
-                premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : false
-              }
-            } : {})
+      const shipmentItem = {
+        product: activeProduct,
+        billingNumber: activeBillingNumber,
+        refNo: (orderNum || `PO-${Date.now()}`).slice(0, 35),
+        shipper: {
+          name1: (sender.companyName || 'Vitanow (Isik)').slice(0, 35),
+          addressStreet: `${sender.streetName || 'Clarenberg'} ${sender.houseNumber || '1'}`.trim().slice(0, 35),
+          postalCode: (sender.postcode || '44263').slice(0, 10),
+          city: (sender.cityName || 'Dortmund').slice(0, 35),
+          country: 'DEU',
+          email: sender.contactEmail || 'shipper@vitanow.com'
+        },
+        consignee: {
+          name1: cleanName,
+          addressStreet: cleanStreet,
+          postalCode: cleanZip,
+          city: cleanCity,
+          country: iso3Country,
+          email: recipient.email || 'customer@temu.com'
+        },
+        details: {
+          weight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.5) * 1000)) }
+        },
+        ...(activeProduct === 'V53WPAK' ? {
+          services: {
+            endorsement: 'RETURN',
+            premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : false
           }
-        ]
+        } : {})
+      };
+
+      if (isNonEu) {
+        shipmentItem.customs = {
+          exportType: 'OTHER',
+          exportTypeDescription: 'Commercial Goods Sale',
+          placeOfCommittal: (sender.cityName || 'Dortmund').slice(0, 35),
+          items: [
+            {
+              itemDescription: (items[0]?.articleName || 'Food Supplement / Goods').slice(0, 45),
+              packagedQuantity: Number(items[0]?.quantity || 1),
+              itemWeight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.5) * 1000)) },
+              itemValue: { currency: 'EUR', value: 25.0 }
+            }
+          ]
+        };
+      }
+
+      const parcelPayload = {
+        shipments: [shipmentItem]
       };
 
       const endpoint = config.isSandbox 
@@ -213,10 +239,10 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
         }
       } else {
         const errText = await response.text();
-        console.warn(`⚠️ DHL Live API responded status ${response.status}:`, errText.slice(0, 300));
+        console.warn(`⚠️ DHL Live API responded status ${response.status} for ${recipient.country} (${iso3Country}):`, errText.slice(0, 400));
       }
     } catch (err) {
-      console.warn('DHL Live API call exception, using fail-safe generator:', err.message);
+      console.warn('DHL Live API call exception:', err.message);
     }
   }
 
