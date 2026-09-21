@@ -203,6 +203,18 @@ const userSchema = new mongoose.Schema(
         numPrefix: { type: String, default: 'PO-' },
         nextNum: { type: String, default: '10001' }
       }
+    },
+    trashedCountries: {
+      type: [String],
+      default: []
+    },
+    restoredOrderIds: {
+      type: [String],
+      default: []
+    },
+    manualTrashedOrderIds: {
+      type: [String],
+      default: []
     }
   },
   {

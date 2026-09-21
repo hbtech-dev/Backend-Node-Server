@@ -261,3 +261,51 @@ exports.selectPlan = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * Get trashed countries and order settings for the current user
+ */
+exports.getTrashedCountries = catchAsync(async (req, res, next) => {
+  const mongoose = require('mongoose');
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      trashedCountries: user.trashedCountries || [],
+      restoredOrderIds: user.restoredOrderIds || [],
+      manualTrashedOrderIds: user.manualTrashedOrderIds || []
+    }
+  });
+});
+
+/**
+ * Save trashed countries and order settings for the current user in MongoDB
+ */
+exports.updateTrashedCountries = catchAsync(async (req, res, next) => {
+  const { trashedCountries, restoredOrderIds, manualTrashedOrderIds } = req.body;
+
+  const mongoose = require('mongoose');
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    const updateData = {};
+    if (Array.isArray(trashedCountries)) updateData.trashedCountries = trashedCountries;
+    if (Array.isArray(restoredOrderIds)) updateData.restoredOrderIds = restoredOrderIds;
+    if (Array.isArray(manualTrashedOrderIds)) updateData.manualTrashedOrderIds = manualTrashedOrderIds;
+
+    user = await User.findByIdAndUpdate(req.user.id, updateData, { new: true });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Trashed countries settings saved successfully',
+    data: {
+      trashedCountries: user.trashedCountries || [],
+      restoredOrderIds: user.restoredOrderIds || [],
+      manualTrashedOrderIds: user.manualTrashedOrderIds || []
+    }
+  });
+});
+

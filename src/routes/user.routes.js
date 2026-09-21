@@ -10,6 +10,9 @@ router.use(auth);
 
 router.get('/me', userController.getMe);
 
+router.get('/trashed-countries', userController.getTrashedCountries);
+router.put('/trashed-countries', userController.updateTrashedCountries);
+
 router.put(
   '/me',
   [
