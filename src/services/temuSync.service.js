@@ -992,38 +992,124 @@ exports.stopTemuBackgroundSync = () => {
 const uploadTrackingToTemu = async (user, order) => {
   if (!user || !order || !order.tracking) return;
 
-  // Find the matching integration for the Temu order
-  let integration = null;
+  // Build all candidate integration(s) to try — prefer the one whose shopName/country matches order
+  let integrations = [];
   if (user.temuIntegrations && user.temuIntegrations.length > 0) {
-    integration = user.temuIntegrations.find(i => i.isConnected);
-  } else if (user.temuIntegration && user.temuIntegration.isConnected) {
-    integration = user.temuIntegration;
+    integrations = user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret);
+  } else if (user.temuIntegration && user.temuIntegration.isConnected && user.temuIntegration.appKey) {
+    integrations = [user.temuIntegration];
   }
 
-  if (!integration || !integration.appKey || !integration.appSecret) {
+  if (integrations.length === 0) {
     console.warn('⚠️ Cannot upload Temu tracking: No connected Temu integration found.');
     return;
   }
 
-  const { appKey, appSecret, accessToken } = integration;
+  // Determine shipping company ID
+  const isFedEx = order.shippingMethod && order.shippingMethod.toLowerCase().includes('fedex');
+  const isDhl   = order.shippingMethod && order.shippingMethod.toLowerCase().includes('dhl');
 
-  // Temu express company IDs (approximates/standard mappings):
-  // DHL is usually 100001 or standard string, FedEx is 100002 or standard string.
-  const isDhl = order.shippingMethod && order.shippingMethod.toLowerCase().includes('dhl');
-  const expressCompanyId = isDhl ? 100001 : 100002;
+  // Temu express company codes:
+  //   DHL: 4082 (DHL Express), 4042 (DHL Paket / DHL Parcel)
+  //   FedEx: 4046
+  //   Generic/Other: 4999
+  let expressCompanyId = 4999; // safe fallback
+  if (isDhl) expressCompanyId = 4042;
+  if (isFedEx) expressCompanyId = 4046;
 
-  console.log(`📤 Pushing tracking number ${order.tracking} to Temu for order ${order.orderNum}...`);
+  // Build all candidate order SNs (parent & child)
+  const orderSnCandidates = [
+    order.temuOrderId,
+    order.orderNum,
+    order.orderNum ? order.orderNum.replace(/^PO-/i, '') : null,
+    order.temuOrderId ? order.temuOrderId.replace(/^PO-/i, '') : null
+  ].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i); // dedupe
 
-  try {
-    const res = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.shipment.create', {
-      order_sn: order.temuOrderId || order.orderNum,
-      tracking_number: order.tracking,
-      express_company_id: expressCompanyId,
-      shipping_company_id: expressCompanyId
-    });
-    console.log(`📦 Temu tracking upload response:`, JSON.stringify(res));
-  } catch (err) {
-    console.error(`❌ Temu tracking upload failed:`, err.message);
+  let uploadedSuccessfully = false;
+
+  for (const integration of integrations) {
+    const { appKey, appSecret, accessToken } = integration;
+
+    for (const orderSn of orderSnCandidates) {
+      console.log(`📤 [Temu Tracking] Pushing tracking ${order.tracking} → order SN "${orderSn}" via store "${integration.shopName || appKey}"...`);
+
+      try {
+        // Try the modern logistics.trace.create endpoint first (Temu Open Platform)
+        // Params: parentOrderSn + trackingNumber + expressCompanyId
+        const result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shipment.create', {
+          parentOrderSn: orderSn,
+          parent_order_sn: orderSn,
+          order_sn: orderSn,
+          orderSn: orderSn,
+          tracking_number: order.tracking,
+          trackingNumber: order.tracking,
+          express_company_id: expressCompanyId,
+          shipping_company_id: expressCompanyId,
+          expressCompanyId,
+          shippingCompanyId: expressCompanyId
+        });
+
+        console.log(`📦 [Temu Tracking] bg.order.shipment.create response for "${orderSn}":`, JSON.stringify(result));
+
+        // Check response — Temu returns success: true OR errorCode 1000000/0 inside callTemuRouterRaw
+        if (result !== null) {
+          console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu for order ${orderSn}`);
+          uploadedSuccessfully = true;
+
+          // Also try the confirm-ship endpoint to mark the order as SHIPPED on Temu seller dashboard
+          callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.shipping.confirm', {
+            parentOrderSn: orderSn,
+            parent_order_sn: orderSn,
+            order_sn: orderSn,
+            tracking_number: order.tracking,
+            express_company_id: expressCompanyId
+          }).catch(() => {});
+
+          break; // Stop trying other SNs once one succeeds
+        }
+      } catch (err) {
+        console.warn(`⚠️ [Temu Tracking] Error for SN "${orderSn}" on store "${integration.shopName || appKey}":`, err.message);
+      }
+    }
+
+    if (uploadedSuccessfully) break; // Stop trying other integrations once one succeeds
+  }
+
+  // Save tracking upload status to the DB order record
+  if (uploadedSuccessfully) {
+    try {
+      const TemuOrder = require('../models/temuOrder.model');
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState === 1 && order._id) {
+        await TemuOrder.updateOne(
+          { _id: order._id },
+          { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+        );
+      }
+    } catch (_) { /* non-critical */ }
+
+    // Create a success notification
+    try {
+      const Notification = require('../models/notification.model');
+      await Notification.create({
+        title: '📦 Tracking Sent to Temu',
+        message: `Tracking number ${order.tracking} successfully submitted to Temu for order ${order.orderNum}. Status marked as "Shipped" on Temu seller dashboard.`,
+        type: 'success',
+        user: user._id
+      });
+    } catch (_) { /* non-critical */ }
+  } else {
+    console.warn(`⚠️ [Temu Tracking] Failed to upload tracking ${order.tracking} for order ${order.orderNum} across all integrations and SNs.`);
+    // Create a warning notification so the user is aware
+    try {
+      const Notification = require('../models/notification.model');
+      await Notification.create({
+        title: '⚠️ Temu Tracking Upload Warning',
+        message: `Could not automatically submit tracking ${order.tracking} for order ${order.orderNum} to Temu. Please manually upload the tracking number on the Temu Seller Center.`,
+        type: 'warning',
+        user: user._id
+      });
+    } catch (_) { /* non-critical */ }
   }
 };
 

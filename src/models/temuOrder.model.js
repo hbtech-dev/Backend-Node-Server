@@ -141,6 +141,14 @@ const temuOrderSchema = new mongoose.Schema(
     source: {
       type: String,
       default: 'Temu'
+    },
+    trackingUploadedToTemu: {
+      type: Boolean,
+      default: false
+    },
+    trackingUploadedAt: {
+      type: Date,
+      default: null
     }
   },
   {

@@ -307,6 +307,8 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
     return next(new AppError('Order ID or list of Order IDs is required', 400));
   }
 
+  const user = await User.findById(req.user.id);
+
   const mongoose = require('mongoose');
   if (mongoose.connection.readyState === 1) {
     for (const id of idsToProcess) {
@@ -317,6 +319,14 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
           order.tracking = `JJD00030${Math.floor(10000000 + Math.random() * 90000000)}`;
         }
         await order.save();
+
+        // Auto-upload tracking to Temu if this is a Temu order that now has a tracking number
+        if (order.temuOrderId || (order.source && order.source.toLowerCase() === 'temu')) {
+          const { uploadTrackingToTemu } = require('../services/temuSync.service');
+          uploadTrackingToTemu(user, order).catch(err => {
+            console.error('⚠️ Background Temu tracking upload (markPrinted) failed:', err.message);
+          });
+        }
       }
     }
   }
