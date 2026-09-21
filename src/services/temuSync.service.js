@@ -997,48 +997,35 @@ const uploadTrackingToTemu = async (user, order) => {
       console.log(`📤 [Temu Tracking] Pushing tracking ${order.tracking} → order SN "${orderSn}" via store "${integration.shopName || appKey}"...`);
 
       const endpointsToTry = [
-        'bg.logistics.shipment.create',
-        'bg.logistics.shipment.send',
-        'bg.order.shipment.create',
-        'bg.logistics.order.shipping.confirm'
+        { name: 'bg.logistics.shipment.create', payload: { parentOrderSn: orderSn, trackingNumber: order.tracking, expressCompanyId } },
+        { name: 'bg.logistics.shipment.send', payload: { parent_order_sn: orderSn, tracking_number: order.tracking, express_company_id: expressCompanyId } },
+        { name: 'bg.order.shipment.create', payload: { parentOrderSn: orderSn, trackingNumber: order.tracking, expressCompanyId } },
+        { name: 'bg.logistics.order.shipping.confirm', payload: { parentOrderSn: orderSn, trackingNumber: order.tracking, expressCompanyId } }
       ];
 
-      for (const endpoint of endpointsToTry) {
+      for (const item of endpointsToTry) {
         try {
-          const result = await callTemuRouterRaw(appKey, appSecret, accessToken, endpoint, {
-            parentOrderSn: orderSn,
-            parent_order_sn: orderSn,
-            order_sn: orderSn,
-            orderSn: orderSn,
-            tracking_number: order.tracking,
-            trackingNumber: order.tracking,
-            express_company_id: expressCompanyId,
-            shipping_company_id: expressCompanyId,
-            expressCompanyId,
-            shippingCompanyId: expressCompanyId
-          });
+          const result = await callTemuRouterRaw(appKey, appSecret, accessToken, item.name, item.payload);
 
-          console.log(`📦 [Temu Tracking] ${endpoint} response for "${orderSn}":`, JSON.stringify(result));
+          console.log(`📦 [Temu Tracking] ${item.name} response for "${orderSn}":`, JSON.stringify(result));
 
           if (result !== null) {
-            console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu (${endpoint}) for order ${orderSn}`);
+            console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu (${item.name}) for order ${orderSn}`);
             uploadedSuccessfully = true;
 
             // Also send shipping confirm if endpoint wasn't already shipping confirm
-            if (endpoint !== 'bg.logistics.order.shipping.confirm') {
+            if (item.name !== 'bg.logistics.order.shipping.confirm') {
               callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.shipping.confirm', {
                 parentOrderSn: orderSn,
-                parent_order_sn: orderSn,
-                order_sn: orderSn,
-                tracking_number: order.tracking,
-                express_company_id: expressCompanyId
+                trackingNumber: order.tracking,
+                expressCompanyId
               }).catch(() => {});
             }
 
             break; // Stop trying endpoints once one succeeds
           }
         } catch (err) {
-          console.warn(`⚠️ [Temu Tracking] Error for ${endpoint} on SN "${orderSn}":`, err.message);
+          console.warn(`⚠️ [Temu Tracking] Error for ${item.name} on SN "${orderSn}":`, err.message);
         }
       }
 
