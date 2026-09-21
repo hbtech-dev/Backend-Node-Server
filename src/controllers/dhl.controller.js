@@ -362,6 +362,7 @@ exports.revertToOpen = catchAsync(async (req, res, next) => {
     const updatePayload = {
       $set: {
         status: 'open',
+        manuallyRevertedToOpen: true,
         tracking: '',
         dhlShipmentId: '',
         dhlLabelUrl: '',
@@ -376,8 +377,17 @@ exports.revertToOpen = catchAsync(async (req, res, next) => {
       await TemuOrder.updateMany({ user: req.user.id, status: { $in: ['created_label', 'printed'] } }, updatePayload);
       await EbayOrder.updateMany({ user: req.user.id, status: { $in: ['created_label', 'printed'] } }, updatePayload);
     } else if (idsToProcess.length > 0) {
-      await TemuOrder.updateMany({ _id: { $in: idsToProcess }, user: req.user.id }, updatePayload);
-      await EbayOrder.updateMany({ _id: { $in: idsToProcess }, user: req.user.id }, updatePayload);
+      const isObjectId = (id) => typeof id === 'string' && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id);
+      const mongoIds = idsToProcess.filter(isObjectId);
+
+      await TemuOrder.updateMany(
+        { user: req.user.id, $or: [{ _id: { $in: mongoIds } }, { orderNum: { $in: idsToProcess } }, { temuOrderId: { $in: idsToProcess } }] },
+        updatePayload
+      );
+      await EbayOrder.updateMany(
+        { user: req.user.id, $or: [{ _id: { $in: mongoIds } }, { orderNum: { $in: idsToProcess } }] },
+        updatePayload
+      );
     }
   }
 

@@ -149,6 +149,10 @@ const temuOrderSchema = new mongoose.Schema(
     trackingUploadedAt: {
       type: Date,
       default: null
+    },
+    manuallyRevertedToOpen: {
+      type: Boolean,
+      default: false
     }
   },
   {

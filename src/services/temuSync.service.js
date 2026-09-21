@@ -846,8 +846,11 @@ const syncUserTemuOrders = async (user) => {
           // Update existing record with safe payload — NEVER overwrite valid recipient names/addresses or label status with fallbacks
           const updatePayload = { ...mapped };
 
-          // Preserve label status & tracking if label was generated locally or order was printed/canceled
-          if (existing.status && existing.status !== 'open') {
+          // Preserve label status & tracking if order was manually reverted to open, generated locally, or printed/canceled
+          if (existing.manuallyRevertedToOpen) {
+            updatePayload.status = 'open';
+            updatePayload.manuallyRevertedToOpen = true;
+          } else if (existing.status && existing.status !== 'open') {
             updatePayload.status = existing.status;
           }
           if (existing.tracking) updatePayload.tracking = existing.tracking;
