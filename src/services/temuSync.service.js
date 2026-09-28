@@ -126,9 +126,7 @@ const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = 
     });
     if (!res.ok) return null;
     const data = await res.json();
-    // Silent-skip known-failure codes: no logging, just return null
-    const silentSkipCodes = new Set([3000034, 3000035, 180020003, 180020006, 140020002]);
-    if (silentSkipCodes.has(data.errorCode)) {
+    if (data.errorCode === 3000034 || data.errorCode === 3000035) {
       return null;
     }
     console.log(`🔍 [${type}] Response for ${params.parentOrderSn || params.parent_order_sn || 'query'}:`, JSON.stringify(data).slice(0, 500));
@@ -490,9 +488,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 };
 
 /**
- * Fetch address data from Temu for a list of parent order SNs.
- * Priority: bg.order.detail.v2.get (most reliable for EU, returns regionName1/2/3)
- * Falls back to shippinginfo / decryptshippinginfo only if detail fails.
+ * Fetch address data from Temu for a list of parent order SNs via shippinginfo / decrypt / detail endpoints
  * Returns a Map of orderSn -> address object
  */
 const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, orderSnList = []) => {
@@ -502,23 +498,16 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
   for (const rawOrderSn of orderSnList) {
     if (!rawOrderSn) continue;
     const cleanSn = rawOrderSn.toString().replace(/^PO-/i, '').trim();
+    // Some Temu APIs need the full PO- prefix, others need just the number — try both
     const fullSn = rawOrderSn.toString().startsWith('PO-') ? rawOrderSn.toString() : `PO-${rawOrderSn}`;
     try {
-      // 1. PRIMARY: bg.order.detail.v2.get — most reliable for EU orders (returns regionName1/2/3 in parentOrderMap)
-      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: fullSn });
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: cleanSn });
-      }
-
-      // 2. FALLBACK: try shippinginfo (may work for some regions)
-      if (!detail) {
-        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn: fullSn });
-      }
+      // 1. Try bg.order.shippinginfo.v2.get with parentOrderSn (full PO- prefix)
+      let detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn: fullSn });
       if (!detail) {
         detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn: cleanSn });
       }
 
-      // 3. LAST RESORT: decryptshippinginfo
+      // 2. Try bg.order.decryptshippinginfo.get
       if (!detail) {
         detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', { parentOrderSn: fullSn });
       }
@@ -526,12 +515,17 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', { parentOrderSn: cleanSn });
       }
 
+      // 3. Fallback to bg.order.detail.v2.get
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: fullSn });
+      }
+      if (!detail) {
+        detail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: cleanSn });
+      }
+
       if (detail) {
         const pm = detail.parentOrderMap || {};
         const ol = (detail.orderList || [])[0] || {};
-
-        // bg.order.detail.v2.get puts address inline in parentOrderMap as regionName1/2/3
-        const pmHasAddressData = Boolean(pm.regionName1 || pm.regionName3 || pm.postCode || pm.postcode || pm.zipCode);
 
         const isDirectAddressObject = Boolean(
           detail.receiptName || detail.addressLineAll || detail.addressLine1 ||
@@ -544,8 +538,7 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
           pm.receiptAddressInfo || pm.addressInfo || pm.recipientAddress || pm.receiverAddress ||
           pm.receiptAddress || pm.address_info || pm.receipt_address_info || pm.recipient_address_info ||
           ol.receiptAddressInfo || ol.addressInfo || ol.recipientAddress || ol.address_info ||
-          ol.receipt_address_info || ol.consignee || ol.shippingAddress || ol.recipientInfo ||
-          (pmHasAddressData ? pm : null)  // ← bg.order.detail.v2.get: address is inline in parentOrderMap
+          ol.receipt_address_info || ol.consignee || ol.shippingAddress || ol.recipientInfo
         );
 
         if (addr) {
@@ -653,13 +646,10 @@ const syncUserTemuOrders = async (user) => {
       const activeUnshippedOrders = Array.from(activeMap.values());
       const activeOrderSns = activeUnshippedOrders.map(item => item.parentOrderMap?.parentOrderSn || item.orderList?.[0]?.orderSn).filter(Boolean);
 
-      // Also include existing open DB orders (last 14 days) with incomplete address for auto-repair
-      // Limit to recent orders only to avoid burning the 500/day Temu API quota on old stuck orders
-      const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+      // Also include existing open DB orders with incomplete recipient name/street for auto-repair
       const incompleteDbOrders = await TemuOrder.find({
         user: user._id,
         status: 'open',
-        createdAt: { $gte: fourteenDaysAgo },
         $or: [
           { name: 'Temu Customer' },
           { recipientName: 'Temu Customer' },
@@ -789,10 +779,9 @@ const syncUserTemuOrders = async (user) => {
           // Fallback: query order detail via bg.order.shippinginfo.v2.get / decrypt / detail
           try {
             const queryParams = { parentOrderSn: orderNum };
-            const orderDetail =
-              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams) ||
-              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', queryParams) ||
-              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', queryParams);
+            const orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', queryParams) ||
+              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.decryptshippinginfo.get', queryParams) ||
+              await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', queryParams);
 
             if (orderDetail) {
               const pmDetail = orderDetail.parentOrderMap || {};
