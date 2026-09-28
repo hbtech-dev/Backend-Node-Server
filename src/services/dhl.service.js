@@ -121,8 +121,8 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     try {
       const isDomestic = !recipient.country || recipient.country === 'DE';
       const baseEkp = (config.accountNumber || '63866404860101').slice(0, 10);
-      const activeBillingNumber = isDomestic ? `${baseEkp}0101` : `${baseEkp}5301`;
-      const activeProduct = isDomestic ? 'V01PAK' : 'V53WPAK';
+      const activeBillingNumber = isDomestic ? `${baseEkp}6201` : `${baseEkp}5301`;
+      const activeProduct = isDomestic ? 'V62KP' : 'V53WPAK';
 
       const ISO2_TO_3 = {
         'DE': 'DEU', 'ES': 'ESP', 'FR': 'FRA', 'IT': 'ITA', 'PT': 'PRT',
@@ -177,7 +177,11 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             endorsement: 'RETURN',
             premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : false
           }
-        } : {})
+        } : {
+          services: {
+            goGreenPlus: true
+          }
+        })
       };
 
       if (isNonEu) {
@@ -201,9 +205,9 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
         shipments: [shipmentItem]
       };
 
-      const endpoint = config.isSandbox 
+      const endpoint = (config.isSandbox 
         ? 'https://api-sandbox.dhl.com/parcel/de/shipping/v2/orders'
-        : 'https://api-eu.dhl.com/parcel/de/shipping/v2/orders';
+        : 'https://api-eu.dhl.com/parcel/de/shipping/v2/orders') + '?mustEncode=true';
 
       const response = await httpFetch(endpoint, {
         method: 'POST',
@@ -234,13 +238,55 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             dhlLabelUrl: labelUrl,
             qrCodeData: labelUrl,
             barcodeData: item.routingCode || liveTrackingNumber,
-            shippingMethod: recipient.country === 'DE' ? 'DHL Paket National (V01PAK)' : 'DHL Paket International',
+            shippingMethod: isDomestic ? 'DHL Kleinpaket' : 'DHL Paket International',
             liveApiSuccess: true
           };
         }
       } else {
         const errText = await response.text();
         console.warn(`⚠️ DHL Live API responded status ${response.status} for ${recipient.country} (${iso3Country}):`, errText.slice(0, 400));
+
+        // Auto-heal German postal code if DHL returns a suggested correct zip code
+        const zipMatch = errText.match(/determined for the address '(\d{5})'/);
+        if (zipMatch && zipMatch[1] && isDomestic) {
+          try {
+            console.log(`🔄 [DHL Auto-heal] Retrying Germany Kleinpaket with suggested zip code: ${zipMatch[1]}`);
+            shipmentItem.consignee.postalCode = zipMatch[1];
+            const retryRes = await httpFetch(endpoint, {
+              method: 'POST',
+              headers: {
+                'dhl-api-key': apiKey,
+                'Authorization': authHeader,
+                'Content-Type': 'application/json',
+                'Accept': 'application/json'
+              },
+              body: JSON.stringify({ shipments: [shipmentItem] }),
+              timeout: 12000
+            });
+            if (retryRes.ok) {
+              const retryData = await retryRes.json();
+              const retryItem = retryData.items?.[0];
+              if (retryItem && retryItem.shipmentNo) {
+                const liveTracking = retryItem.shipmentNo;
+                const pdfB64 = retryItem.label?.b64 || '';
+                const labelUrl = pdfB64 ? `data:application/pdf;base64,${pdfB64}` : `https://shipstation.dhl.com/labels/${liveTracking}.pdf`;
+                console.log(`✅ LIVE DHL SHIPMENT CREATED (Auto-healed Zip)! ShipmentNo: ${liveTracking}`);
+                return {
+                  success: true,
+                  trackingNumber: liveTracking,
+                  dhlShipmentId: retryItem.shipmentNo,
+                  dhlLabelUrl: labelUrl,
+                  qrCodeData: labelUrl,
+                  barcodeData: retryItem.routingCode || liveTracking,
+                  shippingMethod: 'DHL Kleinpaket',
+                  liveApiSuccess: true
+                };
+              }
+            }
+          } catch (retryErr) {
+            console.warn('DHL Auto-heal retry exception:', retryErr.message);
+          }
+        }
       }
     } catch (err) {
       console.warn('DHL Live API call exception:', err.message);
@@ -255,7 +301,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     dhlLabelUrl: `https://shipstation.dhl.com/labels/${fallbackTracking}.pdf`,
     qrCodeData: fallbackQrData,
     barcodeData: fallbackBarcodeData,
-    shippingMethod: recipient.country === 'DE' ? 'DHL Paket National' : 'DHL EDER International',
+    shippingMethod: (!recipient.country || recipient.country === 'DE') ? 'DHL Kleinpaket' : 'DHL Paket International',
     isSandbox: config.isSandbox,
     liveApiSuccess
   };
