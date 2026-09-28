@@ -35,6 +35,14 @@ const generateDHLTrackingNumber = (country = 'DE') => {
   return `LF${Math.floor(100000000 + Math.random() * 900000000)}${country}`;
 };
 
+/**
+ * Generate a Warepost International tracking number for non-Germany orders
+ */
+const generateWarepostTracking = (country = 'XX') => {
+  const digits = Math.floor(1000000000 + Math.random() * 9000000000).toString();
+  return `WP${digits}${(country || 'XX').toUpperCase().slice(0, 2)}`;
+};
+
 const httpFetch = require('../utils/httpHelper');
 
 /**
@@ -101,7 +109,7 @@ exports.testDHLConnection = async (userDhlConfig = {}) => {
 /**
  * Create a DHL Shipment Label
  */
-exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '', items = [], weight = '0.50 kg', userDhlConfig = {} }) => {
+exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '', items = [], weight = '0.10 kg', userDhlConfig = {} }) => {
   const config = getDhlConfig(userDhlConfig);
 
   const fallbackTracking = generateDHLTrackingNumber(recipient.country || 'DE');
@@ -117,12 +125,33 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
   const billingNumber = config.accountNumber || '63866404860101';
   const authHeader = 'Basic ' + Buffer.from(`${gkpUser}:${gkpPass}`).toString('base64');
 
+  // ── CARRIER ROUTING ──────────────────────────────────────────────────────────
+  // Germany (DE)  → DHL Kleinpaket (V62WP) via DHL Parcel Germany API
+  // All other countries → Warepost International (own tracking, no DHL API call)
+  // ─────────────────────────────────────────────────────────────────────────────
+  const isGermanyOrder = !recipient.country || recipient.country === 'DE';
+
+  if (!isGermanyOrder) {
+    const warepostTracking = generateWarepostTracking(recipient.country);
+    console.log(`📦 [Warepost] Routing ${recipient.country} order to Warepost International → ${warepostTracking}`);
+    return {
+      success: true,
+      trackingNumber: warepostTracking,
+      dhlShipmentId: `WAREPOST-${Date.now()}`,
+      dhlLabelUrl: `https://tracking.warepost.com/track/${warepostTracking}`,
+      qrCodeData: `https://tracking.warepost.com/track/${warepostTracking}`,
+      barcodeData: warepostTracking,
+      shippingMethod: 'Warepost International',
+      liveApiSuccess: false
+    };
+  }
+
   if (apiKey) {
     try {
-      const isDomestic = !recipient.country || recipient.country === 'DE';
+      // Only Germany orders reach this block (non-DE already returned as Warepost above)
       const baseEkp = (config.accountNumber || '63866404860101').slice(0, 10);
-      const activeBillingNumber = isDomestic ? `${baseEkp}0101` : `${baseEkp}5301`;
-      const activeProduct = isDomestic ? 'V01PAK' : 'V53WPAK';
+      const activeBillingNumber = `${baseEkp}0101`; // Germany domestic billing suffix
+      const activeProduct = 'V62WP'; // DHL Kleinpaket — Germany domestic service
 
       const ISO2_TO_3 = {
         'DE': 'DEU', 'ES': 'ESP', 'FR': 'FRA', 'IT': 'ITA', 'PT': 'PRT',
@@ -170,7 +199,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
           email: recipient.email || 'customer@temu.com'
         },
         details: {
-          weight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.5) * 1000)) }
+          weight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.1) * 1000)) }
         },
         ...(activeProduct === 'V53WPAK' ? {
           services: {
@@ -190,7 +219,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             {
               itemDescription: (items[0]?.articleName || 'Food Supplement / Goods').slice(0, 45),
               packagedQuantity: Number(items[0]?.quantity || 1),
-              itemWeight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.5) * 1000)) },
+              itemWeight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.1) * 1000)) },
               itemValue: { currency: 'EUR', value: 25.0 }
             }
           ]
@@ -234,7 +263,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             dhlLabelUrl: labelUrl,
             qrCodeData: labelUrl,
             barcodeData: item.routingCode || liveTrackingNumber,
-            shippingMethod: recipient.country === 'DE' ? 'DHL Paket National (V01PAK)' : 'DHL Paket International',
+            shippingMethod: 'DHL Kleinpaket (V62WP)', // Germany Kleinpaket — live API confirmed
             liveApiSuccess: true
           };
         }
@@ -255,7 +284,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     dhlLabelUrl: `https://shipstation.dhl.com/labels/${fallbackTracking}.pdf`,
     qrCodeData: fallbackQrData,
     barcodeData: fallbackBarcodeData,
-    shippingMethod: recipient.country === 'DE' ? 'DHL Paket National' : 'DHL EDER International',
+    shippingMethod: 'DHL Kleinpaket (Germany)', // Germany Kleinpaket — fallback label
     isSandbox: config.isSandbox,
     liveApiSuccess
   };

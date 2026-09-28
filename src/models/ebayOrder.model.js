@@ -81,7 +81,7 @@ const ebayOrderSchema = new mongoose.Schema(
     },
     weight: {
       type: String,
-      default: '0.30 kg'
+      default: '0.10 kg'
     },
     shippingMethod: {
       type: String,

@@ -285,7 +285,7 @@ const calculateTemuPackageInfo = (items = []) => {
     totalQty += qty;
     const spec = `${item.variation || ''} ${item.articleName || ''}`.toUpperCase();
 
-    let unitWeight = 0.35; // Default fallback unit weight (kg)
+    let unitWeight = 0.10; // Default fallback unit weight (kg)
 
     if (spec.includes('720 SOFT') || spec.includes('720 CAPS') || spec.includes('720 COUNT')) {
       unitWeight = 0.85;
@@ -294,15 +294,15 @@ const calculateTemuPackageInfo = (items = []) => {
     } else if (spec.includes('180 SOFT') || spec.includes('180 CAPS')) {
       unitWeight = 0.30;
     } else if (spec.includes('120') || spec.includes('90')) {
-      unitWeight = 0.25;
+      unitWeight = 0.10;
     } else if (spec.includes('GUMM') || spec.includes('PACK OF 1') || spec.includes('1 PACK') || spec.includes('60')) {
-      unitWeight = 0.20;
+      unitWeight = 0.10;
     }
 
     totalWeightKg += unitWeight * qty;
   }
 
-  if (totalWeightKg === 0) totalWeightKg = 0.20;
+  if (totalWeightKg === 0) totalWeightKg = 0.10;
 
   const formattedWeight = `${totalWeightKg.toFixed(2)} kg`;
 

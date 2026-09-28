@@ -154,7 +154,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     },
     orderNum: order.orderNum,
     items: [{ articleName: order.articleName, sku: order.sku, quantity: order.quantity }],
-    weight: order.weight || (user.settings?.standardValues?.defWeight ? `${user.settings.standardValues.defWeight} kg` : '0.50 kg'),
+    weight: order.weight || (user.settings?.standardValues?.defWeight ? `${user.settings.standardValues.defWeight} kg` : '0.10 kg'),
     userDhlConfig: user.dhlIntegration || {}
   });
 
@@ -252,7 +252,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
         },
         orderNum: order.orderNum,
         items: [{ articleName: order.articleName, sku: order.sku, quantity: order.quantity }],
-        weight: order.weight || (user.settings?.standardValues?.defWeight ? `${user.settings.standardValues.defWeight} kg` : '0.50 kg'),
+        weight: order.weight || (user.settings?.standardValues?.defWeight ? `${user.settings.standardValues.defWeight} kg` : '0.10 kg'),
         userDhlConfig: user.dhlIntegration || {}
       });
 

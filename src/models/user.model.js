@@ -185,7 +185,7 @@ const userSchema = new mongoose.Schema(
     },
     settings: {
       standardValues: {
-        defWeight: { type: String, default: '0.5' },
+        defWeight: { type: String, default: '0.1' },
         defLength: { type: String, default: '30' },
         defWidth: { type: String, default: '20' },
         defHeight: { type: String, default: '15' }

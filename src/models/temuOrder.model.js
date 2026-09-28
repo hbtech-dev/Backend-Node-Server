@@ -103,7 +103,7 @@ const temuOrderSchema = new mongoose.Schema(
     },
     weight: {
       type: String,
-      default: '0.50 kg'
+      default: '0.10 kg'
     },
     shippingMethod: {
       type: String,
