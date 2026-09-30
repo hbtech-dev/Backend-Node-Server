@@ -238,7 +238,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             dhlLabelUrl: labelUrl,
             qrCodeData: labelUrl,
             barcodeData: item.routingCode || liveTrackingNumber,
-            shippingMethod: isDomestic ? 'DHL Kleinpaket' : 'DHL Paket International',
+            shippingMethod: isDomestic ? 'DHL Kleinpaket' : 'DHL Warenpost',
             liveApiSuccess: true
           };
         }
@@ -301,7 +301,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     dhlLabelUrl: `https://shipstation.dhl.com/labels/${fallbackTracking}.pdf`,
     qrCodeData: fallbackQrData,
     barcodeData: fallbackBarcodeData,
-    shippingMethod: (!recipient.country || recipient.country === 'DE') ? 'DHL Kleinpaket' : 'DHL Paket International',
+    shippingMethod: (!recipient.country || recipient.country === 'DE') ? 'DHL Kleinpaket' : 'DHL Warenpost',
     isSandbox: config.isSandbox,
     liveApiSuccess
   };

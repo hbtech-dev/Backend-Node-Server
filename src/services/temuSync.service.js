@@ -480,7 +480,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
     productImage: thumbUrl,
     price: parsedPrice,
     weight: pkgInfo.weight,
-    shippingMethod: 'DHL Paket International',
+    shippingMethod: (!country || country === 'DE') ? 'DHL Kleinpaket' : 'DHL Warenpost',
     orderDate,
     status: 'open',
     source: 'Temu'
