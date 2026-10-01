@@ -277,45 +277,10 @@ const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
  * Calculate dynamic packaging dimensions and weight based on actual order items and quantities.
  */
 const calculateTemuPackageInfo = (items = []) => {
-  let totalWeightKg = 0;
-  let totalQty = 0;
-
-  for (const item of items) {
-    const qty = Number(item.quantity || 1);
-    totalQty += qty;
-    const spec = `${item.variation || ''} ${item.articleName || ''}`.toUpperCase();
-
-    let unitWeight = 0.10; // Default fallback unit weight (kg)
-
-    if (spec.includes('720 SOFT') || spec.includes('720 CAPS') || spec.includes('720 COUNT')) {
-      unitWeight = 0.10;
-    } else if (spec.includes('360 SOFT') || spec.includes('360 CAPS') || spec.includes('360 COUNT')) {
-      unitWeight = 0.10;
-    } else if (spec.includes('180 SOFT') || spec.includes('180 CAPS')) {
-      unitWeight = 0.10;
-    } else if (spec.includes('120') || spec.includes('90')) {
-      unitWeight = 0.10;
-    } else if (spec.includes('GUMM') || spec.includes('PACK OF 1') || spec.includes('1 PACK') || spec.includes('60')) {
-      unitWeight = 0.10;
-    }
-
-    totalWeightKg += unitWeight * qty;
-  }
-
-  if (totalWeightKg === 0) totalWeightKg = 0.10;
-
-  const formattedWeight = `${totalWeightKg.toFixed(2)} kg`;
-
-  let packaging = 'Small Box (16×12×8cm)';
-  if (totalWeightKg > 1.50 || totalQty >= 4) {
-    packaging = 'XL Parcel (35×25×15cm)';
-  } else if (totalWeightKg > 0.70 || totalQty >= 2) {
-    packaging = 'Large Box (28×20×12cm)';
-  } else if (totalWeightKg > 0.35) {
-    packaging = 'Medium Box (22×16×10cm)';
-  }
-
-  return { packaging, weight: formattedWeight };
+  return {
+    packaging: 'Small Box (16×12×8cm)',
+    weight: '0.10 kg'
+  };
 };
 
 /**

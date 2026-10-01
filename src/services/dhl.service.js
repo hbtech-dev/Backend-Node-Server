@@ -110,6 +110,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
   const fallbackBarcodeData = `40${Math.floor(10000000000 + Math.random() * 90000000000)}`;
 
   let liveApiSuccess = false;
+  let lastDhlError = '';
 
   const isDomestic = !recipient.country || recipient.country === 'DE';
   const baseEkp = (config.accountNumber || '63866404860101').slice(0, 10);
@@ -118,22 +119,25 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
   let activeBillingNumber = '';
   let shippingMethodName = '';
 
-  if (selectedProduct === 'V62KP') {
-    activeProduct = 'V62KP';
-    activeBillingNumber = `${baseEkp}6201`;
-    shippingMethodName = 'DHL Kleinpaket';
-  } else if (selectedProduct === 'V53WPAK') {
+  if (isDomestic) {
+    // Domestic Germany: V62KP (Kleinpaket) or V01PAK (Paket)
+    if (selectedProduct === 'V01PAK') {
+      activeProduct = 'V01PAK';
+      activeBillingNumber = `${baseEkp}0101`;
+      shippingMethodName = 'DHL Paket';
+    } else {
+      // Default & V62KP (or if user selected V53WPAK for DE)
+      activeProduct = 'V62KP';
+      activeBillingNumber = `${baseEkp}6201`;
+      shippingMethodName = 'DHL Kleinpaket';
+    }
+  } else {
+    // International destination:
+    // DHL API strictly accepts V53WPAK (...5301) for international small packet shipments on this contract.
+    // (V01PAK and V62KP are domestic Germany only and return 400).
     activeProduct = 'V53WPAK';
     activeBillingNumber = `${baseEkp}5301`;
-    shippingMethodName = 'DHL Warenpost';
-  } else if (selectedProduct === 'V01PAK') {
-    activeProduct = 'V01PAK';
-    activeBillingNumber = `${baseEkp}0101`;
-    shippingMethodName = 'DHL Paket';
-  } else {
-    activeProduct = isDomestic ? 'V62KP' : 'V53WPAK';
-    activeBillingNumber = isDomestic ? `${baseEkp}6201` : `${baseEkp}5301`;
-    shippingMethodName = isDomestic ? 'DHL Kleinpaket' : 'DHL Warenpost';
+    shippingMethodName = selectedProduct === 'V01PAK' ? 'DHL Paket International' : 'DHL Warenpost';
   }
 
   const apiKey = config.apiKey || 'QkLYX6G92E6avPGYov9Pyk7fpWeAvRb7';
@@ -191,7 +195,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
           email: recipient.email || 'customer@temu.com'
         },
         details: {
-          weight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.1) * 1000)) }
+          weight: { uom: 'g', value: 100 }
         },
         ...(activeProduct === 'V53WPAK' ? {
           services: {
@@ -215,7 +219,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             {
               itemDescription: (items[0]?.articleName || 'Food Supplement / Goods').slice(0, 45),
               packagedQuantity: Number(items[0]?.quantity || 1),
-              itemWeight: { uom: 'g', value: Math.max(100, Math.round((parseFloat(weight) || 0.1) * 1000)) },
+              itemWeight: { uom: 'g', value: 100 },
               itemValue: { currency: 'EUR', value: 25.0 }
             }
           ]
@@ -266,6 +270,12 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
       } else {
         const errText = await response.text();
         console.warn(`⚠️ DHL Live API responded status ${response.status} for ${recipient.country} (${iso3Country}):`, errText.slice(0, 400));
+        try {
+          const parsedErr = JSON.parse(errText);
+          lastDhlError = parsedErr.items?.[0]?.validationMessages?.[0]?.validationMessage || parsedErr.items?.[0]?.sstatus?.title || parsedErr.status?.detail || errText.slice(0, 200);
+        } catch (_) {
+          lastDhlError = errText.slice(0, 200);
+        }
 
         // Auto-heal German postal code if DHL returns a suggested correct zip code
         const zipMatch = errText.match(/determined for the address '(\d{5})'/);
@@ -314,7 +324,13 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     }
   }
 
-  // High-fidelity DHL Shipment fallback result
+  // If live API was attempted and failed in production, throw error so UI/user knows real cause
+  if (apiKey && !config.isSandbox && !liveApiSuccess) {
+    const dhlErr = lastDhlError || 'DHL API failed to validate or generate shipping label';
+    throw new Error(`DHL Error: ${dhlErr}`);
+  }
+
+  // High-fidelity DHL Shipment fallback result (sandbox / test mode)
   return {
     success: true,
     trackingNumber: fallbackTracking,
