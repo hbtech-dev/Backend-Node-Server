@@ -393,14 +393,20 @@ exports.revertToOpen = catchAsync(async (req, res, next) => {
       await EbayOrder.updateMany({ user: req.user.id, status: { $in: ['created_label', 'printed'] } }, updatePayload);
     } else if (idsToProcess.length > 0) {
       const isObjectId = (id) => typeof id === 'string' && id.length === 24 && /^[0-9a-fA-F]{24}$/.test(id);
-      const mongoIds = idsToProcess.filter(isObjectId);
+      const allCandidateStrings = idsToProcess.map(x => String(x).trim()).filter(Boolean);
+      const cleanIds = allCandidateStrings.map(x => x.replace(/^PO-/i, ''));
+      const poIds = allCandidateStrings.map(x => x.startsWith('PO-') ? x : `PO-${x}`);
+      const fullSearchList = Array.from(new Set([...allCandidateStrings, ...cleanIds, ...poIds]));
+      const mongoIds = fullSearchList.filter(isObjectId);
+
+      const userQuery = req.user._id || req.user.id;
 
       await TemuOrder.updateMany(
-        { user: req.user.id, $or: [{ _id: { $in: mongoIds } }, { orderNum: { $in: idsToProcess } }, { temuOrderId: { $in: idsToProcess } }] },
+        { user: userQuery, $or: [{ _id: { $in: mongoIds } }, { orderNum: { $in: fullSearchList } }, { temuOrderId: { $in: fullSearchList } }] },
         updatePayload
       );
       await EbayOrder.updateMany(
-        { user: req.user.id, $or: [{ _id: { $in: mongoIds } }, { orderNum: { $in: idsToProcess } }] },
+        { user: userQuery, $or: [{ _id: { $in: mongoIds } }, { orderNum: { $in: fullSearchList } }] },
         updatePayload
       );
     }
