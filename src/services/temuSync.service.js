@@ -817,15 +817,23 @@ const syncUserTemuOrders = async (user) => {
             updatePayload.manuallyRevertedToOpen = true;
             updatePayload.tracking = '';
             updatePayload.shippingMethod = '';
-          } else if (existing.status && existing.status !== 'open') {
-            updatePayload.status = existing.status;
+            updatePayload.qrCodeData = '';
+            updatePayload.barcodeData = '';
+            updatePayload.dhlShipmentId = '';
+            updatePayload.dhlLabelUrl = '';
+            updatePayload.shippedAt = null;
+            updatePayload.trackingUploadedToTemu = false;
+          } else {
+            if (existing.status && existing.status !== 'open') {
+              updatePayload.status = existing.status;
+            }
+            if (existing.tracking) updatePayload.tracking = existing.tracking;
+            if (existing.qrCodeData) updatePayload.qrCodeData = existing.qrCodeData;
+            if (existing.barcodeData) updatePayload.barcodeData = existing.barcodeData;
+            if (existing.dhlShipmentId) updatePayload.dhlShipmentId = existing.dhlShipmentId;
+            if (existing.dhlLabelUrl) updatePayload.dhlLabelUrl = existing.dhlLabelUrl;
+            if (existing.shippedAt) updatePayload.shippedAt = existing.shippedAt;
           }
-          if (existing.tracking) updatePayload.tracking = existing.tracking;
-          if (existing.qrCodeData) updatePayload.qrCodeData = existing.qrCodeData;
-          if (existing.barcodeData) updatePayload.barcodeData = existing.barcodeData;
-          if (existing.dhlShipmentId) updatePayload.dhlShipmentId = existing.dhlShipmentId;
-          if (existing.dhlLabelUrl) updatePayload.dhlLabelUrl = existing.dhlLabelUrl;
-          if (existing.shippedAt) updatePayload.shippedAt = existing.shippedAt;
 
           const existingHasRealName = existing.name && existing.name !== 'Temu Customer' && existing.name !== 'NOT_FOUND';
           const mappedIsFallbackName = !mapped.name || mapped.name === 'Temu Customer' || mapped.name === 'NOT_FOUND';
