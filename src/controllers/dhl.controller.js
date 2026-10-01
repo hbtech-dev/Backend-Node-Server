@@ -161,6 +161,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
 
   // Update order status from unshipped ('open') to 'created_label'
   order.status = 'created_label';
+  order.manuallyRevertedToOpen = false;
   order.tracking = dhlResult.trackingNumber;
   order.shippingMethod = dhlResult.shippingMethod;
   order.qrCodeData = dhlResult.qrCodeData;
@@ -259,6 +260,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       });
 
       order.status = 'created_label';
+      order.manuallyRevertedToOpen = false;
       order.tracking = dhlResult.trackingNumber;
       order.shippingMethod = dhlResult.shippingMethod;
       order.qrCodeData = dhlResult.qrCodeData;
@@ -327,6 +329,7 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
       let order = await TemuOrder.findOne({ _id: id, user: req.user.id }) || await EbayOrder.findOne({ _id: id, user: req.user.id });
       if (order) {
         order.status = 'printed';
+        order.manuallyRevertedToOpen = false;
         if (!order.tracking) {
           const dhlResult = await dhlService.createDHLShipment({
             sender: { companyName: user.companyName, streetName: user.streetName, houseNumber: user.houseNumber, postcode: user.postcode, cityName: user.cityName },
