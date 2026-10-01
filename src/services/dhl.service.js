@@ -200,7 +200,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
         ...(activeProduct === 'V53WPAK' ? {
           services: {
             endorsement: 'RETURN',
-            premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : false
+            premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : true
           }
         } : (activeProduct === 'V62KP' ? {
           services: {
@@ -219,7 +219,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             {
               itemDescription: (items[0]?.articleName || 'Food Supplement / Goods').slice(0, 45),
               packagedQuantity: Number(items[0]?.quantity || 1),
-              itemWeight: { uom: 'g', value: 100 },
+              itemWeight: { uom: 'g', value: 85 }, // 85g net goods + 15g packaging = 100g (0.10 kg) total gross weight
               itemValue: { currency: 'EUR', value: 25.0 }
             }
           ]
