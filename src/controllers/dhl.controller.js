@@ -111,7 +111,7 @@ exports.testConnection = catchAsync(async (req, res, next) => {
  * Process shipment via DHL API for an unshipped order
  */
 exports.createShipment = catchAsync(async (req, res, next) => {
-  const { orderId, orderType = 'temu' } = req.body;
+  const { orderId, orderType = 'temu', selectedProduct } = req.body;
 
   if (!orderId) {
     return next(new AppError('Order ID is required to process DHL shipment', 400));
@@ -155,7 +155,8 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     orderNum: order.orderNum,
     items: [{ articleName: order.articleName, sku: order.sku, quantity: order.quantity }],
     weight: order.weight || (user.settings?.standardValues?.defWeight ? `${user.settings.standardValues.defWeight} kg` : '0.10 kg'),
-    userDhlConfig: user.dhlIntegration || {}
+    userDhlConfig: user.dhlIntegration || {},
+    selectedProduct
   });
 
   // Update order status from unshipped ('open') to 'created_label'
@@ -217,7 +218,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
  * Bulk Process shipments via DHL API for unshipped orders
  */
 exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
-  const { orderIds = [] } = req.body;
+  const { orderIds = [], selectedProduct } = req.body;
 
   if (!orderIds.length) {
     return next(new AppError('Please provide order IDs for bulk DHL shipment processing', 400));
@@ -253,7 +254,8 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
         orderNum: order.orderNum,
         items: [{ articleName: order.articleName, sku: order.sku, quantity: order.quantity }],
         weight: order.weight || (user.settings?.standardValues?.defWeight ? `${user.settings.standardValues.defWeight} kg` : '0.10 kg'),
-        userDhlConfig: user.dhlIntegration || {}
+        userDhlConfig: user.dhlIntegration || {},
+        selectedProduct
       });
 
       order.status = 'created_label';

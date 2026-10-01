@@ -101,7 +101,7 @@ exports.testDHLConnection = async (userDhlConfig = {}) => {
 /**
  * Create a DHL Shipment Label
  */
-exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '', items = [], weight = '0.10 kg', userDhlConfig = {} }) => {
+exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '', items = [], weight = '0.10 kg', userDhlConfig = {}, selectedProduct = '' }) => {
   const config = getDhlConfig(userDhlConfig);
 
   const fallbackTracking = generateDHLTrackingNumber(recipient.country || 'DE');
@@ -111,6 +111,31 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
 
   let liveApiSuccess = false;
 
+  const isDomestic = !recipient.country || recipient.country === 'DE';
+  const baseEkp = (config.accountNumber || '63866404860101').slice(0, 10);
+
+  let activeProduct = '';
+  let activeBillingNumber = '';
+  let shippingMethodName = '';
+
+  if (selectedProduct === 'V62KP') {
+    activeProduct = 'V62KP';
+    activeBillingNumber = `${baseEkp}6201`;
+    shippingMethodName = 'DHL Kleinpaket';
+  } else if (selectedProduct === 'V53WPAK') {
+    activeProduct = 'V53WPAK';
+    activeBillingNumber = `${baseEkp}5301`;
+    shippingMethodName = 'DHL Warenpost';
+  } else if (selectedProduct === 'V01PAK') {
+    activeProduct = 'V01PAK';
+    activeBillingNumber = `${baseEkp}0101`;
+    shippingMethodName = 'DHL Paket';
+  } else {
+    activeProduct = isDomestic ? 'V62KP' : 'V53WPAK';
+    activeBillingNumber = isDomestic ? `${baseEkp}6201` : `${baseEkp}5301`;
+    shippingMethodName = isDomestic ? 'DHL Kleinpaket' : 'DHL Warenpost';
+  }
+
   const apiKey = config.apiKey || 'QkLYX6G92E6avPGYov9Pyk7fpWeAvRb7';
   const gkpUser = userDhlConfig.gkpUser || 'eder01';
   const gkpPass = userDhlConfig.gkpPassword || 'NewpassEDER1903!';
@@ -119,10 +144,6 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
 
   if (apiKey) {
     try {
-      const isDomestic = !recipient.country || recipient.country === 'DE';
-      const baseEkp = (config.accountNumber || '63866404860101').slice(0, 10);
-      const activeBillingNumber = isDomestic ? `${baseEkp}6201` : `${baseEkp}5301`;
-      const activeProduct = isDomestic ? 'V62KP' : 'V53WPAK';
 
       const ISO2_TO_3 = {
         'DE': 'DEU', 'ES': 'ESP', 'FR': 'FRA', 'IT': 'ITA', 'PT': 'PRT',
@@ -177,11 +198,11 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             endorsement: 'RETURN',
             premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : false
           }
-        } : {
+        } : (activeProduct === 'V62KP' ? {
           services: {
             goGreenPlus: true
           }
-        })
+        } : {}))
       };
 
       if (isNonEu) {
@@ -238,7 +259,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
             dhlLabelUrl: labelUrl,
             qrCodeData: labelUrl,
             barcodeData: item.routingCode || liveTrackingNumber,
-            shippingMethod: isDomestic ? 'DHL Kleinpaket' : 'DHL Warenpost',
+            shippingMethod: shippingMethodName,
             liveApiSuccess: true
           };
         }
@@ -301,7 +322,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     dhlLabelUrl: `https://shipstation.dhl.com/labels/${fallbackTracking}.pdf`,
     qrCodeData: fallbackQrData,
     barcodeData: fallbackBarcodeData,
-    shippingMethod: (!recipient.country || recipient.country === 'DE') ? 'DHL Kleinpaket' : 'DHL Warenpost',
+    shippingMethod: shippingMethodName || ((!recipient.country || recipient.country === 'DE') ? 'DHL Kleinpaket' : 'DHL Warenpost'),
     isSandbox: config.isSandbox,
     liveApiSuccess
   };
