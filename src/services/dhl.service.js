@@ -133,11 +133,17 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     }
   } else {
     // International destination:
-    // DHL API strictly accepts V53WPAK (...5301) for international small packet shipments on this contract.
-    // (V01PAK and V62KP are domestic Germany only and return 400).
-    activeProduct = 'V53WPAK';
-    activeBillingNumber = `${baseEkp}5301`;
-    shippingMethodName = selectedProduct === 'V01PAK' ? 'DHL Paket International' : 'DHL Warenpost';
+    // If user explicitly selected V01PAK or V53WPAK, use V53WPAK (...5301) for DHL Paket International.
+    // Default & V66WPI uses ...6601 for true Warenpost International (LG...DE tracking & WARENPOST INTERNATIONAL header).
+    if (selectedProduct === 'V01PAK' || selectedProduct === 'V53WPAK') {
+      activeProduct = 'V53WPAK';
+      activeBillingNumber = `${baseEkp}5301`;
+      shippingMethodName = 'DHL Paket International';
+    } else {
+      activeProduct = 'V66WPI';
+      activeBillingNumber = `${baseEkp}6601`;
+      shippingMethodName = 'DHL Warenpost';
+    }
   }
 
   const apiKey = config.apiKey || 'QkLYX6G92E6avPGYov9Pyk7fpWeAvRb7';
@@ -197,7 +203,7 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
         details: {
           weight: { uom: 'g', value: 100 }
         },
-        ...(activeProduct === 'V53WPAK' ? {
+        ...(activeProduct === 'V66WPI' || activeProduct === 'V53WPAK' ? {
           services: {
             endorsement: 'RETURN',
             premium: userDhlConfig.isPremium !== undefined ? Boolean(userDhlConfig.isPremium) : true
