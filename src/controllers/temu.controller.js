@@ -787,3 +787,44 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   res.status(200).json({ status: 'success', message: 'Debug endpoint active' });
 });
+
+/**
+ * Puppeteer Temu Return Bot Endpoints
+ */
+exports.runTemuReturnBot = catchAsync(async (req, res, next) => {
+  const temuReturnBotService = require('../services/temuReturnBot.service');
+  const result = await temuReturnBotService.runReturnBotCycle(req.user.id);
+  res.status(200).json({
+    status: 'success',
+    data: result
+  });
+});
+
+exports.getTemuReturnBotStatus = catchAsync(async (req, res, next) => {
+  const temuReturnBotService = require('../services/temuReturnBot.service');
+  const status = temuReturnBotService.getBotStatus();
+  res.status(200).json({
+    status: 'success',
+    data: status
+  });
+});
+
+exports.toggleTemuReturnBot = catchAsync(async (req, res, next) => {
+  const { active } = req.body;
+  const temuReturnBotService = require('../services/temuReturnBot.service');
+  const status = temuReturnBotService.toggleAutoBot(active);
+  res.status(200).json({
+    status: 'success',
+    data: status
+  });
+});
+
+exports.captureTemuReturnScreenshot = catchAsync(async (req, res, next) => {
+  const { url } = req.body;
+  const temuReturnBotService = require('../services/temuReturnBot.service');
+  const result = await temuReturnBotService.captureReturnScreenshot(url || 'https://seller.kuajingmaihuo.com');
+  res.status(200).json({
+    status: 'success',
+    data: result
+  });
+});

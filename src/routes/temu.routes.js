@@ -28,4 +28,10 @@ router.post('/returns/:id/resolve', auth, temuController.resolveTemuReturn);
 router.get('/fulfillment-issues', auth, temuController.getUserTemuFulfillmentIssues);
 router.post('/fulfillment-issues/:id/resolve', auth, temuController.resolveTemuFulfillmentIssue);
 
+// Puppeteer Return Bot Routes
+router.post('/returns/bot/run', auth, temuController.runTemuReturnBot);
+router.get('/returns/bot/status', auth, temuController.getTemuReturnBotStatus);
+router.post('/returns/bot/toggle', auth, temuController.toggleTemuReturnBot);
+router.post('/returns/bot/screenshot', auth, temuController.captureTemuReturnScreenshot);
+
 module.exports = router;

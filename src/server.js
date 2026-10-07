@@ -7,6 +7,8 @@ const temuSyncService = require('./services/temuSync.service');
 
 connectDB().then(() => {
   temuSyncService.startTemuBackgroundSync();
+  const temuReturnBotService = require('./services/temuReturnBot.service');
+  temuReturnBotService.startBackgroundBot();
 });
 
 const PORT = config.port || 3000;
