@@ -84,7 +84,8 @@ const generateHumanReturnReply = async ({
   }
 
   const countryName = country || 'International';
-  const customerName = buyerName && !buyerName.toLowerCase().includes('temu customer') ? buyerName : 'Customer';
+  const hasRealName = Boolean(buyerName) && !/^(temu customer|temu buyer|not_found)$/i.test(buyerName.trim());
+  const customerName = hasRealName ? buyerName.trim() : '(name unknown)';
   const orderRef = orderNum || 'your order';
   const amountStr = refundAmount ? `€${Number(refundAmount).toFixed(2)}` : 'the requested amount';
   const shippingStatusDesc = isShipped
@@ -117,7 +118,7 @@ YOUR INSTRUCTIONS:
    - IF DEFECTIVE / DAMAGED: Apologize sincerely for the inconvenience and let them know return/refund has been approved to resolve this immediately for them.
 4. TONE & LENGTH:
    - Keep it 2 to 4 sentences maximum. Concise, helpful, polite, and reassuring.
-   - Greet them warmly (e.g., "Hello ${customerName}," or language equivalent).
+   - Greet them warmly. ${hasRealName ? `Address them by name: "${customerName}".` : 'The buyer name is UNKNOWN: greet with a plain "Hello," (or language equivalent) and NEVER write the words "Customer" or "Temu Customer" as a name.'}
    - Sign off naturally as "Best regards, Customer Care Team" (or language equivalent).
    - NEVER use placeholder brackets like [Your Name] or [Company Name].
    - Output ONLY the final message text to send to the buyer.`;
