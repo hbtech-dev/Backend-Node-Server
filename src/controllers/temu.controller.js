@@ -802,11 +802,22 @@ exports.runTemuReturnBot = catchAsync(async (req, res, next) => {
 
 exports.getTemuReturnBotStatus = catchAsync(async (req, res, next) => {
   const temuReturnBotService = require('../services/temuReturnBot.service');
-  const status = temuReturnBotService.getBotStatus();
+  const status = temuReturnBotService.getBotStatus(req.user);
   res.status(200).json({
     status: 'success',
     data: status
   });
+});
+
+exports.setTemuReturnBotGeminiKey = catchAsync(async (req, res, next) => {
+  const { apiKey, model } = req.body;
+  const temuReturnBotService = require('../services/temuReturnBot.service');
+  const result = await temuReturnBotService.setGeminiConfig({ apiKey, model, user: req.user });
+  res.status(200).json({
+    status: 'success',
+    data: result
+  });
+});
 });
 
 exports.toggleTemuReturnBot = catchAsync(async (req, res, next) => {

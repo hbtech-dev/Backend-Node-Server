@@ -32,6 +32,7 @@ router.post('/fulfillment-issues/:id/resolve', auth, temuController.resolveTemuF
 router.post('/returns/bot/run', auth, temuController.runTemuReturnBot);
 router.get('/returns/bot/status', auth, temuController.getTemuReturnBotStatus);
 router.post('/returns/bot/toggle', auth, temuController.toggleTemuReturnBot);
+router.post('/returns/bot/gemini-key', auth, temuController.setTemuReturnBotGeminiKey);
 router.post('/returns/bot/screenshot', auth, temuController.captureTemuReturnScreenshot);
 
 module.exports = router;

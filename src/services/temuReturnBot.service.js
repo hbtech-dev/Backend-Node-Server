@@ -5,6 +5,7 @@ const TemuReturn = require('../models/temuReturn.model');
 const TemuOrder = require('../models/temuOrder.model');
 const User = require('../models/user.model');
 const temuSyncService = require('./temuSync.service');
+const geminiService = require('./gemini.service');
 
 // Optional Puppeteer lazy loader
 let puppeteer = null;
@@ -21,6 +22,9 @@ const botState = {
   lastRunAt: null,
   totalProcessed: 0,
   autoApproveUnshipped: true,
+  geminiApiKey: process.env.GEMINI_API_KEY || '',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+  aiCount: 0,
   logs: []
 };
 
@@ -105,7 +109,7 @@ const captureReturnScreenshot = async (url, options = {}) => {
 };
 
 /**
- * Evaluate the return situation based on DB order and return data
+ * Evaluate the return situation based on DB order, return data, and Gemini AI analysis
  */
 const evaluateReturnSituation = async (user, returnDoc) => {
   const orderNum = returnDoc.orderNum;
@@ -123,45 +127,75 @@ const evaluateReturnSituation = async (user, returnDoc) => {
   const hasTracking = order && Boolean(order.tracking);
   const refundAmount = Number(returnDoc.refundAmount || (order?.price) || 0).toFixed(2);
   const reasonText = (returnDoc.reason || '').toLowerCase();
+  const trackingNo = order?.tracking || '';
+  const carrier = order?.shippingMethod || 'DHL';
+
+  let situation = 'STANDARD_CUSTOMER_RETURN';
+  let description = 'Standard customer return request.';
+  let recommendedAction = 'approve';
+  let defaultReply = `Return request accepted. Please return the item in original condition to process your refund of €${refundAmount}.`;
 
   // Situation 1: Order is still in warehouse / unshipped (Not Dispatched)
   if (isUnshipped && !hasTracking) {
-    return {
-      situation: 'ORDER_NOT_DISPATCHED',
-      description: 'Order is still unshipped in warehouse. No tracking number generated.',
-      recommendedAction: 'refund',
-      replyMessage: `Cancellation & full refund approved. The order has not been dispatched yet. A full refund of €${refundAmount} has been processed for the customer.`
-    };
+    situation = 'ORDER_NOT_DISPATCHED';
+    description = 'Order is still unshipped in warehouse. No tracking number generated.';
+    recommendedAction = 'refund';
+    defaultReply = `Cancellation & full refund approved. The order has not been dispatched yet. A full refund of €${refundAmount} has been processed for the customer.`;
   }
-
   // Situation 2: Order was already shipped with tracking number
-  if (isShipped || hasTracking) {
-    const trackingNo = order?.tracking || 'DHL Tracking';
-    const carrier = order?.shippingMethod || 'DHL';
-    return {
-      situation: 'ORDER_DISPATCHED_IN_TRANSIT',
-      description: `Order has already been dispatched via ${carrier} (Tracking: ${trackingNo}).`,
-      recommendedAction: 'approve',
-      replyMessage: `The order has already been processed and dispatched with ${carrier} tracking number ${trackingNo}. Please return the item in original packaging for a refund upon delivery.`
-    };
+  else if (isShipped || hasTracking) {
+    situation = 'ORDER_DISPATCHED_IN_TRANSIT';
+    description = `Order has already been dispatched via ${carrier} (Tracking: ${trackingNo}).`;
+    recommendedAction = 'approve';
+    defaultReply = `The order has already been processed and dispatched with ${carrier} tracking number ${trackingNo}. Please return the item in original packaging for a refund upon delivery.`;
   }
-
   // Situation 3: Damaged / defective claim
-  if (reasonText.includes('damaged') || reasonText.includes('defect') || reasonText.includes('broken')) {
-    return {
-      situation: 'DAMAGED_OR_DEFECTIVE',
-      description: 'Customer claims damaged or defective goods.',
-      recommendedAction: 'approve',
-      replyMessage: `Return request approved. Please use the authorized return label to return the item so our inspection team can issue a full refund of €${refundAmount}.`
-    };
+  else if (reasonText.includes('damaged') || reasonText.includes('defect') || reasonText.includes('broken')) {
+    situation = 'DAMAGED_OR_DEFECTIVE';
+    description = 'Customer claims damaged or defective goods.';
+    recommendedAction = 'approve';
+    defaultReply = `Return request approved. Please use the authorized return label to return the item so our inspection team can issue a full refund of €${refundAmount}.`;
   }
 
-  // Default: General Return
+  // Attempt Gemini AI Human Generation
+  const activeKey = (user?.geminiApiKey || botState.geminiApiKey || process.env.GEMINI_API_KEY || '').trim();
+  let aiResult = null;
+  if (activeKey) {
+    try {
+      aiResult = await geminiService.generateHumanReturnReply({
+        buyerName: returnDoc.buyerName,
+        orderNum: returnDoc.orderNum,
+        country: returnDoc.country,
+        reason: returnDoc.reason,
+        refundAmount,
+        isShipped,
+        hasTracking,
+        trackingNo,
+        carrier,
+        recommendedAction,
+        situation,
+        apiKey: activeKey,
+        model: botState.geminiModel
+      });
+      if (aiResult && aiResult.text) {
+        botState.aiCount++;
+      }
+    } catch (aiErr) {
+      console.warn('[Temu Bot] Gemini AI generation error, using fallback template:', aiErr.message);
+    }
+  }
+
+  const replyMessage = (aiResult && aiResult.text) ? aiResult.text : defaultReply;
+  const isAiGenerated = Boolean(aiResult && aiResult.text);
+  const usedModel = aiResult ? aiResult.model : 'rule-template';
+
   return {
-    situation: 'STANDARD_CUSTOMER_RETURN',
-    description: 'Standard customer return request.',
-    recommendedAction: 'approve',
-    replyMessage: `Return request accepted. Please return the item in original condition to process your refund of €${refundAmount}.`
+    situation,
+    description,
+    recommendedAction,
+    replyMessage,
+    aiGenerated: isAiGenerated,
+    model: usedModel
   };
 };
 
@@ -210,6 +244,8 @@ const processSingleReturn = async (user, returnDoc) => {
     situationDescription: analysis.description,
     actionTaken: action,
     replyMessage: replyText,
+    aiGenerated: analysis.aiGenerated,
+    model: analysis.model,
     temuSubmitted
   };
 
@@ -271,7 +307,10 @@ const runReturnBotCycle = async (userId) => {
       botState: {
         lastRunAt: botState.lastRunAt,
         totalProcessed: botState.totalProcessed,
-        isAutoActive: botState.isAutoActive
+        isAutoActive: botState.isAutoActive,
+        hasGeminiKey: Boolean(botState.geminiApiKey || process.env.GEMINI_API_KEY),
+        geminiModel: botState.geminiModel,
+        aiCount: botState.aiCount
       }
     };
   } finally {
@@ -307,14 +346,46 @@ const stopBackgroundBot = () => {
 };
 
 /**
+ * Configure Gemini API Key and Model
+ */
+const setGeminiConfig = async ({ apiKey, model, user }) => {
+  if (apiKey !== undefined) {
+    botState.geminiApiKey = (apiKey || '').trim();
+    if (user && user._id) {
+      await User.updateOne({ _id: user._id }, { $set: { geminiApiKey: botState.geminiApiKey } }).catch(() => {});
+    }
+  }
+  if (model) {
+    botState.geminiModel = model.trim();
+  }
+
+  // Test connection if key provided
+  let testResult = null;
+  if (botState.geminiApiKey) {
+    testResult = await geminiService.testGeminiConnection(botState.geminiApiKey, botState.geminiModel);
+  }
+
+  return {
+    success: true,
+    hasGeminiKey: Boolean(botState.geminiApiKey),
+    geminiModel: botState.geminiModel,
+    testResult
+  };
+};
+
+/**
  * Get current bot status & recent activity logs
  */
-const getBotStatus = () => {
+const getBotStatus = (user) => {
+  const activeKey = (user?.geminiApiKey || botState.geminiApiKey || process.env.GEMINI_API_KEY || '').trim();
   return {
     isRunning: botState.isRunning,
     isAutoActive: botState.isAutoActive,
     lastRunAt: botState.lastRunAt,
     totalProcessed: botState.totalProcessed,
+    hasGeminiKey: Boolean(activeKey),
+    geminiModel: botState.geminiModel,
+    aiCount: botState.aiCount,
     recentLogs: botState.logs.slice(0, 30)
   };
 };
@@ -336,5 +407,6 @@ module.exports = {
   startBackgroundBot,
   stopBackgroundBot,
   getBotStatus,
-  toggleAutoBot
+  toggleAutoBot,
+  setGeminiConfig
 };

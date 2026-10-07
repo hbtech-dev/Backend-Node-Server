@@ -215,6 +215,10 @@ const userSchema = new mongoose.Schema(
     manualTrashedOrderIds: {
       type: [String],
       default: []
+    },
+    geminiApiKey: {
+      type: String,
+      default: ''
     }
   },
   {
