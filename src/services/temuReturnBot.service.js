@@ -23,7 +23,7 @@ const botState = {
   totalProcessed: 0,
   autoApproveUnshipped: true,
   geminiApiKey: process.env.GEMINI_API_KEY || '',
-  geminiModel: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+  geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
   aiCount: 0,
   logs: []
 };

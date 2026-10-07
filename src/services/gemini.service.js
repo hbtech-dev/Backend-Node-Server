@@ -5,7 +5,7 @@ const httpFetch = require('../utils/httpHelper');
  * Supports free models: gemini-1.5-flash, gemini-2.0-flash
  */
 
-const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-1.5-flash';
+const DEFAULT_MODEL = process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite';
 
 /**
  * Get the active Gemini API key from parameters, env, or runtime state
@@ -122,7 +122,7 @@ YOUR INSTRUCTIONS:
    - NEVER use placeholder brackets like [Your Name] or [Company Name].
    - Output ONLY the final message text to send to the buyer.`;
 
-  const candidateModels = [model, 'gemini-1.5-flash', 'gemini-2.0-flash'];
+  const candidateModels = [model, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'];
   const uniqueModels = [...new Set(candidateModels)];
 
   for (const targetModel of uniqueModels) {
