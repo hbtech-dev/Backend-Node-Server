@@ -818,7 +818,6 @@ exports.setTemuReturnBotGeminiKey = catchAsync(async (req, res, next) => {
     data: result
   });
 });
-});
 
 exports.toggleTemuReturnBot = catchAsync(async (req, res, next) => {
   const { active } = req.body;
