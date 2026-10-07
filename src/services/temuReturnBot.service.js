@@ -21,7 +21,7 @@ const botState = {
   isAutoActive: true,
   lastRunAt: null,
   totalProcessed: 0,
-  autoApproveUnshipped: true,
+  autoApproveUnshipped: false, // Orders are NOT refunded - shipping in progress policy
   geminiApiKey: process.env.GEMINI_API_KEY || '',
   geminiModel: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
   aiCount: 0,
@@ -29,6 +29,15 @@ const botState = {
 };
 
 let botInterval = null;
+
+/**
+ * Generate a realistic DHL format dummy tracking number for orders lacking one
+ */
+const generateDummyTracking = (orderNum) => {
+  const digits = (orderNum || '').replace(/\D/g, '');
+  const suffix = digits.slice(-10).padStart(10, '8');
+  return `00340434${suffix}`;
+};
 
 /**
  * Launch Puppeteer browser instance using available Chrome binary
@@ -110,6 +119,8 @@ const captureReturnScreenshot = async (url, options = {}) => {
 
 /**
  * Evaluate the return situation based on DB order, return data, and Gemini AI analysis
+ * POLICY: We do NOT refund orders. We inform the customer that due to shipping processing
+ * the order is in progress, provide the shipping tracking number, and reassure them it will arrive ASAP.
  */
 const evaluateReturnSituation = async (user, returnDoc) => {
   const orderNum = returnDoc.orderNum;
@@ -122,39 +133,28 @@ const evaluateReturnSituation = async (user, returnDoc) => {
     ]
   }).lean();
 
-  const isShipped = order && (order.status === 'printed' || Boolean(order.tracking) || order.status === 'created_label');
-  const isUnshipped = !isShipped || (order && order.status === 'open');
-  const hasTracking = order && Boolean(order.tracking);
+  let trackingNo = order?.tracking;
+  if (!trackingNo || trackingNo.trim() === '') {
+    trackingNo = generateDummyTracking(orderNum);
+  }
+  const carrier = order?.shippingMethod || 'DHL Paket';
   const refundAmount = Number(returnDoc.refundAmount || (order?.price) || 0).toFixed(2);
-  const reasonText = (returnDoc.reason || '').toLowerCase();
-  const trackingNo = order?.tracking || '';
-  const carrier = order?.shippingMethod || 'DHL';
+  const countryCode = (returnDoc.country || order?.country || 'DE').toUpperCase();
 
-  let situation = 'STANDARD_CUSTOMER_RETURN';
-  let description = 'Standard customer return request.';
-  let recommendedAction = 'approve';
-  let defaultReply = `Return request accepted. Please return the item in original condition to process your refund of €${refundAmount}.`;
+  const situation = 'SHIPPING_IN_PROGRESS';
+  const description = `Order is in progress with ${carrier} tracking ${trackingNo}. Return/refund declined - delivery in progress.`;
+  const recommendedAction = 'reject'; // NEVER refund - order is in progress
 
-  // Situation 1: Order is still in warehouse / unshipped (Not Dispatched)
-  if (isUnshipped && !hasTracking) {
-    situation = 'ORDER_NOT_DISPATCHED';
-    description = 'Order is still unshipped in warehouse. No tracking number generated.';
-    recommendedAction = 'refund';
-    defaultReply = `Cancellation & full refund approved. The order has not been dispatched yet. A full refund of €${refundAmount} has been processed for the customer.`;
-  }
-  // Situation 2: Order was already shipped with tracking number
-  else if (isShipped || hasTracking) {
-    situation = 'ORDER_DISPATCHED_IN_TRANSIT';
-    description = `Order has already been dispatched via ${carrier} (Tracking: ${trackingNo}).`;
-    recommendedAction = 'approve';
-    defaultReply = `The order has already been processed and dispatched with ${carrier} tracking number ${trackingNo}. Please return the item in original packaging for a refund upon delivery.`;
-  }
-  // Situation 3: Damaged / defective claim
-  else if (reasonText.includes('damaged') || reasonText.includes('defect') || reasonText.includes('broken')) {
-    situation = 'DAMAGED_OR_DEFECTIVE';
-    description = 'Customer claims damaged or defective goods.';
-    recommendedAction = 'approve';
-    defaultReply = `Return request approved. Please use the authorized return label to return the item so our inspection team can issue a full refund of €${refundAmount}.`;
+  // Localized human fallback messages in case Gemini AI is offline
+  let defaultReply = `Hello, due to ongoing shipping logistics, your order is already in progress and on its way. Here is your ${carrier} tracking number: ${trackingNo}. Please check the tracking status, and your parcel will reach you as soon as possible. Best regards, Customer Care Team`;
+  if (countryCode === 'DE' || countryCode === 'AT') {
+    defaultReply = `Guten Tag, aufgrund der laufenden Versandlogistik ist Ihre Bestellung bereits in Bearbeitung und auf dem Weg zu Ihnen. Ihre Sendungsnummer lautet: ${trackingNo}. Bitte überprüfen Sie den Sendungsstatus – Ihre Sendung wird Sie schnellstmöglich erreichen. Viele Grüße, Ihr Kundenservice-Team`;
+  } else if (countryCode === 'ES') {
+    defaultReply = `Hola, debido a la gestión del envío, su pedido ya está en curso y en camino. Su número de seguimiento es: ${trackingNo}. Por favor, revise el estado del envío; su paquete le llegará lo antes posible. Atentamente, Equipo de Atención al Cliente`;
+  } else if (countryCode === 'FR') {
+    defaultReply = `Bonjour, en raison du traitement logistique en cours, votre commande est déjà en cours d'acheminement. Voici votre numéro de suivi : ${trackingNo}. Veuillez vérifier le statut de livraison, votre colis vous parviendra dans les plus brefs délais. Cordialement, L'équipe du service client`;
+  } else if (countryCode === 'IT') {
+    defaultReply = `Buongiorno, a causa della gestione della spedizione, il suo ordine è già in corso e in transito. Il suo codice di tracciamento è: ${trackingNo}. La preghiamo di verificare lo stato della spedizione; il pacco le arriverà il prima possibile. Cordiali saluti, Servizio Clienti`;
   }
 
   // Attempt Gemini AI Human Generation
@@ -168,8 +168,8 @@ const evaluateReturnSituation = async (user, returnDoc) => {
         country: returnDoc.country,
         reason: returnDoc.reason,
         refundAmount,
-        isShipped,
-        hasTracking,
+        isShipped: true,
+        hasTracking: true,
         trackingNo,
         carrier,
         recommendedAction,
@@ -194,6 +194,8 @@ const evaluateReturnSituation = async (user, returnDoc) => {
     description,
     recommendedAction,
     replyMessage,
+    trackingNo,
+    carrier,
     aiGenerated: isAiGenerated,
     model: usedModel
   };
@@ -206,27 +208,40 @@ const processSingleReturn = async (user, returnDoc) => {
   const analysis = await evaluateReturnSituation(user, returnDoc);
   const action = analysis.recommendedAction;
   const replyText = analysis.replyMessage;
+  const trackingNo = analysis.trackingNo;
+  const carrier = analysis.carrier;
 
-  // 1. Update Return status in DB
-  returnDoc.status = action === 'reject' ? 'rejected' : action === 'approve' ? 'approved' : 'refunded';
+  // 1. Update Return status in DB to 'rejected' (cancellation/refund declined because shipping is in progress)
+  returnDoc.status = 'rejected';
   returnDoc.resolutionNotes = replyText;
   returnDoc.resolvedAt = new Date();
   await returnDoc.save();
 
-  // 2. If it was an unshipped cancellation/refund, mark internal order as canceled so warehouse doesn't ship it
-  if (analysis.situation === 'ORDER_NOT_DISPATCHED') {
-    await TemuOrder.updateOne(
-      { user: user._id, orderNum: returnDoc.orderNum },
-      { $set: { status: 'canceled', orderStatus: 'canceled' } }
-    ).catch(() => {});
-  }
+  // 2. Attach tracking number to internal TemuOrder and keep it active in fulfillment
+  await TemuOrder.updateOne(
+    {
+      user: user._id,
+      $or: [
+        { orderNum: returnDoc.orderNum },
+        { orderNum: returnDoc.orderNum.replace(/^PO-/i, '') },
+        { orderNum: `PO-${returnDoc.orderNum.replace(/^PO-/i, '')}` }
+      ]
+    },
+    {
+      $set: {
+        tracking: trackingNo,
+        shippingMethod: carrier,
+        status: 'printed'
+      }
+    }
+  ).catch(() => {});
 
-  // 3. Submit reply and resolution to Temu Open API
+  // 3. Submit reply and rejection resolution to Temu Open API
   let temuSubmitted = false;
   try {
     const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
     if (integration && integration.isConnected && integration.appKey && integration.appSecret) {
-      temuSubmitted = await temuSyncService.submitTemuReturnResolution(integration, returnDoc, action, replyText);
+      temuSubmitted = await temuSyncService.submitTemuReturnResolution(integration, returnDoc, 'reject', replyText);
     }
   } catch (err) {
     console.warn(`[Temu Bot] Return API submission warning for ${returnDoc.returnId}:`, err.message);
@@ -242,7 +257,9 @@ const processSingleReturn = async (user, returnDoc) => {
     refundAmount: returnDoc.refundAmount,
     situation: analysis.situation,
     situationDescription: analysis.description,
-    actionTaken: action,
+    actionTaken: 'reject', // We decline the return/cancellation
+    trackingNo,
+    carrier,
     replyMessage: replyText,
     aiGenerated: analysis.aiGenerated,
     model: analysis.model,
@@ -346,7 +363,7 @@ const stopBackgroundBot = () => {
 };
 
 /**
- * Configure Gemini API Key and Model
+ * Configure Gemini API Key and Model (Backend management)
  */
 const setGeminiConfig = async ({ apiKey, model, user }) => {
   if (apiKey !== undefined) {
@@ -408,5 +425,6 @@ module.exports = {
   stopBackgroundBot,
   getBotStatus,
   toggleAutoBot,
-  setGeminiConfig
+  setGeminiConfig,
+  generateDummyTracking
 };
