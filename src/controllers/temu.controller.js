@@ -858,26 +858,56 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     return await resp.json();
   };
 
-  const results = {};
+  const tests = {};
 
-  // 1. Carriers
-  results.carriers = await callTemu("bg.logistics.carrier.list.get");
-  if (!results.carriers.success) {
-    results.companies = await callTemu("bg.logistics.express.company.list.get");
-  }
-  if (!results.carriers.success && !results.companies?.success) {
-    results.shipServices = await callTemu("bg.logistics.shippingservices.get");
-  }
+  const parentOrderSn = "PO-163-18830519061112544";
+  const orderSn = "163-18830540032632544";
+  const trackingNumber = "LG282205865DE";
+  const expressCompanyId = 4042; // DHL Paket
 
-  // 2. Full detail of order PO-163-18830519061112544
-  results.fullOrderDetail = await callTemu("bg.order.detail.v2.get", {
-    parentOrderSn: "PO-163-18830519061112544"
+  // Test A: bg.logistics.shipped.package.confirm
+  tests.shippedPackageConfirm = await callTemu("bg.logistics.shipped.package.confirm", {
+    packageSendInfoList: JSON.stringify([{
+      trackingNumber,
+      shippingCompanyId: expressCompanyId,
+      packageDetail: {
+        quantity: 1,
+        orderSn,
+        parentOrderSn
+      }
+    }])
+  });
+
+  // Test B: bg.logistics.shipment.create with sendType 0 and shipLater false
+  tests.shipmentCreate = await callTemu("bg.logistics.shipment.create", {
+    sendType: 0,
+    shipLater: false,
+    sendRequestList: JSON.stringify([{
+      shipCompanyId: expressCompanyId,
+      trackingNumber,
+      orderSendInfoList: [{
+        parentOrderSn,
+        orderSn,
+        quantity: 1
+      }]
+    }])
+  });
+
+  // Test C: bg.order.delivery.confirm
+  tests.deliveryConfirm = await callTemu("bg.order.delivery.confirm", {
+    orderSn,
+    parentOrderSn,
+    trackingNumber,
+    expressCompanyId
   });
 
   res.status(200).json({
     status: "success",
     store: shopName,
-    results
+    parentOrderSn,
+    orderSn,
+    trackingNumber,
+    tests
   });
 });
 
