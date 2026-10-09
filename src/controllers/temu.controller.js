@@ -829,64 +829,71 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 });
 
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
-  const { orderSn } = req.params;
-  const TemuOrder = require("../models/temuOrder.model");
   const User = require("../models/user.model");
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
-  const store7 = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702093870282") || user.temuIntegrations?.[7];
+  const integrations = (user.temuIntegrations || []).filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
 
-  const { appKey, appSecret, accessToken, shopName } = store7;
+  const nowSec = Math.floor(Date.now() / 1000);
+  const thirtyDaysAgo = nowSec - (30 * 86400);
 
-  const callTemu = async (type, params) => {
+  const storesWithUnshipped = [];
+
+  for (let idx = 0; idx < integrations.length; idx++) {
+    const integ = integrations[idx];
+    const { appKey, appSecret, accessToken, shopName } = integ;
+
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = {
       app_key: appKey,
       access_token: accessToken,
       timestamp,
-      type,
-      ...params
+      type: "bg.order.list.v2.get",
+      parentOrderStatus: 2, // UNSHIPPED
+      updateTimeStart: thirtyDaysAgo,
+      updateTimeEnd: nowSec,
+      pageNumber: 1,
+      pageSize: 20
     };
     const sortedKeys = Object.keys(payload).sort();
     const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
     const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
 
-    const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, sign })
-    });
-    return await resp.json();
-  };
+    try {
+      const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, sign })
+      });
+      const data = await resp.json();
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const thirtyDaysAgo = nowSec - (30 * 86400);
+      if (data.errorCode === 3000034 || data.errorCode === 3000035) {
+        continue; // Token expired
+      }
 
-  // Query ALL orders (status 0) from store 7
-  const allOrdersResp = await callTemu("bg.order.list.v2.get", {
-    parentOrderStatus: 0,
-    updateTimeStart: thirtyDaysAgo,
-    updateTimeEnd: nowSec,
-    pageNumber: 1,
-    pageSize: 50
-  });
-
-  const ordersSummary = (allOrdersResp.result?.pageItems || []).map(item => ({
-    parentOrderSn: item.parentOrderMap?.parentOrderSn,
-    parentOrderStatus: item.parentOrderMap?.parentOrderStatus,
-    childOrderSn: item.orderList?.[0]?.orderSn,
-    trackingNo: item.parentOrderMap?.trackingNo,
-    siteId: item.parentOrderMap?.siteId,
-    region: item.parentOrderMap?.regionName1
-  }));
+      const total = data.result?.totalItemNum || 0;
+      if (total > 0) {
+        const sampleOrders = (data.result?.pageItems || []).map(p => ({
+          parentOrderSn: p.parentOrderMap?.parentOrderSn,
+          childOrderSn: p.orderList?.[0]?.orderSn,
+          siteId: p.parentOrderMap?.siteId,
+          region: p.parentOrderMap?.regionName1
+        }));
+        storesWithUnshipped.push({
+          storeIndex: idx,
+          store: shopName,
+          totalUnshipped: total,
+          sampleOrders
+        });
+      }
+    } catch (_) {}
+  }
 
   res.status(200).json({
     status: "success",
-    store: shopName,
-    totalInStore: allOrdersResp.result?.totalItemNum,
-    count: ordersSummary.length,
-    orders: ordersSummary
+    unshippedStoresCount: storesWithUnshipped.length,
+    stores: storesWithUnshipped
   });
 });
 
