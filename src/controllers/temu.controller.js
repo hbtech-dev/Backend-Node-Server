@@ -854,165 +854,123 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const trackingNumber = order?.tracking || "LG282205865DE";
   const expressCompanyId = 4042; // DHL Paket / DHL Parcel
 
-  const results = [];
-  const integrations = (user.temuIntegrations || []).filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
+  // Target Store 7: Temu-670702093870282
+  const store7 = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702093870282") || user.temuIntegrations?.[7];
 
-  let owningStore = null;
+  if (!store7) {
+    return res.status(404).json({ error: "Store 7 not found" });
+  }
 
-  for (let idx = 0; idx < integrations.length; idx++) {
-    const integ = integrations[idx];
-    const { appKey, appSecret, accessToken, shopName } = integ;
+  const { appKey, appSecret, accessToken, shopName } = store7;
+
+  const callTemu = async (type, params) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
-
-    // 1. Check bg.order.detail.v2.get to see if this store owns the order
-    const detailPayload = {
+    const payload = {
       app_key: appKey,
       access_token: accessToken,
       timestamp,
-      type: "bg.order.detail.v2.get",
-      parentOrderSn
+      type,
+      ...params
     };
-    const sortedKeys = Object.keys(detailPayload).sort();
-    const signStr = appSecret + sortedKeys.map(k => `${k}${detailPayload[k]}`).join("") + appSecret;
+    const sortedKeys = Object.keys(payload).sort();
+    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
     const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
 
-    try {
-      const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...detailPayload, sign })
-      });
-      const data = await resp.json();
+    const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, sign })
+    });
+    return await resp.json();
+  };
 
-      if (data.success || data.errorCode === 1000000 || data.result) {
-        owningStore = { index: idx, shopName };
-        console.log(`🎯 [Temu Debug] FOUND OWNING STORE [${idx}]: "${shopName}"!`);
+  const tests = {};
 
-        // Test format A: camelCase
-        const shipPayloadA = {
-          app_key: appKey,
-          access_token: accessToken,
-          timestamp: Math.floor(Date.now() / 1000).toString(),
-          type: "bg.logistics.shipment.v2.confirm",
-          parentOrderSn,
-          orderSn: childOrderSn,
-          trackingNumber,
-          expressCompanyId
-        };
-        const sKeysA = Object.keys(shipPayloadA).sort();
-        const sSignStrA = appSecret + sKeysA.map(k => `${k}${shipPayloadA[k]}`).join("") + appSecret;
-        const sSignA = crypto.createHash("md5").update(sSignStrA).digest("hex").toUpperCase();
+  // Test 1: Query order list (unshipped status 2)
+  try {
+    const nowSec = Math.floor(Date.now() / 1000);
+    const thirtyDaysAgo = nowSec - (30 * 86400);
+    tests.orderList = await callTemu("bg.order.list.v2.get", {
+      parentOrderStatus: 2,
+      updateTimeStart: thirtyDaysAgo,
+      updateTimeEnd: nowSec,
+      pageNumber: 1,
+      pageSize: 20
+    });
+  } catch (e) {
+    tests.orderListError = e.message;
+  }
 
-        const shipRespA = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...shipPayloadA, sign: sSignA })
-        });
-        const shipDataA = await shipRespA.json();
+  // Test 2: Try bg.order.detail.v2.get with parentOrderSn
+  tests.detailByParentSn = await callTemu("bg.order.detail.v2.get", { parentOrderSn });
 
-        // Test format B: snake_case
-        let shipDataB = null;
-        if (!shipDataA.success && shipDataA.errorCode !== 1000000) {
-          const shipPayloadB = {
-            app_key: appKey,
-            access_token: accessToken,
-            timestamp: Math.floor(Date.now() / 1000).toString(),
-            type: "bg.logistics.shipment.v2.confirm",
-            parent_order_sn: parentOrderSn,
-            order_sn: childOrderSn,
-            tracking_number: trackingNumber,
-            express_company_id: expressCompanyId
-          };
-          const sKeysB = Object.keys(shipPayloadB).sort();
-          const sSignStrB = appSecret + sKeysB.map(k => `${k}${shipPayloadB[k]}`).join("") + appSecret;
-          const sSignB = crypto.createHash("md5").update(sSignStrB).digest("hex").toUpperCase();
+  // Test 3: Try bg.order.detail.v2.get with childOrderSn
+  tests.detailByChildSn = await callTemu("bg.order.detail.v2.get", { parentOrderSn: childOrderSn });
 
-          const shipRespB = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...shipPayloadB, sign: sSignB })
-          });
-          shipDataB = await shipRespB.json();
-        }
+  // Test 4: bg.logistics.shipment.v2.confirm with parentOrderSn + trackingNumber
+  tests.shipV2_parent = await callTemu("bg.logistics.shipment.v2.confirm", {
+    parentOrderSn,
+    orderSn: childOrderSn,
+    trackingNumber,
+    expressCompanyId
+  });
 
-        // Test format C: packageList
-        let shipDataC = null;
-        if (!shipDataA.success && (!shipDataB || !shipDataB.success)) {
-          const shipPayloadC = {
-            app_key: appKey,
-            access_token: accessToken,
-            timestamp: Math.floor(Date.now() / 1000).toString(),
-            type: "bg.logistics.shipment.v2.confirm",
-            parentOrderSn,
-            packageList: JSON.stringify([{
-              orderSn: childOrderSn,
-              trackingNumber,
-              expressCompanyId
-            }])
-          };
-          const sKeysC = Object.keys(shipPayloadC).sort();
-          const sSignStrC = appSecret + sKeysC.map(k => `${k}${shipPayloadC[k]}`).join("") + appSecret;
-          const sSignC = crypto.createHash("md5").update(sSignStrC).digest("hex").toUpperCase();
+  // Test 5: bg.logistics.shipment.v2.confirm with childOrderSn as parentOrderSn
+  tests.shipV2_child = await callTemu("bg.logistics.shipment.v2.confirm", {
+    parentOrderSn: childOrderSn,
+    trackingNumber,
+    expressCompanyId
+  });
 
-          const shipRespC = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ ...shipPayloadC, sign: sSignC })
-          });
-          shipDataC = await shipRespC.json();
-        }
+  // Test 6: bg.logistics.shipment.v2.confirm with snake_case
+  tests.shipV2_snake = await callTemu("bg.logistics.shipment.v2.confirm", {
+    parent_order_sn: parentOrderSn,
+    order_sn: childOrderSn,
+    tracking_number: trackingNumber,
+    express_company_id: expressCompanyId
+  });
 
-        results.push({
-          storeIndex: idx,
-          store: shopName,
-          ownsOrder: true,
-          orderDetailInfo: {
-            parentOrderSn: data.result?.parentOrderMap?.parentOrderSn,
-            parentOrderStatus: data.result?.parentOrderMap?.parentOrderStatus,
-            siteId: data.result?.parentOrderMap?.siteId,
-            regionName1: data.result?.parentOrderMap?.regionName1
-          },
-          shipmentTestCamelCase: shipDataA,
-          shipmentTestSnakeCase: shipDataB,
-          shipmentTestPackageList: shipDataC
-        });
+  // Test 7: bg.logistics.shipment.v2.confirm with packageList
+  tests.shipV2_packageList = await callTemu("bg.logistics.shipment.v2.confirm", {
+    parentOrderSn,
+    packageList: JSON.stringify([{
+      orderSn: childOrderSn,
+      trackingNumber,
+      expressCompanyId
+    }])
+  });
 
-        // If any shipment format succeeded, mark in DB!
-        const anySuccess = shipDataA.success || (shipDataB && shipDataB.success) || (shipDataC && shipDataC.success);
-        if (anySuccess && order) {
-          await TemuOrder.updateOne(
-            { _id: order._id },
-            { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
-          );
-        }
+  // Test 8: bg.logistics.shipment.create
+  tests.shipCreate = await callTemu("bg.logistics.shipment.create", {
+    orderSn: childOrderSn,
+    trackingNumber,
+    expressCompanyId
+  });
 
-        break; // Found owning store, don't need to check further!
-      } else {
-        results.push({
-          storeIndex: idx,
-          store: shopName,
-          ownsOrder: false,
-          errorMsg: data.errorMsg || data.errorCode
-        });
-      }
-    } catch (e) {
-      results.push({ storeIndex: idx, store: shopName, error: e.message });
-    }
+  // Check if any shipment test succeeded
+  const anySuccess = (
+    tests.shipV2_parent?.success ||
+    tests.shipV2_child?.success ||
+    tests.shipV2_snake?.success ||
+    tests.shipV2_packageList?.success ||
+    tests.shipCreate?.success
+  );
+
+  if (anySuccess && order) {
+    await TemuOrder.updateOne(
+      { _id: order._id },
+      { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+    );
   }
 
   res.status(200).json({
     status: "success",
-    targetOrder: {
-      orderNum: order?.orderNum,
-      temuOrderId: order?.temuOrderId,
-      parentOrderSn,
-      childOrderSn,
-      country: order?.country,
-      tracking: trackingNumber
-    },
-    owningStoreFound: Boolean(owningStore),
-    checkedStoresCount: results.length,
-    results
+    store: shopName,
+    parentOrderSn,
+    childOrderSn,
+    trackingNumber,
+    anySuccess,
+    tests
   });
 });
 
