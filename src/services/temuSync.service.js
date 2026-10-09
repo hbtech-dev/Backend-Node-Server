@@ -972,6 +972,8 @@ const uploadTrackingToTemu = async (user, order) => {
       console.log(`📤 [Temu Tracking] Pushing tracking ${order.tracking} → order SN "${orderSn}" via store "${integration.shopName || appKey}"...`);
 
       const endpointsToTry = [
+        'bg.logistics.shipment.v2.confirm',
+        'bg.logistics.shipment.confirm',
         'bg.logistics.shipment.create',
         'bg.logistics.shipment.send',
         'bg.order.shipment.create',
@@ -990,12 +992,19 @@ const uploadTrackingToTemu = async (user, order) => {
             express_company_id: expressCompanyId,
             shipping_company_id: expressCompanyId,
             expressCompanyId,
-            shippingCompanyId: expressCompanyId
+            shippingCompanyId: expressCompanyId,
+            packageList: JSON.stringify([{
+              trackingNumber: order.tracking,
+              tracking_number: order.tracking,
+              shippingCompanyId: expressCompanyId,
+              expressCompanyId: expressCompanyId,
+              express_company_id: expressCompanyId
+            }])
           });
 
           console.log(`📦 [Temu Tracking] ${endpoint} response for "${orderSn}":`, JSON.stringify(result));
 
-          if (result !== null) {
+          if (result !== null && result !== false) {
             console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu (${endpoint}) for order ${orderSn}`);
             uploadedSuccessfully = true;
 

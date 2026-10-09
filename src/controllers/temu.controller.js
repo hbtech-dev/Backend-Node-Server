@@ -784,8 +784,78 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
   }
 });
 
+exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
+  const { orderNum } = req.params;
+  const TemuOrder = require("../models/temuOrder.model");
+  const temuSyncService = require("../services/temuSync.service");
+  const User = require("../models/user.model");
+
+  const user = await User.findById(req.user.id);
+  const cleanNum = orderNum.trim();
+  const order = await TemuOrder.findOne({
+    user: user._id,
+    $or: [
+      { orderNum: cleanNum },
+      { orderNum: `PO-${cleanNum}` },
+      { temuOrderId: cleanNum },
+      { temuOrderId: `PO-${cleanNum}` }
+    ]
+  });
+
+  if (!order) {
+    return next(new AppError(`Order ${orderNum} not found in database.`, 404));
+  }
+
+  if (!order.tracking) {
+    return next(new AppError(`Order ${orderNum} does not have a tracking number yet.`, 400));
+  }
+
+  await temuSyncService.uploadTrackingToTemu(user, order);
+  const refreshed = await TemuOrder.findById(order._id);
+
+  res.status(200).json({
+    status: "success",
+    message: refreshed.trackingUploadedToTemu
+      ? `Tracking ${refreshed.tracking} successfully submitted to Temu!`
+      : `Attempted tracking upload for ${refreshed.tracking}. Check status or Temu response.`,
+    data: {
+      orderNum: refreshed.orderNum,
+      temuOrderId: refreshed.temuOrderId,
+      tracking: refreshed.tracking,
+      trackingUploadedToTemu: refreshed.trackingUploadedToTemu,
+      trackingUploadedAt: refreshed.trackingUploadedAt
+    }
+  });
+});
+
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
-  res.status(200).json({ status: 'success', message: 'Debug endpoint active' });
+  const { orderSn } = req.params;
+  const TemuOrder = require("../models/temuOrder.model");
+  const temuSyncService = require("../services/temuSync.service");
+  const User = require("../models/user.model");
+
+  const user = await User.findById(req.user.id);
+  const cleanSn = orderSn.trim();
+  const order = await TemuOrder.findOne({
+    user: user._id,
+    $or: [
+      { orderNum: cleanSn },
+      { orderNum: `PO-${cleanSn}` },
+      { temuOrderId: cleanSn }
+    ]
+  });
+
+  if (!order) {
+    return res.status(404).json({ status: "error", message: `Order ${orderSn} not found` });
+  }
+
+  await temuSyncService.uploadTrackingToTemu(user, order);
+  const refreshed = await TemuOrder.findById(order._id);
+
+  res.status(200).json({
+    status: "success",
+    data: refreshed
+  });
 });
 
 /**

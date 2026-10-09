@@ -20,6 +20,7 @@ router.post('/connect', auth, temuController.connectTemu);
 router.post('/disconnect', auth, temuController.disconnectTemu);
 router.post('/sync-orders', auth, temuController.syncTemuOrders);
 router.get('/orders', auth, temuController.getUserTemuOrders);
+router.post('/orders/:orderNum/upload-tracking', auth, temuController.uploadOrderTrackingManually);
 router.get('/debug-order/:orderSn', auth, temuController.debugTemuOrder);
 
 // Returns & Performance Fulfillment Issues Routes
