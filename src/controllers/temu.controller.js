@@ -829,71 +829,126 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 });
 
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
+  const { orderSn } = req.params;
+  const TemuOrder = require("../models/temuOrder.model");
   const User = require("../models/user.model");
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
+  const targetParentSn = orderSn.trim();
+  const cleanSnNoPO = targetParentSn.replace(/^PO-/i, "");
+
+  // Find store that owns this order by checking all active integrations
   const integrations = (user.temuIntegrations || []).filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
 
-  const nowSec = Math.floor(Date.now() / 1000);
-  const thirtyDaysAgo = nowSec - (30 * 86400);
+  let owningStore = null;
+  let orderDetail = null;
 
-  const storesWithUnshipped = [];
-
-  for (let idx = 0; idx < integrations.length; idx++) {
-    const integ = integrations[idx];
+  for (const integ of integrations) {
     const { appKey, appSecret, accessToken, shopName } = integ;
+    const timestamp = Math.floor(Date.now() / 1000).toString();
 
+    // Query detail with both targetParentSn (with PO-) and cleanSnNoPO (without PO-)
+    for (const sn of [targetParentSn, cleanSnNoPO]) {
+      const payload = {
+        app_key: appKey,
+        access_token: accessToken,
+        timestamp,
+        type: "bg.order.detail.v2.get",
+        parentOrderSn: sn
+      };
+      const sortedKeys = Object.keys(payload).sort();
+      const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
+      const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
+
+      try {
+        const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...payload, sign })
+        });
+        const data = await resp.json();
+        if (data.success || data.errorCode === 1000000 || data.result) {
+          owningStore = integ;
+          orderDetail = data.result || data;
+          break;
+        }
+      } catch (_) {}
+    }
+    if (owningStore) break;
+  }
+
+  if (!owningStore) {
+    return res.status(404).json({
+      status: "error",
+      message: `No connected store owns order ${targetParentSn}`
+    });
+  }
+
+  // Now test bg.logistics.shipment.v2.confirm on the owning store
+  const { appKey, appSecret, accessToken, shopName } = owningStore;
+  const childOrderSn = orderDetail.orderList?.[0]?.orderSn || orderDetail.parentOrderMap?.orderList?.[0]?.orderSn || cleanSnNoPO;
+  const trackingNumber = req.query.tracking || "LG282205865DE";
+  const expressCompanyId = 4042; // DHL Paket
+
+  const callConfirm = async (params) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = {
       app_key: appKey,
       access_token: accessToken,
       timestamp,
-      type: "bg.order.list.v2.get",
-      parentOrderStatus: 2, // UNSHIPPED
-      updateTimeStart: thirtyDaysAgo,
-      updateTimeEnd: nowSec,
-      pageNumber: 1,
-      pageSize: 20
+      type: "bg.logistics.shipment.v2.confirm",
+      ...params
     };
     const sortedKeys = Object.keys(payload).sort();
     const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
     const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
 
-    try {
-      const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, sign })
-      });
-      const data = await resp.json();
+    const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, sign })
+    });
+    return await resp.json();
+  };
 
-      if (data.errorCode === 3000034 || data.errorCode === 3000035) {
-        continue; // Token expired
-      }
+  const tests = {};
 
-      const total = data.result?.totalItemNum || 0;
-      if (total > 0) {
-        const sampleOrders = (data.result?.pageItems || []).map(p => ({
-          parentOrderSn: p.parentOrderMap?.parentOrderSn,
-          childOrderSn: p.orderList?.[0]?.orderSn,
-          siteId: p.parentOrderMap?.siteId,
-          region: p.parentOrderMap?.regionName1
-        }));
-        storesWithUnshipped.push({
-          storeIndex: idx,
-          store: shopName,
-          totalUnshipped: total,
-          sampleOrders
-        });
-      }
-    } catch (_) {}
-  }
+  // Variation 1: parentOrderSn with PO-
+  tests.v1_withPO = await callConfirm({
+    parentOrderSn: targetParentSn,
+    orderSn: childOrderSn,
+    trackingNumber,
+    expressCompanyId
+  });
+
+  // Variation 2: parentOrderSn without PO-
+  tests.v2_noPO = await callConfirm({
+    parentOrderSn: cleanSnNoPO,
+    orderSn: childOrderSn,
+    trackingNumber,
+    expressCompanyId
+  });
+
+  // Variation 3: packageList format
+  tests.v3_packageList = await callConfirm({
+    parentOrderSn: cleanSnNoPO,
+    packageList: JSON.stringify([{
+      orderSn: childOrderSn,
+      trackingNumber,
+      expressCompanyId
+    }])
+  });
 
   res.status(200).json({
     status: "success",
-    unshippedStoresCount: storesWithUnshipped.length,
-    stores: storesWithUnshipped
+    owningStore: shopName,
+    parentOrderSn: targetParentSn,
+    cleanSnNoPO,
+    childOrderSn,
+    trackingNumber,
+    orderStatusInTemu: orderDetail.parentOrderMap?.parentOrderStatus,
+    tests
   });
 });
 
