@@ -829,75 +829,21 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 });
 
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
-  const { orderSn } = req.params;
-  const TemuOrder = require("../models/temuOrder.model");
   const User = require("../models/user.model");
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
-  const targetParentSn = orderSn.trim();
-  const cleanSnNoPO = targetParentSn.replace(/^PO-/i, "");
+  const store2 = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702093870288") || user.temuIntegrations?.[2];
 
-  // Find store that owns this order by checking all active integrations
-  const integrations = (user.temuIntegrations || []).filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
+  const { appKey, appSecret, accessToken, shopName } = store2;
 
-  let owningStore = null;
-  let orderDetail = null;
-
-  for (const integ of integrations) {
-    const { appKey, appSecret, accessToken, shopName } = integ;
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-
-    // Query detail with both targetParentSn (with PO-) and cleanSnNoPO (without PO-)
-    for (const sn of [targetParentSn, cleanSnNoPO]) {
-      const payload = {
-        app_key: appKey,
-        access_token: accessToken,
-        timestamp,
-        type: "bg.order.detail.v2.get",
-        parentOrderSn: sn
-      };
-      const sortedKeys = Object.keys(payload).sort();
-      const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
-      const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
-
-      try {
-        const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ...payload, sign })
-        });
-        const data = await resp.json();
-        if (data.success || data.errorCode === 1000000 || data.result) {
-          owningStore = integ;
-          orderDetail = data.result || data;
-          break;
-        }
-      } catch (_) {}
-    }
-    if (owningStore) break;
-  }
-
-  if (!owningStore) {
-    return res.status(404).json({
-      status: "error",
-      message: `No connected store owns order ${targetParentSn}`
-    });
-  }
-
-  // Now test bg.logistics.shipment.v2.confirm on the owning store
-  const { appKey, appSecret, accessToken, shopName } = owningStore;
-  const childOrderSn = orderDetail.orderList?.[0]?.orderSn || orderDetail.parentOrderMap?.orderList?.[0]?.orderSn || cleanSnNoPO;
-  const trackingNumber = req.query.tracking || "LG282205865DE";
-  const expressCompanyId = 4042; // DHL Paket
-
-  const callConfirm = async (params) => {
+  const callTemu = async (type, params = {}) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = {
       app_key: appKey,
       access_token: accessToken,
       timestamp,
-      type: "bg.logistics.shipment.v2.confirm",
+      type,
       ...params
     };
     const sortedKeys = Object.keys(payload).sort();
@@ -912,43 +858,26 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     return await resp.json();
   };
 
-  const tests = {};
+  const results = {};
 
-  // Variation 1: parentOrderSn with PO-
-  tests.v1_withPO = await callConfirm({
-    parentOrderSn: targetParentSn,
-    orderSn: childOrderSn,
-    trackingNumber,
-    expressCompanyId
-  });
+  // 1. Carriers
+  results.carriers = await callTemu("bg.logistics.carrier.list.get");
+  if (!results.carriers.success) {
+    results.companies = await callTemu("bg.logistics.express.company.list.get");
+  }
+  if (!results.carriers.success && !results.companies?.success) {
+    results.shipServices = await callTemu("bg.logistics.shippingservices.get");
+  }
 
-  // Variation 2: parentOrderSn without PO-
-  tests.v2_noPO = await callConfirm({
-    parentOrderSn: cleanSnNoPO,
-    orderSn: childOrderSn,
-    trackingNumber,
-    expressCompanyId
-  });
-
-  // Variation 3: packageList format
-  tests.v3_packageList = await callConfirm({
-    parentOrderSn: cleanSnNoPO,
-    packageList: JSON.stringify([{
-      orderSn: childOrderSn,
-      trackingNumber,
-      expressCompanyId
-    }])
+  // 2. Full detail of order PO-163-18830519061112544
+  results.fullOrderDetail = await callTemu("bg.order.detail.v2.get", {
+    parentOrderSn: "PO-163-18830519061112544"
   });
 
   res.status(200).json({
     status: "success",
-    owningStore: shopName,
-    parentOrderSn: targetParentSn,
-    cleanSnNoPO,
-    childOrderSn,
-    trackingNumber,
-    orderStatusInTemu: orderDetail.parentOrderMap?.parentOrderStatus,
-    tests
+    store: shopName,
+    results
   });
 });
 
