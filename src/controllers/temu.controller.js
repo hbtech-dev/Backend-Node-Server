@@ -831,8 +831,8 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const { orderSn } = req.params;
   const TemuOrder = require("../models/temuOrder.model");
-  const temuSyncService = require("../services/temuSync.service");
   const User = require("../models/user.model");
+  const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
   const cleanSn = orderSn.trim();
@@ -845,16 +845,55 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     ]
   });
 
-  if (!order) {
-    return res.status(404).json({ status: "error", message: `Order ${orderSn} not found` });
+  const integ = user.temuIntegrations?.[0] || user.temuIntegration;
+  const appKey = integ.appKey;
+  const appSecret = process.env.TEMU_APP_SECRET || integ.appSecret;
+  const accessToken = integ.accessToken;
+  const url = "https://openapi-b-eu.temu.com/openapi/router";
+
+  async function callRaw(type, params) {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const payload = {
+      app_key: appKey,
+      access_token: accessToken,
+      timestamp,
+      type,
+      ...params
+    };
+    const sortedKeys = Object.keys(payload).sort();
+    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
+    const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
+
+    const fetchRes = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, sign })
+    });
+    return await fetchRes.json();
   }
 
-  await temuSyncService.uploadTrackingToTemu(user, order);
-  const refreshed = await TemuOrder.findById(order._id);
+  const v2ConfirmResponse = await callRaw("bg.logistics.shipment.v2.confirm", {
+    parentOrderSn: order?.temuOrderId || cleanSn,
+    tracking_number: order?.tracking || "LG282205865DE",
+    express_company_id: 4042
+  });
+
+  const v2ConfirmCamelResponse = await callRaw("bg.logistics.shipment.v2.confirm", {
+    parentOrderSn: order?.temuOrderId || cleanSn,
+    orderSn: order?.temuOrderId || cleanSn,
+    trackingNumber: order?.tracking || "LG282205865DE",
+    shippingCompanyId: 4042
+  });
 
   res.status(200).json({
     status: "success",
-    data: refreshed
+    debug: {
+      orderNum: order?.orderNum,
+      temuOrderId: order?.temuOrderId,
+      tracking: order?.tracking,
+      v2ConfirmResponse,
+      v2ConfirmCamelResponse
+    }
   });
 });
 
