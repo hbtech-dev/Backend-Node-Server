@@ -835,31 +835,7 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
-  const cleanInput = orderSn.trim();
-  const cleanSnNoPO = cleanInput.replace(/^PO-/i, "");
-
-  const order = await TemuOrder.findOne({
-    user: user._id,
-    $or: [
-      { orderNum: cleanInput },
-      { orderNum: `PO-${cleanSnNoPO}` },
-      { orderNum: cleanSnNoPO },
-      { temuOrderId: cleanInput },
-      { temuOrderId: cleanSnNoPO }
-    ]
-  });
-
-  const parentOrderSn = order?.orderNum ? order.orderNum.replace(/^PO-/i, "").trim() : cleanSnNoPO;
-  const childOrderSn = order?.temuOrderId ? order.temuOrderId.replace(/^PO-/i, "").trim() : cleanSnNoPO;
-  const trackingNumber = order?.tracking || "LG282205865DE";
-  const expressCompanyId = 4042; // DHL Paket / DHL Parcel
-
-  // Target Store 7: Temu-670702093870282
   const store7 = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702093870282") || user.temuIntegrations?.[7];
-
-  if (!store7) {
-    return res.status(404).json({ error: "Store 7 not found" });
-  }
 
   const { appKey, appSecret, accessToken, shopName } = store7;
 
@@ -884,93 +860,33 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     return await resp.json();
   };
 
-  const tests = {};
+  const nowSec = Math.floor(Date.now() / 1000);
+  const thirtyDaysAgo = nowSec - (30 * 86400);
 
-  // Test 1: Query order list (unshipped status 2)
-  try {
-    const nowSec = Math.floor(Date.now() / 1000);
-    const thirtyDaysAgo = nowSec - (30 * 86400);
-    tests.orderList = await callTemu("bg.order.list.v2.get", {
-      parentOrderStatus: 2,
-      updateTimeStart: thirtyDaysAgo,
-      updateTimeEnd: nowSec,
-      pageNumber: 1,
-      pageSize: 20
-    });
-  } catch (e) {
-    tests.orderListError = e.message;
-  }
-
-  // Test 2: Try bg.order.detail.v2.get with parentOrderSn
-  tests.detailByParentSn = await callTemu("bg.order.detail.v2.get", { parentOrderSn });
-
-  // Test 3: Try bg.order.detail.v2.get with childOrderSn
-  tests.detailByChildSn = await callTemu("bg.order.detail.v2.get", { parentOrderSn: childOrderSn });
-
-  // Test 4: bg.logistics.shipment.v2.confirm with parentOrderSn + trackingNumber
-  tests.shipV2_parent = await callTemu("bg.logistics.shipment.v2.confirm", {
-    parentOrderSn,
-    orderSn: childOrderSn,
-    trackingNumber,
-    expressCompanyId
+  // Query ALL orders (status 0) from store 7
+  const allOrdersResp = await callTemu("bg.order.list.v2.get", {
+    parentOrderStatus: 0,
+    updateTimeStart: thirtyDaysAgo,
+    updateTimeEnd: nowSec,
+    pageNumber: 1,
+    pageSize: 50
   });
 
-  // Test 5: bg.logistics.shipment.v2.confirm with childOrderSn as parentOrderSn
-  tests.shipV2_child = await callTemu("bg.logistics.shipment.v2.confirm", {
-    parentOrderSn: childOrderSn,
-    trackingNumber,
-    expressCompanyId
-  });
-
-  // Test 6: bg.logistics.shipment.v2.confirm with snake_case
-  tests.shipV2_snake = await callTemu("bg.logistics.shipment.v2.confirm", {
-    parent_order_sn: parentOrderSn,
-    order_sn: childOrderSn,
-    tracking_number: trackingNumber,
-    express_company_id: expressCompanyId
-  });
-
-  // Test 7: bg.logistics.shipment.v2.confirm with packageList
-  tests.shipV2_packageList = await callTemu("bg.logistics.shipment.v2.confirm", {
-    parentOrderSn,
-    packageList: JSON.stringify([{
-      orderSn: childOrderSn,
-      trackingNumber,
-      expressCompanyId
-    }])
-  });
-
-  // Test 8: bg.logistics.shipment.create
-  tests.shipCreate = await callTemu("bg.logistics.shipment.create", {
-    orderSn: childOrderSn,
-    trackingNumber,
-    expressCompanyId
-  });
-
-  // Check if any shipment test succeeded
-  const anySuccess = (
-    tests.shipV2_parent?.success ||
-    tests.shipV2_child?.success ||
-    tests.shipV2_snake?.success ||
-    tests.shipV2_packageList?.success ||
-    tests.shipCreate?.success
-  );
-
-  if (anySuccess && order) {
-    await TemuOrder.updateOne(
-      { _id: order._id },
-      { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
-    );
-  }
+  const ordersSummary = (allOrdersResp.result?.pageItems || []).map(item => ({
+    parentOrderSn: item.parentOrderMap?.parentOrderSn,
+    parentOrderStatus: item.parentOrderMap?.parentOrderStatus,
+    childOrderSn: item.orderList?.[0]?.orderSn,
+    trackingNo: item.parentOrderMap?.trackingNo,
+    siteId: item.parentOrderMap?.siteId,
+    region: item.parentOrderMap?.regionName1
+  }));
 
   res.status(200).json({
     status: "success",
     store: shopName,
-    parentOrderSn,
-    childOrderSn,
-    trackingNumber,
-    anySuccess,
-    tests
+    totalInStore: allOrdersResp.result?.totalItemNum,
+    count: ordersSummary.length,
+    orders: ordersSummary
   });
 });
 
