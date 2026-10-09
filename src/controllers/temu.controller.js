@@ -845,56 +845,44 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     ]
   });
 
-  const integ = user.temuIntegrations?.[0] || user.temuIntegration;
-  const appKey = integ.appKey;
-  const appSecret = process.env.TEMU_APP_SECRET || integ.appSecret;
-  const accessToken = integ.accessToken;
-  const url = "https://openapi-b-eu.temu.com/openapi/router";
+  const results = [];
+  const integrations = (user.temuIntegrations || []).filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
 
-  async function callRaw(type, params) {
+  for (const integ of integrations.slice(0, 5)) {
+    const appKey = integ.appKey;
+    const appSecret = integ.appSecret;
+    const accessToken = integ.accessToken;
     const timestamp = Math.floor(Date.now() / 1000).toString();
+    const type = "bg.logistics.shipment.v2.confirm";
+
     const payload = {
       app_key: appKey,
       access_token: accessToken,
       timestamp,
       type,
-      ...params
+      parentOrderSn: order?.temuOrderId || cleanSn,
+      tracking_number: order?.tracking || "LG282205865DE",
+      express_company_id: 4042
     };
+
     const sortedKeys = Object.keys(payload).sort();
     const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
     const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
 
-    const fetchRes = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, sign })
-    });
-    return await fetchRes.json();
+    try {
+      const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, sign })
+      });
+      const data = await resp.json();
+      results.push({ store: integ.shopName, data });
+    } catch (e) {
+      results.push({ store: integ.shopName, error: e.message });
+    }
   }
 
-  const v2ConfirmResponse = await callRaw("bg.logistics.shipment.v2.confirm", {
-    parentOrderSn: order?.temuOrderId || cleanSn,
-    tracking_number: order?.tracking || "LG282205865DE",
-    express_company_id: 4042
-  });
-
-  const v2ConfirmCamelResponse = await callRaw("bg.logistics.shipment.v2.confirm", {
-    parentOrderSn: order?.temuOrderId || cleanSn,
-    orderSn: order?.temuOrderId || cleanSn,
-    trackingNumber: order?.tracking || "LG282205865DE",
-    shippingCompanyId: 4042
-  });
-
-  res.status(200).json({
-    status: "success",
-    debug: {
-      orderNum: order?.orderNum,
-      temuOrderId: order?.temuOrderId,
-      tracking: order?.tracking,
-      v2ConfirmResponse,
-      v2ConfirmCamelResponse
-    }
-  });
+  res.status(200).json({ status: "success", count: results.length, results });
 });
 
 /**
