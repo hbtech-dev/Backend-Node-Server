@@ -835,54 +835,185 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
-  const cleanSn = orderSn.trim();
+  const cleanInput = orderSn.trim();
+  const cleanSnNoPO = cleanInput.replace(/^PO-/i, "");
+
   const order = await TemuOrder.findOne({
     user: user._id,
     $or: [
-      { orderNum: cleanSn },
-      { orderNum: `PO-${cleanSn}` },
-      { temuOrderId: cleanSn }
+      { orderNum: cleanInput },
+      { orderNum: `PO-${cleanSnNoPO}` },
+      { orderNum: cleanSnNoPO },
+      { temuOrderId: cleanInput },
+      { temuOrderId: cleanSnNoPO }
     ]
   });
+
+  const parentOrderSn = order?.orderNum ? order.orderNum.replace(/^PO-/i, "").trim() : cleanSnNoPO;
+  const childOrderSn = order?.temuOrderId ? order.temuOrderId.replace(/^PO-/i, "").trim() : cleanSnNoPO;
+  const trackingNumber = order?.tracking || "LG282205865DE";
+  const expressCompanyId = 4042; // DHL Paket / DHL Parcel
 
   const results = [];
   const integrations = (user.temuIntegrations || []).filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
 
-  for (const integ of integrations.slice(0, 5)) {
-    const appKey = integ.appKey;
-    const appSecret = integ.appSecret;
-    const accessToken = integ.accessToken;
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const type = "bg.logistics.shipment.v2.confirm";
+  let owningStore = null;
 
-    const payload = {
+  for (let idx = 0; idx < integrations.length; idx++) {
+    const integ = integrations[idx];
+    const { appKey, appSecret, accessToken, shopName } = integ;
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+
+    // 1. Check bg.order.detail.v2.get to see if this store owns the order
+    const detailPayload = {
       app_key: appKey,
       access_token: accessToken,
       timestamp,
-      type,
-      parentOrderSn: order?.temuOrderId || cleanSn,
-      tracking_number: order?.tracking || "LG282205865DE",
-      express_company_id: 4042
+      type: "bg.order.detail.v2.get",
+      parentOrderSn
     };
-
-    const sortedKeys = Object.keys(payload).sort();
-    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
+    const sortedKeys = Object.keys(detailPayload).sort();
+    const signStr = appSecret + sortedKeys.map(k => `${k}${detailPayload[k]}`).join("") + appSecret;
     const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
 
     try {
       const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, sign })
+        body: JSON.stringify({ ...detailPayload, sign })
       });
       const data = await resp.json();
-      results.push({ store: integ.shopName, data });
+
+      if (data.success || data.errorCode === 1000000 || data.result) {
+        owningStore = { index: idx, shopName };
+        console.log(`🎯 [Temu Debug] FOUND OWNING STORE [${idx}]: "${shopName}"!`);
+
+        // Test format A: camelCase
+        const shipPayloadA = {
+          app_key: appKey,
+          access_token: accessToken,
+          timestamp: Math.floor(Date.now() / 1000).toString(),
+          type: "bg.logistics.shipment.v2.confirm",
+          parentOrderSn,
+          orderSn: childOrderSn,
+          trackingNumber,
+          expressCompanyId
+        };
+        const sKeysA = Object.keys(shipPayloadA).sort();
+        const sSignStrA = appSecret + sKeysA.map(k => `${k}${shipPayloadA[k]}`).join("") + appSecret;
+        const sSignA = crypto.createHash("md5").update(sSignStrA).digest("hex").toUpperCase();
+
+        const shipRespA = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...shipPayloadA, sign: sSignA })
+        });
+        const shipDataA = await shipRespA.json();
+
+        // Test format B: snake_case
+        let shipDataB = null;
+        if (!shipDataA.success && shipDataA.errorCode !== 1000000) {
+          const shipPayloadB = {
+            app_key: appKey,
+            access_token: accessToken,
+            timestamp: Math.floor(Date.now() / 1000).toString(),
+            type: "bg.logistics.shipment.v2.confirm",
+            parent_order_sn: parentOrderSn,
+            order_sn: childOrderSn,
+            tracking_number: trackingNumber,
+            express_company_id: expressCompanyId
+          };
+          const sKeysB = Object.keys(shipPayloadB).sort();
+          const sSignStrB = appSecret + sKeysB.map(k => `${k}${shipPayloadB[k]}`).join("") + appSecret;
+          const sSignB = crypto.createHash("md5").update(sSignStrB).digest("hex").toUpperCase();
+
+          const shipRespB = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...shipPayloadB, sign: sSignB })
+          });
+          shipDataB = await shipRespB.json();
+        }
+
+        // Test format C: packageList
+        let shipDataC = null;
+        if (!shipDataA.success && (!shipDataB || !shipDataB.success)) {
+          const shipPayloadC = {
+            app_key: appKey,
+            access_token: accessToken,
+            timestamp: Math.floor(Date.now() / 1000).toString(),
+            type: "bg.logistics.shipment.v2.confirm",
+            parentOrderSn,
+            packageList: JSON.stringify([{
+              orderSn: childOrderSn,
+              trackingNumber,
+              expressCompanyId
+            }])
+          };
+          const sKeysC = Object.keys(shipPayloadC).sort();
+          const sSignStrC = appSecret + sKeysC.map(k => `${k}${shipPayloadC[k]}`).join("") + appSecret;
+          const sSignC = crypto.createHash("md5").update(sSignStrC).digest("hex").toUpperCase();
+
+          const shipRespC = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ ...shipPayloadC, sign: sSignC })
+          });
+          shipDataC = await shipRespC.json();
+        }
+
+        results.push({
+          storeIndex: idx,
+          store: shopName,
+          ownsOrder: true,
+          orderDetailInfo: {
+            parentOrderSn: data.result?.parentOrderMap?.parentOrderSn,
+            parentOrderStatus: data.result?.parentOrderMap?.parentOrderStatus,
+            siteId: data.result?.parentOrderMap?.siteId,
+            regionName1: data.result?.parentOrderMap?.regionName1
+          },
+          shipmentTestCamelCase: shipDataA,
+          shipmentTestSnakeCase: shipDataB,
+          shipmentTestPackageList: shipDataC
+        });
+
+        // If any shipment format succeeded, mark in DB!
+        const anySuccess = shipDataA.success || (shipDataB && shipDataB.success) || (shipDataC && shipDataC.success);
+        if (anySuccess && order) {
+          await TemuOrder.updateOne(
+            { _id: order._id },
+            { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+          );
+        }
+
+        break; // Found owning store, don't need to check further!
+      } else {
+        results.push({
+          storeIndex: idx,
+          store: shopName,
+          ownsOrder: false,
+          errorMsg: data.errorMsg || data.errorCode
+        });
+      }
     } catch (e) {
-      results.push({ store: integ.shopName, error: e.message });
+      results.push({ storeIndex: idx, store: shopName, error: e.message });
     }
   }
 
-  res.status(200).json({ status: "success", count: results.length, results });
+  res.status(200).json({
+    status: "success",
+    targetOrder: {
+      orderNum: order?.orderNum,
+      temuOrderId: order?.temuOrderId,
+      parentOrderSn,
+      childOrderSn,
+      country: order?.country,
+      tracking: trackingNumber
+    },
+    owningStoreFound: Boolean(owningStore),
+    checkedStoresCount: results.length,
+    results
+  });
 });
 
 /**
