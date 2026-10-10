@@ -979,8 +979,10 @@ const uploadTrackingToTemu = async (user, order) => {
     let warehouseId = defaultWarehouseId;
     try {
       const whResult = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.warehouse.list.get', {});
-      if (Array.isArray(whResult) && whResult.length > 0) {
-        warehouseId = whResult[0].warehouseId || whResult[0].warehouse_id || defaultWarehouseId;
+      const list = whResult?.warehouseList || whResult?.warehouse_list || (Array.isArray(whResult) ? whResult : []);
+      if (list && list.length > 0) {
+        const defaultWh = list.find(w => w.defaultWarehouse === true) || list[0];
+        warehouseId = defaultWh.warehouseId || defaultWh.warehouse_id || defaultWarehouseId;
       }
     } catch (_) {}
 

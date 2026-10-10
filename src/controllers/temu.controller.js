@@ -828,97 +828,42 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.debugTemuOrder = async (req, res, next) => {
-  try {
-    const User = require("../models/user.model");
-    const TemuOrder = require("../models/temuOrder.model");
-    const crypto = require("crypto");
+exports.debugTemuOrder = catchAsync(async (req, res, next) => {
+  const User = require("../models/user.model");
+  const TemuOrder = require("../models/temuOrder.model");
+  const temuSyncService = require("../services/temuSync.service");
 
-    const user = await User.findById(req.user.id);
-    const store = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702094104453" || (i.mallId && i.mallId.toString() === "670702094104453"));
+  const rawOrderSn = req.params.orderSn;
+  const user = await User.findById(req.user.id);
+  const cleanOrderSn = rawOrderSn ? rawOrderSn.replace(/^PO-/i, "") : "";
 
-    const callTemu = async (type, params = {}) => {
-      const timestamp = Math.floor(Date.now() / 1000).toString();
-      const payload = {
-        app_key: store.appKey,
-        access_token: store.accessToken,
-        timestamp,
-        type,
-        ...params
-      };
-      const sortedKeys = Object.keys(payload).sort();
-      const signStr = store.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + store.appSecret;
-      const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
+  const order = await TemuOrder.findOne({
+    user: user._id,
+    $or: [
+      { orderNum: rawOrderSn },
+      { orderNum: cleanOrderSn },
+      { orderNum: `PO-${cleanOrderSn}` },
+      { temuOrderId: rawOrderSn },
+      { temuOrderId: cleanOrderSn }
+    ]
+  });
 
-      const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...payload, sign })
-      });
-      return await resp.json();
-    };
-
-    const carrierId = 141252268; // DHL
-    const trackingNumber = "LG282205940DE";
-    const parentOrderSn = "PO-108-03223705549432960";
-    const orderSn = "108-03223663606392960";
-    const goodsId = 609233240201623;
-    const skuId = 154172146090837;
-
-    const warehousesToTest = [
-      "WH-10610264227981925", // EDER (Default)
-      "WH-01715667210381925"  // LAT (Latvia)
-    ];
-
-    const results = [];
-
-    for (const warehouseId of warehousesToTest) {
-      const confirmPayload = {
-        sendType: 0,
-        sendRequestList: JSON.stringify([
-          {
-            carrierId,
-            trackingNumber,
-            selfShippingWarehouseId: warehouseId,
-            orderSendInfoList: [
-              {
-                parentOrderSn,
-                orderSn,
-                goodsId,
-                skuId,
-                quantity: 1
-              }
-            ]
-          }
-        ])
-      };
-
-      const resConfirm = await callTemu("bg.logistics.shipment.v2.confirm", confirmPayload);
-      results.push({ warehouseId, resConfirm });
-
-      if (resConfirm.success || resConfirm.errorCode === 1000000) {
-        await TemuOrder.updateOne(
-          { orderNum: parentOrderSn },
-          { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
-        );
-        return res.status(200).json({
-          status: "success",
-          store: store.shopName,
-          warehouseId,
-          resConfirm
-        });
-      }
-    }
-
-    return res.status(200).json({
-      status: "tested_both_warehouses",
-      store: store.shopName,
-      results
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message, stack: err.stack });
+  if (!order) {
+    return res.status(404).json({ status: "error", message: `Order ${rawOrderSn} not found in database` });
   }
-};
+
+  await temuSyncService.uploadTrackingToTemu(user, order);
+  const refreshed = await TemuOrder.findById(order._id);
+
+  res.status(200).json({
+    status: refreshed.trackingUploadedToTemu ? "success" : "attempted",
+    orderNum: refreshed.orderNum,
+    temuOrderId: refreshed.temuOrderId,
+    tracking: refreshed.tracking,
+    trackingUploadedToTemu: refreshed.trackingUploadedToTemu,
+    trackingUploadedAt: refreshed.trackingUploadedAt
+  });
+});
 
 /**
  * Puppeteer Temu Return Bot Endpoints
