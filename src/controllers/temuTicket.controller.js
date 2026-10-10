@@ -558,3 +558,35 @@ exports.autoReplyTicketWithAi = catchAsync(async (req, res, next) => {
     }
   });
 });
+
+/**
+ * Generate AI draft reply for a ticket without posting/resolving yet
+ */
+exports.draftTicketAiResponse = catchAsync(async (req, res, next) => {
+  const { ticketId } = req.params;
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  const ticket = await TemuTicket.findOne({
+    user: user._id,
+    $or: [{ _id: ticketId }, { ticketId }]
+  });
+
+  if (!ticket) {
+    return next(new AppError('Ticket not found', 404));
+  }
+
+  const evalResult = await evaluateTicketWithAi(user, ticket);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      replyText: evalResult.replyText,
+      trackingNo: evalResult.trackingNo,
+      aiGenerated: evalResult.aiGenerated,
+      model: evalResult.model
+    }
+  });
+});
