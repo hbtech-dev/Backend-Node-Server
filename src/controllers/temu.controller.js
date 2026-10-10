@@ -830,49 +830,152 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const User = require("../models/user.model");
+  const TemuOrder = require("../models/temuOrder.model");
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
-  // Store 2 (Portugal order store): Temu-670702093870288
   const store2 = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702093870288") || user.temuIntegrations?.[2];
-
   const { appKey, appSecret, accessToken, shopName } = store2;
 
-  const callTemu = async (type, params = {}) => {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const payload = {
-      app_key: appKey,
-      access_token: accessToken,
-      timestamp,
-      type,
-      ...params
-    };
-    const sortedKeys = Object.keys(payload).sort();
-    const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
-    const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
+  const parentOrderSn = "PO-163-18830519061112544";
+  const orderSn = "163-18830540032632544";
+  const trackingNumber = "LG282205865DE";
+  const carrierId = 141252268; // Official DHL ID from bg.logistics.companies.get
+  const warehouseId = "WH-05108668825741232"; // Vitanow default warehouse
 
-    const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, sign })
-    });
-    return await resp.json();
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const type = "bg.logistics.shipment.v2.confirm";
+
+  const payload = {
+    app_key: appKey,
+    access_token: accessToken,
+    timestamp,
+    type,
+    sendType: 0,
+    sendRequestList: JSON.stringify([
+      {
+        carrierId,
+        trackingNumber,
+        selfShippingWarehouseId: warehouseId,
+        orderSendInfoList: [
+          {
+            parentOrderSn,
+            orderSn,
+            goodsId: 603304021040227,
+            skuId: 62175825626276,
+            quantity: 1
+          }
+        ]
+      }
+    ])
   };
 
-  const results = {};
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + appSecret;
+  const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
 
-  // 1. Query companies list for Europe / Portugal (regionId: 163) and without regionId
-  results.companiesAll = await callTemu("bg.logistics.companies.get", {});
-  results.companiesPortugal = await callTemu("bg.logistics.companies.get", { regionId: 163 });
-  results.companiesGermany = await callTemu("bg.logistics.companies.get", { regionId: 102 });
+  const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ...payload, sign })
+  });
+  const data = await resp.json();
 
-  // 2. Query warehouses list
-  results.warehouses = await callTemu("bg.logistics.warehouse.list.get", {});
+  // Also test with sendRequestList as raw array in body if JSON string didn't succeed
+  let dataRawArray = null;
+  if (!data.success && data.errorCode !== 1000000) {
+    const rawPayload = {
+      app_key: appKey,
+      access_token: accessToken,
+      timestamp: Math.floor(Date.now() / 1000).toString(),
+      type,
+      sendType: 0,
+      sendRequestList: [
+        {
+          carrierId,
+          trackingNumber,
+          selfShippingWarehouseId: warehouseId,
+          orderSendInfoList: [
+            {
+              parentOrderSn,
+              orderSn,
+              goodsId: 603304021040227,
+              skuId: 62175825626276,
+              quantity: 1
+            }
+          ]
+        }
+      ]
+    };
+    // In Temu sign, objects are serialized or excluded? Test standard JSON.stringify sign
+    const signKeys = Object.keys(rawPayload).sort();
+    const signStrRaw = appSecret + signKeys.map(k => {
+      const v = typeof rawPayload[k] === "object" ? JSON.stringify(rawPayload[k]) : rawPayload[k];
+      return `${k}${v}`;
+    }).join("") + appSecret;
+    const signRaw = crypto.createHash("md5").update(signStrRaw).digest("hex").toUpperCase();
+
+    const respRaw = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...rawPayload, sign: signRaw })
+    });
+    dataRawArray = await respRaw.json();
+  }
+
+  // Also test with parentOrderSn without PO-
+  let dataNoPO = null;
+  if (!data.success && (!dataRawArray || !dataRawArray.success)) {
+    const cleanParentSn = parentOrderSn.replace(/^PO-/i, "");
+    const payloadNoPO = {
+      app_key: appKey,
+      access_token: accessToken,
+      timestamp: Math.floor(Date.now() / 1000).toString(),
+      type,
+      sendType: 0,
+      sendRequestList: JSON.stringify([
+        {
+          carrierId,
+          trackingNumber,
+          selfShippingWarehouseId: warehouseId,
+          orderSendInfoList: [
+            {
+              parentOrderSn: cleanParentSn,
+              orderSn,
+              goodsId: 603304021040227,
+              skuId: 62175825626276,
+              quantity: 1
+            }
+          ]
+        }
+      ])
+    };
+    const sKeysNoPO = Object.keys(payloadNoPO).sort();
+    const sSignStrNoPO = appSecret + sKeysNoPO.map(k => `${k}${payloadNoPO[k]}`).join("") + appSecret;
+    const sSignNoPO = crypto.createHash("md5").update(sSignStrNoPO).digest("hex").toUpperCase();
+
+    const respNoPO = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payloadNoPO, sign: sSignNoPO })
+    });
+    dataNoPO = await respNoPO.json();
+  }
+
+  const isSuccess = data.success || (dataRawArray && dataRawArray.success) || (dataNoPO && dataNoPO.success);
 
   res.status(200).json({
     status: "success",
     store: shopName,
-    results
+    carrierId,
+    warehouseId,
+    parentOrderSn,
+    orderSn,
+    trackingNumber,
+    isSuccess,
+    testJsonString: data,
+    testRawArray: dataRawArray,
+    testNoPO: dataNoPO
   });
 });
 
