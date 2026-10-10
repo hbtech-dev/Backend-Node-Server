@@ -180,8 +180,99 @@ YOUR INSTRUCTIONS:
   return null;
 };
 
+
+/**
+ * Generate a personalized, human customer support reply for Temu Ticket / Query / Fulfillment Issue
+ */
+const generateHumanTicketReply = async ({
+  buyerName,
+  orderNum,
+  country,
+  scene,
+  description,
+  trackingNo,
+  carrier,
+  apiKey,
+  model = DEFAULT_MODEL
+}) => {
+  const key = getActiveApiKey(apiKey);
+  if (!key) {
+    return null;
+  }
+
+  const countryName = country || 'ES';
+  const hasRealName = Boolean(buyerName) && !/^(temu customer|temu buyer|not_found)$/i.test(buyerName.trim());
+  const customerName = hasRealName ? buyerName.trim() : '';
+  const orderRef = orderNum || 'your order';
+  const trackingNumber = trackingNo || '003404348888888888';
+  const carrierName = carrier || 'DHL';
+  const issueScene = scene || 'Delivery Query';
+  const issueDesc = description || '';
+
+  const prompt = `You are a real, warm, and highly professional human customer service manager for a European merchant store on Temu.
+A customer or Temu support has opened an Information Ticket / Customer Inquiry regarding an order.
+
+ISSUE DETAILS:
+- Topic / Scene: "${issueScene}"
+- Description / Customer Message: "${issueDesc}"
+- Customer Country: ${countryName}
+- Order Reference: ${orderRef}
+- Shipping Carrier: ${carrierName}
+- Tracking Number: ${trackingNumber}
+${hasRealName ? `- Buyer Name: ${customerName}` : '- Buyer Name: (Unknown)'}
+
+MERCHANT POLICY & INSTRUCTIONS:
+1. Reassure the customer politely and empathetically.
+2. State clearly that the order is actively in progress and dispatched with ${carrierName}.
+3. Provide the tracking number: ${trackingNumber}.
+4. If the issue is "Available for Pickup": kindly advise them to visit their local postal pickup office or collection point with their ID to claim the parcel.
+5. If the issue is "Delivery exception" or "Tracking status - no update": explain that the package was dispatched and is in carrier transit, and ask them to check the tracking number online as it will arrive as soon as possible.
+6. If the customer asked for refund/cancellation: do NOT offer or approve any refund; politely explain that shipping is already underway so cancellation is not possible.
+7. LANGUAGE REQUIREMENT:
+   - If Customer Country is Spain (ES), write in warm, professional SPANISH.
+   - If Customer Country is Germany (DE) or Austria (AT), write in polite GERMAN.
+   - If France (FR), write in polite FRENCH.
+   - If Italy (IT), write in courteous ITALIAN.
+   - Otherwise, write in clear, polite ENGLISH.
+8. Length: 2 to 3 sentences maximum. Keep it concise, helpful, and natural.
+9. Greet warmly (e.g. "Hola," or "Guten Tag,"). Do NOT call them "Temu Customer".
+10. Sign off naturally as "Best regards, Customer Support" (or language equivalent).
+11. Output ONLY the reply text, no extra commentary or markdown quotes.`;
+
+  const candidateModels = [model, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+  const uniqueModels = [...new Set(candidateModels)];
+
+  for (const targetModel of uniqueModels) {
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${key}`;
+    try {
+      const res = await httpFetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { temperature: 0.7, maxOutputTokens: 350 }
+        }),
+        timeout: 12000
+      });
+
+      if (!res.ok) continue;
+      const data = await res.json();
+      let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+      if (text) {
+        text = text.replace(/^\`\`\`[a-zA-Z]*\n?/, '').replace(/\n?\`\`\`$/, '').trim();
+        if (text.startsWith('"') && text.endsWith('"')) {
+          text = text.substring(1, text.length - 1).trim();
+        }
+        return { text, model: targetModel, aiGenerated: true };
+      }
+    } catch (e) {}
+  }
+  return null;
+};
+
 module.exports = {
   testGeminiConnection,
   generateHumanReturnReply,
+  generateHumanTicketReply,
   DEFAULT_MODEL
 };

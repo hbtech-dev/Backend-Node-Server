@@ -315,6 +315,25 @@ const runReturnBotCycle = async (userId) => {
           console.warn(`[Temu Return Bot] Error processing ${returnDoc.returnId}:`, itemErr.message);
         }
       }
+
+      // Find and process all pending tickets for this user
+      const TemuTicket = require('../models/temuTicket.model');
+      const pendingTickets = await TemuTicket.find({
+        user: user._id,
+        status: 'pending'
+      });
+
+      console.log(`🤖 [Temu Bot] Found ${pendingTickets.length} pending tickets for user ${user.email || user._id}`);
+
+      for (const ticketDoc of pendingTickets) {
+        try {
+          const logEntry = await processSingleTicket(user, ticketDoc);
+          processedLogs.push(logEntry);
+          botState.totalProcessed++;
+        } catch (itemErr) {
+          console.warn(`[Temu Bot] Error processing ticket ${ticketDoc.ticketId}:`, itemErr.message);
+        }
+      }
     }
 
     return {

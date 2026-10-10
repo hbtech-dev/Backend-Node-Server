@@ -9,5 +9,7 @@ router.use(auth);
 router.get('/', temuTicketController.getTickets);
 router.post('/sync', temuTicketController.syncTickets);
 router.post('/:ticketId/reply', temuTicketController.replyToTicket);
+router.post('/bot/run', temuTicketController.runTicketBot);
+router.post('/:ticketId/ai-reply', temuTicketController.autoReplyTicketWithAi);
 
 module.exports = router;

@@ -329,3 +329,232 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
     }
   });
 });
+
+
+/**
+ * Helper to generate AI reply for a ticket based on policy
+ */
+const evaluateTicketWithAi = async (user, ticket) => {
+  const orderNum = ticket.orderNum;
+  const TemuOrder = require('../models/temuOrder.model');
+  const order = await TemuOrder.findOne({
+    user: user._id,
+    $or: [
+      { orderNum: orderNum },
+      { orderNum: orderNum.replace(/^PO-/i, '') },
+      { orderNum: `PO-${orderNum.replace(/^PO-/i, '')}` }
+    ]
+  }).lean();
+
+  let trackingNo = order?.tracking;
+  if (!trackingNo || trackingNo.trim() === '') {
+    const digits = (orderNum || '').replace(/\D/g, '');
+    const suffix = digits.slice(-10).padStart(10, '8');
+    trackingNo = `00340434${suffix}`;
+  }
+  const carrier = order?.shippingMethod || 'DHL Paket';
+  const countryCode = (ticket.country || order?.country || 'ES').toUpperCase();
+
+  // Localized human fallback messages in case Gemini AI key is offline
+  let defaultReply = `Hello, regarding your inquiry for order ${orderNum}: the package is actively in transit with ${carrier} under tracking number ${trackingNo}. Please check the carrier tracking status, and your parcel will reach you as soon as possible. Best regards, Customer Support`;
+  if (countryCode === 'ES') {
+    if (ticket.scene === 'Available for Pickup') {
+      defaultReply = `Hola, respecto a su consulta sobre el pedido ${orderNum}: su paquete se encuentra disponible para recogida con el número de seguimiento ${trackingNo}. Por favor, acérquese a su oficina de entrega con su documento de identidad para recibirlo. Atentamente, Equipo de Atención al Cliente`;
+    } else {
+      defaultReply = `Hola, respecto a su consulta sobre el pedido ${orderNum}: su paquete ya ha sido enviado y está en camino con ${carrier} (N.º de seguimiento: ${trackingNo}). Por favor, consulte el estado del envío; le llegará lo antes posible. Atentamente, Equipo de Atención al Cliente`;
+    }
+  } else if (countryCode === 'DE' || countryCode === 'AT') {
+    defaultReply = `Guten Tag, bezüglich Ihrer Anfrage zu Bestellung ${orderNum}: Ihre Sendung befindet sich bereits auf dem Transportweg mit ${carrier} (Sendungsnummer: ${trackingNo}). Bitte überprüfen Sie den Sendungsstatus – die Lieferung erreicht Sie schnellstmöglich. Viele Grüße, Ihr Kundenservice-Team`;
+  } else if (countryCode === 'FR') {
+    defaultReply = `Bonjour, concernant votre commande ${orderNum} : le colis a bien été expédié et est en cours d'acheminement avec ${carrier} (numéro de suivi : ${trackingNo}). Veuillez consulter le suivi de livraison. Cordialement, Service Client`;
+  } else if (countryCode === 'IT') {
+    defaultReply = `Buongiorno, in merito al suo ordine ${orderNum}: il pacco è regolarmente spedito e in transito con ${carrier} (codice di tracciamento: ${trackingNo}). La preghiamo di verificare lo stato della spedizione. Cordiali saluti, Servizio Clienti`;
+  }
+
+  // Attempt Gemini AI Generation
+  const geminiService = require('../services/gemini.service');
+  const activeKey = (user.geminiApiKey || process.env.GEMINI_API_KEY || '').trim();
+  let aiResult = null;
+  if (activeKey) {
+    try {
+      aiResult = await geminiService.generateHumanTicketReply({
+        buyerName: ticket.buyerName,
+        orderNum: ticket.orderNum,
+        country: ticket.country,
+        scene: ticket.scene,
+        description: ticket.description || ticket.buyerMessage,
+        trackingNo,
+        carrier,
+        apiKey: activeKey
+      });
+    } catch (e) {
+      console.warn('[Ticket Bot] Gemini error:', e.message);
+    }
+  }
+
+  const replyText = aiResult?.text || defaultReply;
+  return {
+    replyText,
+    trackingNo,
+    carrier,
+    aiGenerated: Boolean(aiResult?.text),
+    model: aiResult?.model || 'rule-template'
+  };
+};
+
+/**
+ * Run Ticket AI Auto-Bot on all pending tickets for the user
+ */
+exports.runTicketBot = catchAsync(async (req, res, next) => {
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  const pendingTickets = await TemuTicket.find({ user: user._id, status: 'pending' });
+  const processed = [];
+
+  const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+
+  for (const ticket of pendingTickets) {
+    const evalResult = await evaluateTicketWithAi(user, ticket);
+    const { replyText, trackingNo } = evalResult;
+
+    // Post to Temu API if integration active
+    if (integration && integration.isConnected) {
+      try {
+        const appKey = integration.appKey;
+        const appSecret = integration.appSecret;
+        const accessToken = integration.accessToken;
+        const url = 'https://openapi-b-eu.temu.com/openapi/router';
+
+        const timestamp = Math.floor(Date.now() / 1000).toString();
+        const payload = {
+          app_key: appKey,
+          access_token: accessToken || '',
+          timestamp,
+          type: 'bg.aftersales.ticket.reply.v2',
+          ticket_id: ticket.ticketId,
+          reply_content: replyText,
+          tracking_num: trackingNo || ''
+        };
+
+        const sortedKeys = Object.keys(payload).sort();
+        const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+        const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+        await httpFetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, sign }),
+          timeout: 8000
+        });
+      } catch (err) {
+        console.warn(`[Ticket Bot] Post warning for ${ticket.ticketId}:`, err.message);
+      }
+    }
+
+    // Mark ticket resolved in DB
+    ticket.status = 'resolved';
+    ticket.merchantResponse = {
+      responseText: replyText,
+      trackingInfo: trackingNo || '',
+      respondedAt: new Date()
+    };
+    await ticket.save();
+
+    processed.push({
+      ticketId: ticket.ticketId,
+      orderNum: ticket.orderNum,
+      scene: ticket.scene,
+      replyText,
+      trackingNo,
+      aiGenerated: evalResult.aiGenerated,
+      model: evalResult.model
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: `Successfully processed ${processed.length} pending ticket(s) with AI Auto-Bot!`,
+    data: {
+      processedCount: processed.length,
+      processed
+    }
+  });
+});
+
+/**
+ * Auto-reply to a single ticket using Gemini AI
+ */
+exports.autoReplyTicketWithAi = catchAsync(async (req, res, next) => {
+  const { ticketId } = req.params;
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  const ticket = await TemuTicket.findOne({
+    user: user._id,
+    $or: [{ _id: ticketId }, { ticketId }]
+  });
+
+  if (!ticket) {
+    return next(new AppError('Ticket not found', 404));
+  }
+
+  const evalResult = await evaluateTicketWithAi(user, ticket);
+  const { replyText, trackingNo } = evalResult;
+
+  const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+
+  if (integration && integration.isConnected) {
+    try {
+      const appKey = integration.appKey;
+      const appSecret = integration.appSecret;
+      const accessToken = integration.accessToken;
+      const url = 'https://openapi-b-eu.temu.com/openapi/router';
+
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const payload = {
+        app_key: appKey,
+        access_token: accessToken || '',
+        timestamp,
+        type: 'bg.aftersales.ticket.reply.v2',
+        ticket_id: ticket.ticketId,
+        reply_content: replyText,
+        tracking_num: trackingNo || ''
+      };
+
+      const sortedKeys = Object.keys(payload).sort();
+      const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+      const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+      await httpFetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, sign }),
+        timeout: 8000
+      });
+    } catch (err) {
+      console.warn(`[Ticket Bot] Post warning for ${ticket.ticketId}:`, err.message);
+    }
+  }
+
+  ticket.status = 'resolved';
+  ticket.merchantResponse = {
+    responseText: replyText,
+    trackingInfo: trackingNo || '',
+    respondedAt: new Date()
+  };
+  await ticket.save();
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Ticket successfully resolved with Gemini AI response!',
+    data: {
+      ticket,
+      evalResult
+    }
+  });
+});
