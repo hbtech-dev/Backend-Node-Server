@@ -831,7 +831,7 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const User = require("../models/user.model");
   const TemuOrder = require("../models/temuOrder.model");
-  const temuSyncService = require("../services/temuSync.service");
+  const crypto = require("crypto");
 
   const rawOrderSn = req.params.orderSn || "PO-108-03223705549432960";
   const user = await User.findById(req.user.id);
@@ -848,20 +848,95 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     ]
   });
 
-  if (!order) {
-    return res.status(404).json({ status: "error", message: `Order ${rawOrderSn} not found in DB` });
+  const parentOrderSn = order?.orderNum || rawOrderSn;
+  const trackingNumber = order?.tracking || "LG282205940DE";
+  const carrierId = 141252268;
+
+  const connectedIntegrations = (user.temuIntegrations || []).filter(
+    i => i.isConnected && i.appKey && i.appSecret && i.accessToken
+  );
+
+  const callTemu = async (store, type, params = {}) => {
+    const timestamp = Math.floor(Date.now() / 1000).toString();
+    const payload = {
+      app_key: store.appKey,
+      access_token: store.accessToken,
+      timestamp,
+      type,
+      ...params
+    };
+    const sortedKeys = Object.keys(payload).sort();
+    const signStr = store.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + store.appSecret;
+    const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
+
+    const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ...payload, sign })
+    });
+    return await resp.json();
+  };
+
+  const storeReports = [];
+
+  for (let idx = 0; idx < connectedIntegrations.length; idx++) {
+    const store = connectedIntegrations[idx];
+
+    // Try detail
+    const detail = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn });
+    const detailClean = detail.success ? null : await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: cleanOrderSn });
+
+    // Try confirm directly on this store
+    const confirmRes = await callTemu(store, "bg.logistics.shipment.v2.confirm", {
+      sendType: 0,
+      sendRequestList: JSON.stringify([
+        {
+          carrierId,
+          trackingNumber,
+          selfShippingWarehouseId: "WH-05108668825741232",
+          orderSendInfoList: [
+            {
+              parentOrderSn: parentOrderSn,
+              orderSn: order?.temuOrderId || cleanOrderSn,
+              goodsId: 0,
+              skuId: 0,
+              quantity: 1
+            }
+          ]
+        }
+      ])
+    });
+
+    const isMatch = detail.success || (detailClean && detailClean.success) || confirmRes.success || confirmRes.errorCode === 1000000;
+
+    storeReports.push({
+      index: idx,
+      shopName: store.shopName,
+      detailResult: detail.success ? detail : detailClean,
+      confirmResult: confirmRes
+    });
+
+    if (isMatch) {
+      if ((confirmRes.success || confirmRes.errorCode === 1000000) && order) {
+        await TemuOrder.updateOne(
+          { _id: order._id },
+          { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+        );
+      }
+      return res.status(200).json({
+        status: confirmRes.success ? "success" : "matched_but_confirm_error",
+        store: store.shopName,
+        detail: detail.success ? detail : detailClean,
+        confirmResult: confirmRes
+      });
+    }
   }
 
-  await temuSyncService.uploadTrackingToTemu(user, order);
-  const refreshed = await TemuOrder.findById(order._id);
-
   res.status(200).json({
-    status: refreshed.trackingUploadedToTemu ? "success" : "attempted",
-    orderNum: refreshed.orderNum,
-    temuOrderId: refreshed.temuOrderId,
-    tracking: refreshed.tracking,
-    trackingUploadedToTemu: refreshed.trackingUploadedToTemu,
-    trackingUploadedAt: refreshed.trackingUploadedAt
+    status: "not_found_on_any_store",
+    orderNum: rawOrderSn,
+    testedCount: connectedIntegrations.length,
+    reports: storeReports.slice(0, 10)
   });
 });
 
