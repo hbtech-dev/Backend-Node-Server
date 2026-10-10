@@ -833,6 +833,7 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const crypto = require("crypto");
 
   const user = await User.findById(req.user.id);
+  // Store 2 (Portugal order store): Temu-670702093870288
   const store2 = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702093870288") || user.temuIntegrations?.[2];
 
   const { appKey, appSecret, accessToken, shopName } = store2;
@@ -858,56 +859,20 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     return await resp.json();
   };
 
-  const tests = {};
+  const results = {};
 
-  const parentOrderSn = "PO-163-18830519061112544";
-  const orderSn = "163-18830540032632544";
-  const trackingNumber = "LG282205865DE";
-  const expressCompanyId = 4042; // DHL Paket
+  // 1. Query companies list for Europe / Portugal (regionId: 163) and without regionId
+  results.companiesAll = await callTemu("bg.logistics.companies.get", {});
+  results.companiesPortugal = await callTemu("bg.logistics.companies.get", { regionId: 163 });
+  results.companiesGermany = await callTemu("bg.logistics.companies.get", { regionId: 102 });
 
-  // Test A: bg.logistics.shipped.package.confirm
-  tests.shippedPackageConfirm = await callTemu("bg.logistics.shipped.package.confirm", {
-    packageSendInfoList: JSON.stringify([{
-      trackingNumber,
-      shippingCompanyId: expressCompanyId,
-      packageDetail: {
-        quantity: 1,
-        orderSn,
-        parentOrderSn
-      }
-    }])
-  });
-
-  // Test B: bg.logistics.shipment.create with sendType 0 and shipLater false
-  tests.shipmentCreate = await callTemu("bg.logistics.shipment.create", {
-    sendType: 0,
-    shipLater: false,
-    sendRequestList: JSON.stringify([{
-      shipCompanyId: expressCompanyId,
-      trackingNumber,
-      orderSendInfoList: [{
-        parentOrderSn,
-        orderSn,
-        quantity: 1
-      }]
-    }])
-  });
-
-  // Test C: bg.order.delivery.confirm
-  tests.deliveryConfirm = await callTemu("bg.order.delivery.confirm", {
-    orderSn,
-    parentOrderSn,
-    trackingNumber,
-    expressCompanyId
-  });
+  // 2. Query warehouses list
+  results.warehouses = await callTemu("bg.logistics.warehouse.list.get", {});
 
   res.status(200).json({
     status: "success",
     store: shopName,
-    parentOrderSn,
-    orderSn,
-    trackingNumber,
-    tests
+    results
   });
 });
 
