@@ -928,108 +928,125 @@ exports.stopTemuBackgroundSync = () => {
 };
 
 const uploadTrackingToTemu = async (user, order) => {
-  if (!user || !order || !order.tracking) return;
+  if (!user || !order || !order.tracking) return false;
 
-  // Build all candidate integration(s) to try — prefer the one whose shopName/country matches order
+  // Build all candidate integration(s) to try
   let integrations = [];
   if (user.temuIntegrations && user.temuIntegrations.length > 0) {
-    integrations = user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret);
-  } else if (user.temuIntegration && user.temuIntegration.isConnected && user.temuIntegration.appKey) {
+    integrations = user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
+  } else if (user.temuIntegration && user.temuIntegration.isConnected && user.temuIntegration.appKey && user.temuIntegration.accessToken) {
     integrations = [user.temuIntegration];
   }
 
   if (integrations.length === 0) {
     console.warn('⚠️ Cannot upload Temu tracking: No connected Temu integration found.');
-    return;
+    return false;
   }
 
-  // Determine shipping company ID
+  // Determine official Temu carrier ID for Europe:
+  // DHL: 141252268
+  // FedEx: 699272611
+  // Deutsche Post: 203229330
+  // UPS: 314439762
   const isFedEx = order.shippingMethod && order.shippingMethod.toLowerCase().includes('fedex');
-  const isDhl   = order.shippingMethod && order.shippingMethod.toLowerCase().includes('dhl');
+  let carrierId = 141252268; // Default DHL
+  if (isFedEx) carrierId = 699272611;
 
-  // Temu express company codes:
-  //   DHL: 4082 (DHL Express), 4042 (DHL Paket / DHL Parcel)
-  //   FedEx: 4046
-  //   Generic/Other: 4999
-  let expressCompanyId = 4999; // safe fallback
-  if (isDhl) expressCompanyId = 4042;
-  if (isFedEx) expressCompanyId = 4046;
+  // Candidate order SNs
+  const parentOrderSn = order.orderNum || order.temuOrderId;
+  const cleanParentSn = parentOrderSn ? parentOrderSn.replace(/^PO-/i, '') : '';
+  const childOrderSn = order.temuOrderId || cleanParentSn;
 
-  // Build all candidate order SNs (parent & child)
-  const orderSnCandidates = [
-    order.temuOrderId,
-    order.orderNum,
-    order.orderNum ? order.orderNum.replace(/^PO-/i, '') : null,
-    order.temuOrderId ? order.temuOrderId.replace(/^PO-/i, '') : null
-  ].filter(Boolean).filter((v, i, a) => a.indexOf(v) === i); // dedupe
-
+  const defaultWarehouseId = 'WH-05108668825741232';
   let uploadedSuccessfully = false;
 
   for (const integration of integrations) {
-    const { appKey, appSecret, accessToken } = integration;
+    const { appKey, appSecret, accessToken, shopName } = integration;
 
-    for (const orderSn of orderSnCandidates) {
-      console.log(`📤 [Temu Tracking] Pushing tracking ${order.tracking} → order SN "${orderSn}" via store "${integration.shopName || appKey}"...`);
-
-      const endpointsToTry = [
-        'bg.logistics.shipment.v2.confirm',
-        'bg.logistics.shipment.confirm',
-        'bg.logistics.shipment.create',
-        'bg.logistics.shipment.send',
-        'bg.order.shipment.create',
-        'bg.logistics.order.shipping.confirm'
-      ];
-
-      for (const endpoint of endpointsToTry) {
-        try {
-          const result = await callTemuRouterRaw(appKey, appSecret, accessToken, endpoint, {
-            parentOrderSn: orderSn,
-            parent_order_sn: orderSn,
-            order_sn: orderSn,
-            orderSn: orderSn,
-            tracking_number: order.tracking,
-            trackingNumber: order.tracking,
-            express_company_id: expressCompanyId,
-            shipping_company_id: expressCompanyId,
-            expressCompanyId,
-            shippingCompanyId: expressCompanyId,
-            packageList: JSON.stringify([{
-              trackingNumber: order.tracking,
-              tracking_number: order.tracking,
-              shippingCompanyId: expressCompanyId,
-              expressCompanyId: expressCompanyId,
-              express_company_id: expressCompanyId
-            }])
-          });
-
-          console.log(`📦 [Temu Tracking] ${endpoint} response for "${orderSn}":`, JSON.stringify(result));
-
-          if (result !== null && result !== false) {
-            console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu (${endpoint}) for order ${orderSn}`);
-            uploadedSuccessfully = true;
-
-            // Also send shipping confirm if endpoint wasn't already shipping confirm
-            if (endpoint !== 'bg.logistics.order.shipping.confirm') {
-              callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.order.shipping.confirm', {
-                parentOrderSn: orderSn,
-                parent_order_sn: orderSn,
-                order_sn: orderSn,
-                tracking_number: order.tracking,
-                express_company_id: expressCompanyId
-              }).catch(() => {});
-            }
-
-            break; // Stop trying endpoints once one succeeds
-          }
-        } catch (err) {
-          console.warn(`⚠️ [Temu Tracking] Error for ${endpoint} on SN "${orderSn}":`, err.message);
-        }
-      }
-
-      if (uploadedSuccessfully) break; // Stop trying other SNs once one succeeds
+    // 1. Try to fetch official order items from Temu detail API
+    let orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn });
+    if (!orderDetail) {
+      orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.detail.v2.get', { parentOrderSn: cleanParentSn });
+    }
+    if (!orderDetail) {
+      orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn });
+    }
+    if (!orderDetail) {
+      orderDetail = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.order.shippinginfo.v2.get', { parentOrderSn: cleanParentSn });
     }
 
-    if (uploadedSuccessfully) break; // Stop trying other integrations once one succeeds
+    // Determine warehouse ID for this store
+    let warehouseId = defaultWarehouseId;
+    try {
+      const whResult = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.warehouse.list.get', {});
+      if (Array.isArray(whResult) && whResult.length > 0) {
+        warehouseId = whResult[0].warehouseId || whResult[0].warehouse_id || defaultWarehouseId;
+      }
+    } catch (_) {}
+
+    // Build orderSendInfoList
+    let orderSendInfoList = [];
+    if (orderDetail && Array.isArray(orderDetail.orderList) && orderDetail.orderList.length > 0) {
+      orderSendInfoList = orderDetail.orderList.map(item => ({
+        parentOrderSn: parentOrderSn.startsWith('PO-') ? parentOrderSn : `PO-${parentOrderSn}`,
+        orderSn: item.orderSn || item.order_sn || childOrderSn,
+        goodsId: Number(item.goodsId || item.goods_id || 0),
+        skuId: Number(item.skuId || item.sku_id || 0),
+        quantity: Number(item.quantity || 1)
+      }));
+    } else {
+      // Build from stored order items
+      const items = (order.items && order.items.length > 0) ? order.items : [{ sku: order.sku, quantity: order.quantity || 1 }];
+      orderSendInfoList = items.map(item => ({
+        parentOrderSn: parentOrderSn.startsWith('PO-') ? parentOrderSn : `PO-${parentOrderSn}`,
+        orderSn: childOrderSn,
+        goodsId: Number(item.sku && !isNaN(item.sku) ? item.sku : 0),
+        skuId: Number(item.sku && !isNaN(item.sku) ? item.sku : 0),
+        quantity: Number(item.quantity || 1)
+      }));
+    }
+
+    // Send shipment confirmation V2
+    console.log(`📤 [Temu Tracking] Confirming shipment on store "${shopName || appKey}" for ${parentOrderSn} (Carrier: ${carrierId}, Tracking: ${order.tracking})...`);
+
+    const confirmParams = {
+      sendType: 0,
+      sendRequestList: JSON.stringify([
+        {
+          carrierId,
+          trackingNumber: order.tracking.trim(),
+          selfShippingWarehouseId: warehouseId,
+          orderSendInfoList
+        }
+      ])
+    };
+
+    let result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.v2.confirm', confirmParams);
+
+    // If needed, try with clean parentOrderSn without PO-
+    if (!result) {
+      const cleanList = orderSendInfoList.map(i => ({
+        ...i,
+        parentOrderSn: i.parentOrderSn.replace(/^PO-/i, '')
+      }));
+      result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.v2.confirm', {
+        sendType: 0,
+        sendRequestList: JSON.stringify([
+          {
+            carrierId,
+            trackingNumber: order.tracking.trim(),
+            selfShippingWarehouseId: warehouseId,
+            orderSendInfoList: cleanList
+          }
+        ])
+      });
+    }
+
+    if (result !== null && result !== false) {
+      console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu for order ${parentOrderSn}`);
+      uploadedSuccessfully = true;
+      break;
+    }
   }
 
   // Save tracking upload status to the DB order record
