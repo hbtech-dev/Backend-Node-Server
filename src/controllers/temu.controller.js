@@ -831,6 +831,7 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
 exports.debugTemuOrder = async (req, res, next) => {
   try {
     const User = require("../models/user.model");
+    const TemuOrder = require("../models/temuOrder.model");
     const crypto = require("crypto");
 
     const user = await User.findById(req.user.id);
@@ -857,13 +858,62 @@ exports.debugTemuOrder = async (req, res, next) => {
       return await resp.json();
     };
 
-    const warehouses = await callTemu("bg.logistics.warehouse.list.get", {});
-    const shippingservices = await callTemu("bg.logistics.shippingservices.get", {});
+    const carrierId = 141252268; // DHL
+    const trackingNumber = "LG282205940DE";
+    const parentOrderSn = "PO-108-03223705549432960";
+    const orderSn = "108-03223663606392960";
+    const goodsId = 609233240201623;
+    const skuId = 154172146090837;
+
+    const warehousesToTest = [
+      "WH-10610264227981925", // EDER (Default)
+      "WH-01715667210381925"  // LAT (Latvia)
+    ];
+
+    const results = [];
+
+    for (const warehouseId of warehousesToTest) {
+      const confirmPayload = {
+        sendType: 0,
+        sendRequestList: JSON.stringify([
+          {
+            carrierId,
+            trackingNumber,
+            selfShippingWarehouseId: warehouseId,
+            orderSendInfoList: [
+              {
+                parentOrderSn,
+                orderSn,
+                goodsId,
+                skuId,
+                quantity: 1
+              }
+            ]
+          }
+        ])
+      };
+
+      const resConfirm = await callTemu("bg.logistics.shipment.v2.confirm", confirmPayload);
+      results.push({ warehouseId, resConfirm });
+
+      if (resConfirm.success || resConfirm.errorCode === 1000000) {
+        await TemuOrder.updateOne(
+          { orderNum: parentOrderSn },
+          { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+        );
+        return res.status(200).json({
+          status: "success",
+          store: store.shopName,
+          warehouseId,
+          resConfirm
+        });
+      }
+    }
 
     return res.status(200).json({
+      status: "tested_both_warehouses",
       store: store.shopName,
-      warehouses,
-      shippingservices
+      results
     });
   } catch (err) {
     res.status(500).json({ error: err.message, stack: err.stack });
