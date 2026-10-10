@@ -828,89 +828,94 @@ exports.uploadOrderTrackingManually = catchAsync(async (req, res, next) => {
   });
 });
 
-exports.debugTemuOrder = catchAsync(async (req, res, next) => {
-  const User = require("../models/user.model");
-  const TemuOrder = require("../models/temuOrder.model");
-  const crypto = require("crypto");
+exports.debugTemuOrder = async (req, res, next) => {
+  try {
+    const User = require("../models/user.model");
+    const TemuOrder = require("../models/temuOrder.model");
+    const crypto = require("crypto");
 
-  const user = await User.findById(req.user.id);
-  const store = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702094104453");
+    const user = await User.findById(req.user.id);
+    const store = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702094104453" || (i.mallId && i.mallId.toString() === "670702094104453"));
 
-  const callTemu = async (type, params = {}) => {
-    const timestamp = Math.floor(Date.now() / 1000).toString();
-    const payload = {
-      app_key: store.appKey,
-      access_token: store.accessToken,
-      timestamp,
-      type,
-      ...params
-    };
-    const sortedKeys = Object.keys(payload).sort();
-    const signStr = store.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + store.appSecret;
-    const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
-
-    const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ ...payload, sign })
-    });
-    return await resp.json();
-  };
-
-  const warehouses = await callTemu("bg.logistics.warehouse.list.get", {});
-  const shipMethods = await callTemu("bg.logistics.shippingservices.get", {});
-
-  // If warehouses found, test shipment confirm with each warehouse!
-  const confirmTests = [];
-  const whList = warehouses.result || [];
-
-  for (const wh of whList) {
-    const whId = wh.warehouseId || wh.warehouse_id || wh.id;
-    const confirmPayload = {
-      sendType: 0,
-      sendRequestList: JSON.stringify([
-        {
-          carrierId: 141252268,
-          trackingNumber: "LG282205940DE",
-          selfShippingWarehouseId: whId,
-          orderSendInfoList: [
-            {
-              parentOrderSn: "PO-108-03223705549432960",
-              orderSn: "108-03223663606392960",
-              goodsId: 609233240201623,
-              skuId: 154172146090837,
-              quantity: 1
-            }
-          ]
-        }
-      ])
-    };
-
-    const resConfirm = await callTemu("bg.logistics.shipment.v2.confirm", confirmPayload);
-    confirmTests.push({ warehouseId: whId, warehouseName: wh.warehouseName || wh.warehouse_name, resConfirm });
-
-    if (resConfirm.success || resConfirm.errorCode === 1000000) {
-      await TemuOrder.updateOne(
-        { orderNum: "PO-108-03223705549432960" },
-        { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
-      );
-      return res.status(200).json({
-        status: "success",
-        store: store.shopName,
-        warehouseId: whId,
-        resConfirm
-      });
+    if (!store) {
+      return res.status(200).json({ error: "Store not found", allStores: (user.temuIntegrations || []).map(i => i.shopName) });
     }
-  }
 
-  res.status(200).json({
-    status: "inspect_warehouses",
-    store: store.shopName,
-    warehouses,
-    shipMethods,
-    confirmTests
-  });
-});
+    const callTemu = async (type, params = {}) => {
+      const timestamp = Math.floor(Date.now() / 1000).toString();
+      const payload = {
+        app_key: store.appKey,
+        access_token: store.accessToken,
+        timestamp,
+        type,
+        ...params
+      };
+      const sortedKeys = Object.keys(payload).sort();
+      const signStr = store.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + store.appSecret;
+      const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
+
+      const resp = await fetch("https://openapi-b-eu.temu.com/openapi/router", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ...payload, sign })
+      });
+      return await resp.json();
+    };
+
+    const warehouses = await callTemu("bg.logistics.warehouse.list.get", {});
+
+    const confirmTests = [];
+    const whList = warehouses.result || [];
+
+    for (const wh of whList) {
+      const whId = wh.warehouseId || wh.warehouse_id || wh.id;
+      const confirmPayload = {
+        sendType: 0,
+        sendRequestList: JSON.stringify([
+          {
+            carrierId: 141252268,
+            trackingNumber: "LG282205940DE",
+            selfShippingWarehouseId: whId,
+            orderSendInfoList: [
+              {
+                parentOrderSn: "PO-108-03223705549432960",
+                orderSn: "108-03223663606392960",
+                goodsId: 609233240201623,
+                skuId: 154172146090837,
+                quantity: 1
+              }
+            ]
+          }
+        ])
+      };
+
+      const resConfirm = await callTemu("bg.logistics.shipment.v2.confirm", confirmPayload);
+      confirmTests.push({ warehouseId: whId, warehouseName: wh.warehouseName || wh.warehouse_name, resConfirm });
+
+      if (resConfirm.success || resConfirm.errorCode === 1000000) {
+        await TemuOrder.updateOne(
+          { orderNum: "PO-108-03223705549432960" },
+          { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+        );
+        return res.status(200).json({
+          status: "success",
+          store: store.shopName,
+          warehouseId: whId,
+          resConfirm
+        });
+      }
+    }
+
+    res.status(200).json({
+      status: "inspect_warehouses",
+      store: store.shopName,
+      warehouses,
+      confirmTests
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, stack: err.stack });
+  }
+};
 
 /**
  * Puppeteer Temu Return Bot Endpoints
