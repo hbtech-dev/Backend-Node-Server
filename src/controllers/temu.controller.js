@@ -850,7 +850,7 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
 
   const parentOrderSn = order?.orderNum || rawOrderSn;
   const trackingNumber = order?.tracking || "LG282205940DE";
-  const carrierId = 141252268;
+  const carrierId = 141252268; // DHL
 
   const connectedIntegrations = (user.temuIntegrations || []).filter(
     i => i.isConnected && i.appKey && i.appSecret && i.accessToken
@@ -877,66 +877,97 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     return await resp.json();
   };
 
-  const storeReports = [];
-
+  // Find store owning the order
   for (let idx = 0; idx < connectedIntegrations.length; idx++) {
     const store = connectedIntegrations[idx];
 
-    // Try detail
-    const detail = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn });
-    const detailClean = detail.success ? null : await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: cleanOrderSn });
+    let detail = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn });
+    if (!detail.success) {
+      detail = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: cleanOrderSn });
+    }
 
-    // Try confirm directly on this store
-    const confirmRes = await callTemu(store, "bg.logistics.shipment.v2.confirm", {
-      sendType: 0,
-      sendRequestList: JSON.stringify([
-        {
-          carrierId,
-          trackingNumber,
-          selfShippingWarehouseId: "WH-05108668825741232",
-          orderSendInfoList: [
+    if (detail.success && detail.result?.orderList?.length > 0) {
+      console.log(`🎯 Order found in store "${store.shopName}"!`);
+
+      // 1. Get warehouse ID for this store
+      let warehouseId = "WH-05108668825741232";
+      const whRes = await callTemu(store, "bg.logistics.warehouse.list.get", {});
+      if (whRes.success && Array.isArray(whRes.result) && whRes.result.length > 0) {
+        warehouseId = whRes.result[0].warehouseId || whRes.result[0].warehouse_id || warehouseId;
+      }
+
+      // 2. Build orderSendInfoList with exact goodsId & skuId
+      const orderSendInfoList = detail.result.orderList.map(item => ({
+        parentOrderSn: parentOrderSn.startsWith("PO-") ? parentOrderSn : `PO-${parentOrderSn}`,
+        orderSn: item.orderSn,
+        goodsId: item.goodsId,
+        skuId: item.skuId,
+        quantity: item.quantity || 1
+      }));
+
+      // 3. Confirm shipment on Temu
+      const confirmPayload = {
+        sendType: 0,
+        sendRequestList: JSON.stringify([
+          {
+            carrierId,
+            trackingNumber: trackingNumber.trim(),
+            selfShippingWarehouseId: warehouseId,
+            orderSendInfoList
+          }
+        ])
+      };
+
+      let confirmResult = await callTemu(store, "bg.logistics.shipment.v2.confirm", confirmPayload);
+
+      // If clean parentOrderSn is needed
+      let confirmResultClean = null;
+      if (!confirmResult.success && confirmResult.errorCode !== 1000000) {
+        const cleanList = orderSendInfoList.map(i => ({
+          ...i,
+          parentOrderSn: i.parentOrderSn.replace(/^PO-/i, "")
+        }));
+        confirmResultClean = await callTemu(store, "bg.logistics.shipment.v2.confirm", {
+          sendType: 0,
+          sendRequestList: JSON.stringify([
             {
-              parentOrderSn: parentOrderSn,
-              orderSn: order?.temuOrderId || cleanOrderSn,
-              goodsId: 0,
-              skuId: 0,
-              quantity: 1
+              carrierId,
+              trackingNumber: trackingNumber.trim(),
+              selfShippingWarehouseId: warehouseId,
+              orderSendInfoList: cleanList
             }
-          ]
-        }
-      ])
-    });
+          ])
+        });
+      }
 
-    const isMatch = detail.success || (detailClean && detailClean.success) || confirmRes.success || confirmRes.errorCode === 1000000;
+      const isSuccess = (confirmResult.success && confirmResult.errorCode === 1000000) ||
+                        (confirmResultClean?.success && confirmResultClean?.errorCode === 1000000);
 
-    storeReports.push({
-      index: idx,
-      shopName: store.shopName,
-      detailResult: detail.success ? detail : detailClean,
-      confirmResult: confirmRes
-    });
-
-    if (isMatch) {
-      if ((confirmRes.success || confirmRes.errorCode === 1000000) && order) {
+      if (isSuccess && order) {
         await TemuOrder.updateOne(
           { _id: order._id },
           { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
         );
       }
+
       return res.status(200).json({
-        status: confirmRes.success ? "success" : "matched_but_confirm_error",
+        status: isSuccess ? "success" : "failed",
         store: store.shopName,
-        detail: detail.success ? detail : detailClean,
-        confirmResult: confirmRes
+        carrierId,
+        warehouseId,
+        trackingNumber,
+        parentOrderSn,
+        orderSendInfoList,
+        confirmResult,
+        confirmResultClean,
+        isSuccess
       });
     }
   }
 
-  res.status(200).json({
-    status: "not_found_on_any_store",
-    orderNum: rawOrderSn,
-    testedCount: connectedIntegrations.length,
-    reports: storeReports.slice(0, 10)
+  res.status(404).json({
+    status: "not_found",
+    orderNum: rawOrderSn
   });
 });
 
