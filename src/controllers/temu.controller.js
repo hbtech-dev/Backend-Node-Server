@@ -833,30 +833,10 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
   const TemuOrder = require("../models/temuOrder.model");
   const crypto = require("crypto");
 
-  const rawOrderSn = req.params.orderSn || "PO-108-03223705549432960";
   const user = await User.findById(req.user.id);
-  const cleanOrderSn = rawOrderSn.replace(/^PO-/i, "");
+  const store = (user.temuIntegrations || []).find(i => i.shopName === "Temu-670702094104453");
 
-  const order = await TemuOrder.findOne({
-    user: user._id,
-    $or: [
-      { orderNum: rawOrderSn },
-      { orderNum: cleanOrderSn },
-      { orderNum: `PO-${cleanOrderSn}` },
-      { temuOrderId: rawOrderSn },
-      { temuOrderId: cleanOrderSn }
-    ]
-  });
-
-  const parentOrderSn = order?.orderNum || rawOrderSn;
-  const trackingNumber = order?.tracking || "LG282205940DE";
-  const carrierId = 141252268; // DHL
-
-  const connectedIntegrations = (user.temuIntegrations || []).filter(
-    i => i.isConnected && i.appKey && i.appSecret && i.accessToken
-  );
-
-  const callTemu = async (store, type, params = {}) => {
+  const callTemu = async (type, params = {}) => {
     const timestamp = Math.floor(Date.now() / 1000).toString();
     const payload = {
       app_key: store.appKey,
@@ -877,97 +857,58 @@ exports.debugTemuOrder = catchAsync(async (req, res, next) => {
     return await resp.json();
   };
 
-  // Find store owning the order
-  for (let idx = 0; idx < connectedIntegrations.length; idx++) {
-    const store = connectedIntegrations[idx];
+  const warehouses = await callTemu("bg.logistics.warehouse.list.get", {});
+  const shipMethods = await callTemu("bg.logistics.shippingservices.get", {});
 
-    let detail = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn });
-    if (!detail.success) {
-      detail = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: cleanOrderSn });
-    }
+  // If warehouses found, test shipment confirm with each warehouse!
+  const confirmTests = [];
+  const whList = warehouses.result || [];
 
-    if (detail.success && detail.result?.orderList?.length > 0) {
-      console.log(`🎯 Order found in store "${store.shopName}"!`);
-
-      // 1. Get warehouse ID for this store
-      let warehouseId = "WH-05108668825741232";
-      const whRes = await callTemu(store, "bg.logistics.warehouse.list.get", {});
-      if (whRes.success && Array.isArray(whRes.result) && whRes.result.length > 0) {
-        warehouseId = whRes.result[0].warehouseId || whRes.result[0].warehouse_id || warehouseId;
-      }
-
-      // 2. Build orderSendInfoList with exact goodsId & skuId
-      const orderSendInfoList = detail.result.orderList.map(item => ({
-        parentOrderSn: parentOrderSn.startsWith("PO-") ? parentOrderSn : `PO-${parentOrderSn}`,
-        orderSn: item.orderSn,
-        goodsId: item.goodsId,
-        skuId: item.skuId,
-        quantity: item.quantity || 1
-      }));
-
-      // 3. Confirm shipment on Temu
-      const confirmPayload = {
-        sendType: 0,
-        sendRequestList: JSON.stringify([
-          {
-            carrierId,
-            trackingNumber: trackingNumber.trim(),
-            selfShippingWarehouseId: warehouseId,
-            orderSendInfoList
-          }
-        ])
-      };
-
-      let confirmResult = await callTemu(store, "bg.logistics.shipment.v2.confirm", confirmPayload);
-
-      // If clean parentOrderSn is needed
-      let confirmResultClean = null;
-      if (!confirmResult.success && confirmResult.errorCode !== 1000000) {
-        const cleanList = orderSendInfoList.map(i => ({
-          ...i,
-          parentOrderSn: i.parentOrderSn.replace(/^PO-/i, "")
-        }));
-        confirmResultClean = await callTemu(store, "bg.logistics.shipment.v2.confirm", {
-          sendType: 0,
-          sendRequestList: JSON.stringify([
+  for (const wh of whList) {
+    const whId = wh.warehouseId || wh.warehouse_id || wh.id;
+    const confirmPayload = {
+      sendType: 0,
+      sendRequestList: JSON.stringify([
+        {
+          carrierId: 141252268,
+          trackingNumber: "LG282205940DE",
+          selfShippingWarehouseId: whId,
+          orderSendInfoList: [
             {
-              carrierId,
-              trackingNumber: trackingNumber.trim(),
-              selfShippingWarehouseId: warehouseId,
-              orderSendInfoList: cleanList
+              parentOrderSn: "PO-108-03223705549432960",
+              orderSn: "108-03223663606392960",
+              goodsId: 609233240201623,
+              skuId: 154172146090837,
+              quantity: 1
             }
-          ])
-        });
-      }
+          ]
+        }
+      ])
+    };
 
-      const isSuccess = (confirmResult.success && confirmResult.errorCode === 1000000) ||
-                        (confirmResultClean?.success && confirmResultClean?.errorCode === 1000000);
+    const resConfirm = await callTemu("bg.logistics.shipment.v2.confirm", confirmPayload);
+    confirmTests.push({ warehouseId: whId, warehouseName: wh.warehouseName || wh.warehouse_name, resConfirm });
 
-      if (isSuccess && order) {
-        await TemuOrder.updateOne(
-          { _id: order._id },
-          { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
-        );
-      }
-
+    if (resConfirm.success || resConfirm.errorCode === 1000000) {
+      await TemuOrder.updateOne(
+        { orderNum: "PO-108-03223705549432960" },
+        { $set: { trackingUploadedToTemu: true, trackingUploadedAt: new Date() } }
+      );
       return res.status(200).json({
-        status: isSuccess ? "success" : "failed",
+        status: "success",
         store: store.shopName,
-        carrierId,
-        warehouseId,
-        trackingNumber,
-        parentOrderSn,
-        orderSendInfoList,
-        confirmResult,
-        confirmResultClean,
-        isSuccess
+        warehouseId: whId,
+        resConfirm
       });
     }
   }
 
-  res.status(404).json({
-    status: "not_found",
-    orderNum: rawOrderSn
+  res.status(200).json({
+    status: "inspect_warehouses",
+    store: store.shopName,
+    warehouses,
+    shipMethods,
+    confirmTests
   });
 });
 
