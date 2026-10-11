@@ -404,6 +404,10 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       filter.status = req.query.status;
     }
 
+    if (req.query.country && req.query.country !== 'all') {
+      filter.country = req.query.country.toUpperCase();
+    }
+
     if (req.query.search && req.query.search.trim()) {
       const s = req.query.search.trim();
       filter.$or = [
