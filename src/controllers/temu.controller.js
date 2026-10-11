@@ -393,13 +393,63 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
   );
 
   let orders = [];
+  const counts = { open: 0, created_label: 0, printed: 0, canceled: 0, total: 0 };
+  let pagination = null;
+
   if (mongoose.connection.readyState === 1) {
-    // Always return ALL historical orders regardless of status or connection state
-    const filter = { user: req.user.id };
+    const userId = user._id || req.user.id;
+    const filter = { user: userId };
+
     if (req.query.status) {
       filter.status = req.query.status;
     }
-    orders = await TemuOrder.find(filter).sort({ createdAt: -1 });
+
+    if (req.query.search && req.query.search.trim()) {
+      const s = req.query.search.trim();
+      filter.$or = [
+        { orderNum: { $regex: s, $options: 'i' } },
+        { name: { $regex: s, $options: 'i' } },
+        { tracking: { $regex: s, $options: 'i' } }
+      ];
+    }
+
+    // Fast status counts aggregation
+    const countsAgg = await TemuOrder.aggregate([
+      { $match: { user: userId } },
+      { $group: { _id: '$status', count: { $sum: 1 } } }
+    ]);
+    countsAgg.forEach(c => {
+      if (c._id && counts[c._id] !== undefined) {
+        counts[c._id] = c.count;
+      }
+      counts.total += c.count;
+    });
+
+    const page = parseInt(req.query.page, 10);
+    const limit = parseInt(req.query.limit, 10);
+
+    let query = TemuOrder.find(filter).sort({ createdAt: -1 }).lean();
+
+    if (page && limit && limit > 0) {
+      const skip = (page - 1) * limit;
+      let totalFiltered = counts.total;
+      if (req.query.status) {
+        totalFiltered = counts[req.query.status] || 0;
+      } else if (req.query.search) {
+        totalFiltered = await TemuOrder.countDocuments(filter);
+      }
+
+      orders = await query.skip(skip).limit(limit);
+
+      pagination = {
+        page,
+        limit,
+        totalPages: Math.max(1, Math.ceil(totalFiltered / limit)),
+        totalCount: totalFiltered
+      };
+    } else {
+      orders = await query;
+    }
   }
 
   res.status(200).json({
@@ -407,6 +457,8 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     data: {
       isConnected,
       lastSyncedAt: user.temuIntegration?.lastSyncedAt || new Date(),
+      counts,
+      pagination,
       orders
     }
   });
@@ -439,10 +491,14 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Sync returns across all connected Temu stores
+  // Sync returns across all connected Temu stores in background
   const temuSyncService = require('../services/temuSync.service');
   if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
-    await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
+    if (req.query.sync === 'true') {
+      await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
+    } else {
+      temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
+    }
   }
 
   let returnsList = [];
@@ -526,10 +582,14 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Sync fulfillment issues across all connected Temu stores
+  // Sync fulfillment issues in background
   const temuSyncService = require('../services/temuSync.service');
   if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
-    await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Issue sync warning:', err.message));
+    if (req.query.sync === 'true') {
+      await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Issue sync warning:', err.message));
+    } else {
+      temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Issue sync warning:', err.message));
+    }
   }
 
   let issuesList = [];
