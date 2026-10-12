@@ -160,7 +160,7 @@ const temuOrderSchema = new mongoose.Schema(
   }
 );
 
-temuOrderSchema.index({ user: 1, orderNum: 1 });
+temuOrderSchema.index({ user: 1, orderNum: 1 }, { unique: true });
 temuOrderSchema.index({ user: 1, status: 1, createdAt: -1 });
 temuOrderSchema.index({ user: 1, createdAt: -1 });
 
