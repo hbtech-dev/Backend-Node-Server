@@ -1089,94 +1089,117 @@ const uploadTrackingToTemu = async (user, order) => {
   }
 };
 
+const activeReturnSyncUsers = new Set();
+
 const syncUserTemuReturnsAndIssues = async (user) => {
   if (!user || !user._id) return;
-
-  const connectedStores = (user.temuIntegrations && user.temuIntegrations.length > 0)
-    ? user.temuIntegrations.filter(i => i.isConnected)
-    : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
-
-  if (connectedStores.length === 0) return;
-
-  // 1. Sync Canceled / Returned orders to TemuReturn
-  const canceledOrders = await TemuOrder.find({
-    user: user._id,
-    $or: [
-      { status: 'canceled' },
-      { status: 'returned' },
-      { orderStatus: 'canceled' }
-    ]
-  });
-
-  const sampleRefunds = [29.90, 18.50, 34.00, 14.75, 42.50, 21.90, 27.80, 38.20];
-  let retIdx = 0;
-
-  for (const order of canceledOrders) {
-    let priceVal = Number(order.price) || 0;
-    if (priceVal <= 0 || priceVal === 20) {
-      if (order.items && order.items.length > 0) {
-        const itemSum = order.items.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0);
-        if (itemSum > 0) priceVal = itemSum;
-      }
-    }
-    if (priceVal <= 0 || priceVal === 20) {
-      priceVal = sampleRefunds[retIdx % sampleRefunds.length];
-    }
-    retIdx++;
-
-    await TemuReturn.updateOne(
-      { user: user._id, returnId: `RET-${order.orderNum}` },
-      {
-        $set: {
-          user: user._id,
-          returnId: `RET-${order.orderNum}`,
-          orderNum: order.orderNum,
-          buyerName: order.buyerName || order.name || 'Temu Customer',
-          country: order.country || 'DE',
-          reason: 'Customer Return / Order Cancellation Request on Temu',
-          refundAmount: priceVal,
-          status: 'pending',
-          itemDetails: {
-            articleName: order.articleName || 'Temu Product',
-            sku: order.sku || 'SKU-TEMU-RET',
-            quantity: order.quantity || 1
-          }
-        }
-      },
-      { upsert: true }
-    );
+  const userIdStr = user._id.toString();
+  if (activeReturnSyncUsers.has(userIdStr)) {
+    return;
   }
+  activeReturnSyncUsers.add(userIdStr);
 
-  // 2. Sync Address Change / Cancellation Issues to TemuFulfillmentIssue
-  const issueOrders = await TemuOrder.find({
-    user: user._id,
-    $or: [
-      { status: 'canceled' },
-      { address: { $regex: 'change', $options: 'i' } }
-    ]
-  });
+  try {
+    const connectedStores = (user.temuIntegrations && user.temuIntegrations.length > 0)
+      ? user.temuIntegrations.filter(i => i.isConnected)
+      : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
 
-  for (const order of issueOrders) {
-    const isCancel = order.status === 'canceled';
-    await TemuFulfillmentIssue.updateOne(
-      { user: user._id, issueId: `ISS-${order.orderNum}` },
-      {
-        $set: {
-          user: user._id,
-          issueId: `ISS-${order.orderNum}`,
-          orderNum: order.orderNum,
-          buyerName: order.buyerName || order.name || 'Temu Customer',
-          issueType: isCancel ? 'cancellation_request' : 'address_change',
-          country: order.country || 'DE',
-          description: isCancel 
-            ? `Buyer requested order cancellation for ${order.orderNum}` 
-            : `Delivery address update request for ${order.orderNum}`,
-          requestedAddress: order.address || '',
-          status: 'open'
+    if (connectedStores.length === 0) return;
+
+    // 1. Sync Canceled / Returned orders to TemuReturn
+    const canceledOrders = await TemuOrder.find({
+      user: user._id,
+      $or: [
+        { status: 'canceled' },
+        { status: 'returned' },
+        { orderStatus: 'canceled' }
+      ]
+    }).select('orderNum buyerName name country price items articleName sku quantity status').lean();
+
+    const sampleRefunds = [29.90, 18.50, 34.00, 14.75, 42.50, 21.90, 27.80, 38.20];
+    let retIdx = 0;
+
+    const returnOps = canceledOrders.map(order => {
+      let priceVal = Number(order.price) || 0;
+      if (priceVal <= 0 || priceVal === 20) {
+        if (order.items && order.items.length > 0) {
+          const itemSum = order.items.reduce((acc, it) => acc + (Number(it.price) || 0) * (Number(it.quantity) || 1), 0);
+          if (itemSum > 0) priceVal = itemSum;
         }
-      },
-      { upsert: true }
-    );
+      }
+      if (priceVal <= 0 || priceVal === 20) {
+        priceVal = sampleRefunds[retIdx % sampleRefunds.length];
+      }
+      retIdx++;
+
+      return {
+        updateOne: {
+          filter: { user: user._id, returnId: `RET-${order.orderNum}` },
+          update: {
+            $set: {
+              user: user._id,
+              returnId: `RET-${order.orderNum}`,
+              orderNum: order.orderNum,
+              buyerName: order.buyerName || order.name || 'Temu Customer',
+              country: order.country || 'DE',
+              reason: 'Customer Return / Order Cancellation Request on Temu',
+              refundAmount: priceVal,
+              status: 'pending',
+              itemDetails: {
+                articleName: order.articleName || 'Temu Product',
+                sku: order.sku || 'SKU-TEMU-RET',
+                quantity: order.quantity || 1
+              }
+            }
+          },
+          upsert: true
+        }
+      };
+    });
+
+    if (returnOps.length > 0) {
+      await TemuReturn.bulkWrite(returnOps, { ordered: false }).catch(err => console.warn('Bulk write returns warning:', err.message));
+    }
+
+    // 2. Sync Address Change / Cancellation Issues to TemuFulfillmentIssue
+    const issueOrders = await TemuOrder.find({
+      user: user._id,
+      $or: [
+        { status: 'canceled' },
+        { address: { $regex: 'change', $options: 'i' } }
+      ]
+    }).select('orderNum buyerName name country status address').lean();
+
+    const issueOps = issueOrders.map(order => {
+      const isCancel = order.status === 'canceled';
+      return {
+        updateOne: {
+          filter: { user: user._id, issueId: `ISS-${order.orderNum}` },
+          update: {
+            $set: {
+              user: user._id,
+              issueId: `ISS-${order.orderNum}`,
+              orderNum: order.orderNum,
+              buyerName: order.buyerName || order.name || 'Temu Customer',
+              issueType: isCancel ? 'cancellation_request' : 'address_change',
+              country: order.country || 'DE',
+              description: isCancel 
+                ? `Buyer requested order cancellation for ${order.orderNum}` 
+                : `Delivery address update request for ${order.orderNum}`,
+              requestedAddress: order.address || '',
+              status: 'open'
+            }
+          },
+          upsert: true
+        }
+      };
+    });
+
+    if (issueOps.length > 0) {
+      await TemuFulfillmentIssue.bulkWrite(issueOps, { ordered: false }).catch(err => console.warn('Bulk write issues warning:', err.message));
+    }
+  } finally {
+    activeReturnSyncUsers.delete(userIdStr);
   }
 };
 

@@ -59,4 +59,7 @@ const temuFulfillmentIssueSchema = new mongoose.Schema(
   }
 );
 
+temuFulfillmentIssueSchema.index({ user: 1, createdAt: -1 });
+temuFulfillmentIssueSchema.index({ user: 1, issueId: 1 }, { unique: true });
+
 module.exports = mongoose.model('TemuFulfillmentIssue', temuFulfillmentIssueSchema);

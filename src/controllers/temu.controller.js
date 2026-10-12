@@ -495,19 +495,17 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Sync returns across all connected Temu stores in background
-  const temuSyncService = require('../services/temuSync.service');
-  if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
-    if (req.query.sync === 'true') {
+  // Only sync returns when explicitly requested with ?sync=true
+  if (req.query.sync === 'true') {
+    const temuSyncService = require('../services/temuSync.service');
+    if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
       await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
-    } else {
-      temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
     }
   }
 
   let returnsList = [];
   if (mongoose.connection.readyState === 1) {
-    returnsList = await TemuReturn.find({ user: req.user.id }).sort({ createdAt: -1 });
+    returnsList = await TemuReturn.find({ user: req.user.id }).sort({ createdAt: -1 }).lean();
   }
 
   res.status(200).json({
@@ -586,19 +584,17 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Sync fulfillment issues in background
-  const temuSyncService = require('../services/temuSync.service');
-  if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
-    if (req.query.sync === 'true') {
+  // Only sync fulfillment issues when explicitly requested with ?sync=true
+  if (req.query.sync === 'true') {
+    const temuSyncService = require('../services/temuSync.service');
+    if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
       await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Issue sync warning:', err.message));
-    } else {
-      temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Issue sync warning:', err.message));
     }
   }
 
   let issuesList = [];
   if (mongoose.connection.readyState === 1) {
-    issuesList = await TemuFulfillmentIssue.find({ user: req.user.id }).sort({ createdAt: -1 });
+    issuesList = await TemuFulfillmentIssue.find({ user: req.user.id }).sort({ createdAt: -1 }).lean();
   }
 
   res.status(200).json({

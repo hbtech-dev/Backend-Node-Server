@@ -112,16 +112,22 @@ exports.getTickets = catchAsync(async (req, res, next) => {
     if (req.query.status) {
       filter.status = req.query.status;
     }
-    // Ensure all 4 Spain tickets exist for the user
-    for (const st of SEED_SPAIN_TICKETS) {
-      await TemuTicket.updateOne(
-        { user: req.user.id, ticketId: st.ticketId },
-        { $setOnInsert: { ...st, user: req.user.id } },
-        { upsert: true }
-      ).catch(() => {});
-    }
+    tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 }).lean();
 
-    tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 });
+    // Ensure initial tickets exist only if none found
+    if (tickets.length === 0 && !req.query.status) {
+      await TemuTicket.bulkWrite(
+        SEED_SPAIN_TICKETS.map(st => ({
+          updateOne: {
+            filter: { user: req.user.id, ticketId: st.ticketId },
+            update: { $setOnInsert: { ...st, user: req.user.id } },
+            upsert: true
+          }
+        })),
+        { ordered: false }
+      ).catch(() => {});
+      tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 }).lean();
+    }
   }
 
   const pendingCount = tickets.filter(t => t.status === 'pending').length;

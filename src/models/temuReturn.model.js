@@ -55,4 +55,7 @@ const temuReturnSchema = new mongoose.Schema(
   }
 );
 
+temuReturnSchema.index({ user: 1, createdAt: -1 });
+temuReturnSchema.index({ user: 1, returnId: 1 }, { unique: true });
+
 module.exports = mongoose.model('TemuReturn', temuReturnSchema);

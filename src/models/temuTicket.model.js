@@ -88,5 +88,7 @@ const temuTicketSchema = new mongoose.Schema({
 });
 
 temuTicketSchema.index({ user: 1, ticketId: 1 }, { unique: true });
+temuTicketSchema.index({ user: 1, deadline: 1, createdAt: -1 });
+temuTicketSchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model('TemuTicket', temuTicketSchema);
