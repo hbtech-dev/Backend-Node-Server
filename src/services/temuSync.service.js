@@ -645,19 +645,19 @@ const syncUserTemuOrders = async (user) => {
         );
 
         if (status === 4 || status === 5) {
-          const $set = { status: 'printed' };
+          const $set = { status: 'printed', manuallyRevertedToOpen: false };
           if (trackingNo) {
             $set.tracking = trackingNo;
             $set.qrCodeData = `https://shipstation.dhl.com/track/${trackingNo}`;
           }
           await TemuOrder.updateOne(
-            { user: user._id, orderNum: orderSn, manuallyRevertedToOpen: { $ne: true } },
+            { user: user._id, orderNum: orderSn },
             { $set }
           );
         } else if (status === 3) {
           await TemuOrder.updateOne(
-            { user: user._id, orderNum: orderSn, manuallyRevertedToOpen: { $ne: true } },
-            { $set: { status: 'canceled' } }
+            { user: user._id, orderNum: orderSn },
+            { $set: { status: 'canceled', manuallyRevertedToOpen: false } }
           );
         }
       }
@@ -873,6 +873,35 @@ const syncUserTemuOrders = async (user) => {
 
           await TemuOrder.updateOne({ _id: existing._id }, { $set: updatePayload });
         }
+      }
+
+      // --- Step 4: Reconcile stale open orders ---
+      // Any Temu order in DB older than 5 days that is NOT present in Temu's active unshipped list has already been fulfilled on Temu
+      try {
+        const activeSnSet = new Set(activeOrderSns);
+        const staleCutoff = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
+        const staleOrders = await TemuOrder.find({
+          user: user._id,
+          status: 'open',
+          source: 'Temu',
+          createdAt: { $lt: staleCutoff }
+        }).select('_id orderNum temuOrderId');
+
+        if (staleOrders.length > 0) {
+          const toMarkPrinted = staleOrders.filter(
+            stale => !activeSnSet.has(stale.orderNum) && !activeSnSet.has(stale.temuOrderId)
+          );
+          if (toMarkPrinted.length > 0) {
+            const ids = toMarkPrinted.map(o => o._id);
+            await TemuOrder.updateMany(
+              { _id: { $in: ids } },
+              { $set: { status: 'printed', manuallyRevertedToOpen: false } }
+            );
+            console.info(`[${shopName}] Reconciled ${toMarkPrinted.length} stale completed order(s) to printed.`);
+          }
+        }
+      } catch (staleErr) {
+        console.warn(`[${shopName}] Stale order reconciliation notice:`, staleErr.message);
       }
 
       // Update sync timestamp on this integration
