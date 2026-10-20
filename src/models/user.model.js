@@ -174,6 +174,15 @@ const userSchema = new mongoose.Schema(
       productType: { type: String, default: 'V01PAK' },
       lastTestedAt: { type: Date, default: null }
     },
+    packetaIntegration: {
+      isConnected: { type: Boolean, default: true },
+      apiKey: { type: String, default: 'ec486a9b163632eb' },
+      apiPassword: { type: String, default: 'ec486a9b163632ebedcfd2d081343eee' },
+      apiLocale: { type: String, default: 'en_GB' },
+      invoiceLocale: { type: String, default: 'de_DE' },
+      senderLabel: { type: String, default: 'EDER UG' },
+      lastTestedAt: { type: Date, default: null }
+    },
     fedexIntegration: {
       isConnected: { type: Boolean, default: false },
       apiKey: { type: String, default: '' },

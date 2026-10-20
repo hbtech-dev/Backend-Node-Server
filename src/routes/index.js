@@ -9,6 +9,7 @@ const invoiceRoutes = require('./invoice.routes');
 const notificationRoutes = require('./notification.routes');
 const dhlRoutes = require('./dhl.routes');
 const fedexRoutes = require('./fedex.routes');
+const packetaRoutes = require('./packeta.routes');
 
 const router = express.Router();
 
@@ -22,5 +23,6 @@ router.use('/invoices', invoiceRoutes);
 router.use('/notifications', notificationRoutes);
 router.use('/dhl', dhlRoutes);
 router.use('/fedex', fedexRoutes);
+router.use('/packeta', packetaRoutes);
 
 module.exports = router;
