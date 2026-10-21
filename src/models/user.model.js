@@ -213,6 +213,10 @@ const userSchema = new mongoose.Schema(
         nextNum: { type: String, default: '10001' }
       }
     },
+    countryCarrierRules: {
+      type: mongoose.Schema.Types.Mixed,
+      default: {}
+    },
     trashedCountries: {
       type: [String],
       default: []

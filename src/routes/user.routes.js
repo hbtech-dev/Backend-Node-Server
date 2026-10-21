@@ -13,6 +13,9 @@ router.get('/me', userController.getMe);
 router.get('/trashed-countries', userController.getTrashedCountries);
 router.put('/trashed-countries', userController.updateTrashedCountries);
 
+router.get('/country-carrier-rules', userController.getCountryCarrierRules);
+router.put('/country-carrier-rules', userController.updateCountryCarrierRules);
+
 router.put(
   '/me',
   [

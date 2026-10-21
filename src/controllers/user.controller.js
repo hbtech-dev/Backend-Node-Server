@@ -309,3 +309,48 @@ exports.updateTrashedCountries = catchAsync(async (req, res, next) => {
   });
 });
 
+
+
+/**
+ * Get country carrier routing rules for current user
+ */
+exports.getCountryCarrierRules = catchAsync(async (req, res, next) => {
+  const mongoose = require("mongoose");
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  res.status(200).json({
+    status: "success",
+    data: {
+      countryCarrierRules: user.countryCarrierRules || {}
+    }
+  });
+});
+
+/**
+ * Save country carrier routing rules for current user
+ */
+exports.updateCountryCarrierRules = catchAsync(async (req, res, next) => {
+  const { countryCarrierRules } = req.body;
+
+  const mongoose = require("mongoose");
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    const updateData = {};
+    if (countryCarrierRules && typeof countryCarrierRules === "object") {
+      updateData.countryCarrierRules = countryCarrierRules;
+    }
+
+    user = await User.findByIdAndUpdate(req.user.id, updateData, { new: true });
+  }
+
+  res.status(200).json({
+    status: "success",
+    message: "Country carrier routing rules saved successfully in DB",
+    data: {
+      countryCarrierRules: user.countryCarrierRules || {}
+    }
+  });
+});
