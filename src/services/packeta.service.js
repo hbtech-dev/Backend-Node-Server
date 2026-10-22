@@ -1,40 +1,41 @@
 const https = require('https');
 
 const DEFAULT_CARRIERS_BY_COUNTRY = {
-  // Primary options requested by user
-  BG: { id: 4015, name: 'BG Speedy HD', code: 'speedy', phonePrefix: '+359' },
-  GR: { id: 27954, name: 'GR Elta HD', code: 'elta', phonePrefix: '+30' },
-  HR: { id: 4634, name: 'HR Post HD', code: 'hrpost', phonePrefix: '+385' },
-  PL: { id: 1406, name: 'PL DPD HD', code: 'dpd', phonePrefix: '+48' },
-  SI: { id: 19515, name: 'SI Post HD', code: 'sipost', phonePrefix: '+386' },
+  // Primary options requested by user from Packeta Home Delivery table
+  BG: { id: 4015, name: "BG Speedy HD", code: "speedy", phonePrefix: "+359", temuCourier: "Speedy" },
+  GR: { id: 27954, name: "Elta HD", code: "elta", phonePrefix: "+30", temuCourier: "ELTA" },
+  HR: { id: 4634, name: "HR Post HD", code: "hrpost", phonePrefix: "+385", temuCourier: "Hrvatska Pošta (HR Post)" },
+  PL: { id: 1406, name: "DPD HD", code: "dpd", phonePrefix: "+48", temuCourier: "DPD" },
+  SI: { id: 19515, name: "SI Post HD", code: "sipost", phonePrefix: "+386", temuCourier: "Pošta Slovenije (SI Post)" },
+  CZ: { id: 106, name: "Packeta HD", code: "packeta_cz", phonePrefix: "+420", temuCourier: "Packeta / Zásilkovna" },
+  SK: { id: 131, name: "Packeta HD", code: "packeta_sk", phonePrefix: "+421", temuCourier: "Packeta" },
+  RO: { id: 762, name: "Fan Courier HD", code: "fancourier", phonePrefix: "+40", temuCourier: "Fan Courier" },
+  HU: { id: 3828, name: "Express One HD", code: "expressone", phonePrefix: "+36", temuCourier: "Express One" },
+  LV: { id: 5063, name: "Omniva HD", code: "omniva_lv", phonePrefix: "+371", temuCourier: "Omniva" },
+  EE: { id: 5060, name: "Omniva HD", code: "omniva_ee", phonePrefix: "+372", temuCourier: "Omniva" },
+  PT: { id: 4655, name: "PT MRW HD", code: "mrw_pt", phonePrefix: "+351", temuCourier: "MRW" },
+  CH: { id: 29738, name: "CH Post HD", code: "chpost", phonePrefix: "+41", temuCourier: "Swiss Post (Die Post)" },
+  DK: { id: 4993, name: "DK Post HD", code: "postnord", phonePrefix: "+45", temuCourier: "PostNord" },
   // Additional European Home Delivery options
-  RO: { id: 762, name: 'RO FAN Courier HD', code: 'fancourier', phonePrefix: '+40' },
-  CZ: { id: 106, name: 'CZ Zásilkovna domů HD', code: 'packeta_cz', phonePrefix: '+420' },
-  SK: { id: 131, name: 'SK Packeta Home HD', code: 'packeta_sk', phonePrefix: '+421' },
-  HU: { id: 3828, name: 'HU Express One HD', code: 'expressone', phonePrefix: '+36' },
-  LV: { id: 5063, name: 'LV Omniva HD', code: 'omniva_lv', phonePrefix: '+371' },
-  EE: { id: 5060, name: 'EE Omniva HD', code: 'omniva_ee', phonePrefix: '+372' },
-  LT: { id: 5065, name: 'LT Omniva HD', code: 'omniva_lt', phonePrefix: '+370' },
-  PT: { id: 4655, name: 'PT MRW HD', code: 'mrw_pt', phonePrefix: '+351' },
-  DK: { id: 4993, name: 'DK Post Nord HD', code: 'postnord', phonePrefix: '+45' },
-  CH: { id: 29738, name: 'CH Post Direct HD', code: 'chpost', phonePrefix: '+41' },
-  AT: { id: 6830, name: 'AT DPD HD', code: 'dpd_at', phonePrefix: '+43' },
-  DE: { id: 6373, name: 'DE Hermes HD', code: 'hermes_de', phonePrefix: '+49' },
-  IT: { id: 9103, name: 'IT Bartolini Home', code: 'bartolini', phonePrefix: '+39' },
-  ES: { id: 4638, name: 'ES Correos HD', code: 'correos', phonePrefix: '+34' },
-  FR: { id: 4309, name: 'FR Colissimo HD', code: 'colissimo', phonePrefix: '+33' },
-  NL: { id: 8000, name: 'NL DHL HD', code: 'dhl_nl', phonePrefix: '+31' },
-  BE: { id: 7909, name: 'BE Belgická pošta HD', code: 'bpost', phonePrefix: '+32' }
+  LT: { id: 5065, name: "LT Omniva HD", code: "omniva_lt", phonePrefix: "+370", temuCourier: "Omniva" },
+  AT: { id: 6830, name: "AT DPD HD", code: "dpd_at", phonePrefix: "+43", temuCourier: "DPD" },
+  DE: { id: 6373, name: "DE Hermes HD", code: "hermes_de", phonePrefix: "+49", temuCourier: "Hermes" },
+  IT: { id: 9103, name: "IT Bartolini Home", code: "bartolini", phonePrefix: "+39", temuCourier: "BRT (Bartolini)" },
+  ES: { id: 4638, name: "ES Correos HD", code: "correos", phonePrefix: "+34", temuCourier: "Correos" },
+  FR: { id: 4309, name: "FR Colissimo HD", code: "colissimo", phonePrefix: "+33", temuCourier: "Colissimo" },
+  NL: { id: 8000, name: "NL DHL HD", code: "dhl_nl", phonePrefix: "+31", temuCourier: "DHL" },
+  BE: { id: 7909, name: "BE Belgická pošta HD", code: "bpost", phonePrefix: "+32", temuCourier: "bpost" }
 };
 
 const ALTERNATIVE_CARRIERS = {
-  BG: [{ id: 4015, name: 'BG Speedy HD' }, { id: 19469, name: 'BG Econt HD' }],
-  GR: [{ id: 27954, name: 'GR Elta HD' }, { id: 17465, name: 'GR ACS HD' }],
-  HR: [{ id: 4634, name: 'HR Post HD' }, { id: 10618, name: 'HR Overseas Express HD' }],
-  PL: [{ id: 1406, name: 'PL DPD HD' }, { id: 3603, name: 'PL InPost HD' }],
-  SI: [{ id: 19515, name: 'SI Post HD' }, { id: 25004, name: 'SI Express One HD' }],
-  RO: [{ id: 762, name: 'RO FAN Courier HD' }, { id: 7397, name: 'RO Sameday HD' }, { id: 590, name: 'RO Cargus HD' }],
-  HU: [{ id: 3828, name: 'HU Express One HD' }, { id: 763, name: 'HU Magyar Post HD' }]
+  BG: [{ id: 4015, name: "BG Speedy HD", temuCourier: "Speedy" }, { id: 19469, name: "BG Econt HD", temuCourier: "Econt" }],
+  GR: [{ id: 27954, name: "Elta HD", temuCourier: "ELTA" }, { id: 17465, name: "GR Speedex and ACS HD", temuCourier: "ACS" }],
+  HR: [{ id: 4634, name: "HR Post HD", temuCourier: "Hrvatska Pošta (HR Post)" }, { id: 10618, name: "HR Overseas HD", temuCourier: "Overseas Express" }],
+  PL: [{ id: 1406, name: "DPD HD", temuCourier: "DPD" }, { id: 3603, name: "PL InPost HD", temuCourier: "InPost" }],
+  SI: [{ id: 19515, name: "SI Post HD", temuCourier: "Pošta Slovenije (SI Post)" }, { id: 25004, name: "Express One HD", temuCourier: "Express One" }],
+  RO: [{ id: 762, name: "Fan Courier HD", temuCourier: "Fan Courier" }, { id: 7397, name: "RO Sameday HD", temuCourier: "Sameday" }],
+  HU: [{ id: 3828, name: "Express One HD", temuCourier: "Express One" }, { id: 763, name: "HU Magyar Post HD", temuCourier: "Magyar Post" }],
+  CH: [{ id: 29738, name: "CH Post HD", temuCourier: "Swiss Post (Die Post)" }]
 };
 
 function postXml(xml) {
@@ -200,6 +201,7 @@ async function createPacket({ order, user, carrierId, weight, senderLabel }) {
       trackingNumber: barcode,
       carrierId: finalCarrierId,
       carrierName,
+      temuCourier: carrierConfig.temuCourier || carrierName,
       country,
       trackingUrl: `https://tracking.packeta.com/en/?id=${barcode}`
     };

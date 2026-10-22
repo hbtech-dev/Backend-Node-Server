@@ -129,6 +129,7 @@ const temuOrderSchema = new mongoose.Schema(
     packetaBarcode: { type: String, default: '' },
     packetaCarrierId: { type: String, default: '' },
     packetaLabelUrl: { type: String, default: '' },
+    temuCourierName: { type: String, default: '' },
     dhlLabelUrl: {
       type: String,
       default: ''

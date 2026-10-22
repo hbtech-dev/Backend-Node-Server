@@ -183,6 +183,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   order.packetaPacketId = result.packetId;
   order.packetaBarcode = result.barcode;
   order.packetaCarrierId = String(result.carrierId);
+  order.temuCourierName = result.temuCourier || result.carrierName || "";
   order.shippedAt = new Date();
   await order.save();
 
@@ -225,6 +226,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
       packetId: result.packetId,
       barcode: result.barcode,
       carrier: result.carrierName,
+      temuCourier: result.temuCourier || result.carrierName,
       country: result.country,
       labelUrl: result.trackingUrl,
       order
@@ -271,6 +273,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       order.packetaPacketId = result.packetId;
       order.packetaBarcode = result.barcode;
       order.packetaCarrierId = String(result.carrierId);
+      order.temuCourierName = result.temuCourier || result.carrierName || "";
       order.shippedAt = new Date();
       await order.save();
 

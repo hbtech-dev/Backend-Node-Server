@@ -1029,13 +1029,51 @@ const uploadTrackingToTemu = async (user, order) => {
     return false;
   }
 
+  // Country and Packeta Home Delivery Courier mapping for Temu
+  const countryCode = (order.country || "DE").toUpperCase();
+  const isFedEx = order.shippingMethod && order.shippingMethod.toLowerCase().includes("fedex");
+  const isPacketa = (order.shippingMethod && order.shippingMethod.toLowerCase().includes("packeta")) ||
+                    Boolean(order.packetaPacketId) ||
+                    (order.tracking && String(order.tracking).startsWith("Z"));
+
+  const TEMU_COURIER_MAP = {
+    BG: "Speedy",
+    GR: "ELTA",
+    HR: "Hrvatska Pošta (HR Post)",
+    PL: "DPD",
+    SI: "Pošta Slovenije (SI Post)",
+    CZ: "Packeta / Zásilkovna",
+    SK: "Packeta",
+    RO: "Fan Courier",
+    HU: "Express One",
+    LV: "Omniva",
+    EE: "Omniva",
+    LT: "Omniva",
+    PT: "MRW",
+    CH: "Swiss Post (Die Post)",
+    DK: "PostNord",
+    AT: "DPD",
+    DE: "Hermes",
+    IT: "BRT (Bartolini)",
+    ES: "Correos",
+    FR: "Colissimo",
+    NL: "DHL",
+    BE: "bpost"
+  };
+
+  const temuCourier = order.temuCourierName || (isPacketa ? (TEMU_COURIER_MAP[countryCode] || "Packeta") : (isFedEx ? "FedEx" : "DHL"));
+
+  // Ensure temuCourierName is persisted in DB
+  if (!order.temuCourierName && order._id) {
+    try {
+      const TemuOrder = require("../models/temuOrder.model");
+      TemuOrder.updateOne({ _id: order._id }, { $set: { temuCourierName: temuCourier } }).catch(() => {});
+    } catch (_) {}
+  }
+
   // Determine official Temu carrier ID for Europe:
-  // DHL: 141252268
-  // FedEx: 699272611
-  // Deutsche Post: 203229330
-  // UPS: 314439762
-  const isFedEx = order.shippingMethod && order.shippingMethod.toLowerCase().includes('fedex');
-  let carrierId = 141252268; // Default DHL
+  // DHL: 141252268, FedEx: 699272611, Deutsche Post: 203229330, UPS: 314439762
+  let carrierId = 141252268;
   if (isFedEx) carrierId = 699272611;
 
   // Candidate order SNs
