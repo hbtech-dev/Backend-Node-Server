@@ -17,6 +17,7 @@ router.get('/callback', temuController.handleTemuOAuthCallback);       // Alias 
 // Authenticated User Temu Store & Order Routes
 router.get('/status', auth, temuController.getTemuStatus);
 router.get('/carriers', auth, temuController.getTemuCarriers);
+router.post('/test-api', auth, temuController.testTemuApi);
 router.post('/connect', auth, temuController.connectTemu);
 router.post('/disconnect', auth, temuController.disconnectTemu);
 router.post('/sync-orders', auth, temuController.syncTemuOrders);

@@ -1006,3 +1006,35 @@ exports.captureTemuReturnScreenshot = catchAsync(async (req, res, next) => {
     data: result
   });
 });
+
+exports.testTemuApi = catchAsync(async (req, res, next) => {
+  const mongoose = require('mongoose');
+  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+  const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+  if (!integration) return res.status(400).json({ error: 'No connected Temu integration' });
+
+  const { type, params = {} } = req.body;
+  const temuSync = require('../services/temuSync.service');
+  // Call internal callTemuRouterRaw
+  const crypto = require('crypto');
+  const url = 'https://openapi-b-eu.temu.com/openapi/router';
+  const timestamp = Math.floor(Date.now() / 1000).toString();
+  const payload = {
+    app_key: integration.appKey,
+    access_token: integration.accessToken || '',
+    timestamp,
+    type,
+    ...params
+  };
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = integration.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + integration.appSecret;
+  const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+  const httpRes = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, sign })
+  });
+  const data = await httpRes.json();
+  res.status(200).json({ type, response: data });
+});
