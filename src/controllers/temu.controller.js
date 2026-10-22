@@ -135,6 +135,37 @@ exports.getCategories = catchAsync(async (req, res, next) => {
 });
 
 // Temu Seller Account & Order Integration Controllers
+exports.getTemuCarriers = catchAsync(async (req, res, next) => {
+  const mongoose = require('mongoose');
+  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+  const temuSyncService = require('../services/temuSync.service');
+
+  let integrations = [];
+  if (user.temuIntegrations && user.temuIntegrations.length > 0) {
+    integrations = user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret && i.accessToken);
+  } else if (user.temuIntegration && user.temuIntegration.isConnected && user.temuIntegration.appKey && user.temuIntegration.accessToken) {
+    integrations = [user.temuIntegration];
+  }
+
+  if (integrations.length === 0) {
+    return res.status(200).json({
+      status: 'success',
+      data: { carriers: [] }
+    });
+  }
+
+  const integration = integrations[0];
+  const carriers = await temuSyncService.fetchTemuLogisticsCarriers(integration.appKey, integration.appSecret, integration.accessToken);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      count: (carriers || []).length,
+      carriers: carriers || []
+    }
+  });
+});
+
 exports.getTemuStatus = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;

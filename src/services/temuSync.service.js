@@ -1013,6 +1013,67 @@ exports.stopTemuBackgroundSync = () => {
   }
 };
 
+
+let cachedTemuCarriers = null;
+let lastCarriersFetchTime = 0;
+
+const fetchTemuLogisticsCarriers = async (appKey, appSecret, accessToken) => {
+  const now = Date.now();
+  if (cachedTemuCarriers && (now - lastCarriersFetchTime < 3600000)) {
+    return cachedTemuCarriers;
+  }
+
+  const mongoose = require('mongoose');
+  if (mongoose.connection && mongoose.connection.readyState === 1) {
+    try {
+      const db = mongoose.connection.db;
+      const doc = await db.collection('temu_cached_carriers').findOne({ _id: 'temu_carrier_list' });
+      if (doc && Array.isArray(doc.carriers) && doc.carriers.length > 0 && doc.updatedAt && (now - new Date(doc.updatedAt).getTime() < 86400000)) {
+        cachedTemuCarriers = doc.carriers;
+        lastCarriersFetchTime = now;
+      }
+    } catch (_) {}
+  }
+
+  if (cachedTemuCarriers && cachedTemuCarriers.length > 0) {
+    return cachedTemuCarriers;
+  }
+
+  try {
+    const endpoints = [
+      'bg.logistics.companies.get',
+      'bg.logistics.shippingservices.get'
+    ];
+
+    for (const ep of endpoints) {
+      const res = await callTemuRouterRaw(appKey, appSecret, accessToken, ep, {});
+      if (res) {
+        const list = res.logisticCompanyList || res.logisticsCompanyList || res.companyList || res.carrierList || res.carrierDTOList || (Array.isArray(res) ? res : null);
+        if (Array.isArray(list) && list.length > 0) {
+          console.log(`📦 [Temu Logistics] Retrieved ${list.length} supported carriers from Temu via ${ep}`);
+          cachedTemuCarriers = list;
+          lastCarriersFetchTime = now;
+          if (mongoose.connection && mongoose.connection.readyState === 1) {
+            try {
+              const db = mongoose.connection.db;
+              await db.collection('temu_cached_carriers').updateOne(
+                { _id: 'temu_carrier_list' },
+                { $set: { carriers: list, updatedAt: new Date() } },
+                { upsert: true }
+              );
+            } catch (_) {}
+          }
+          return list;
+        }
+      }
+    }
+  } catch (err) {
+    console.warn('⚠️ [Temu Logistics] Failed to query carriers:', err.message);
+  }
+
+  return cachedTemuCarriers || [];
+};
+
 const uploadTrackingToTemu = async (user, order) => {
   if (!user || !order || !order.tracking) return false;
 
@@ -1073,8 +1134,22 @@ const uploadTrackingToTemu = async (user, order) => {
 
   // Determine official Temu carrier ID for Europe:
   // DHL: 141252268, FedEx: 699272611, Deutsche Post: 203229330, UPS: 314439762
-  let carrierId = 141252268;
-  if (isFedEx) carrierId = 699272611;
+  const isDHL = (order.shippingMethod && order.shippingMethod.toLowerCase().includes('dhl')) ||
+                (order.shippingMethod && order.shippingMethod.toLowerCase().includes('warenpost')) ||
+                (order.shippingMethod && order.shippingMethod.toLowerCase().includes('kleinpaket')) ||
+                Boolean(order.dhlShipmentNumber) ||
+                (!isPacketa && !isFedEx);
+
+  // Preserve DHL for all German & European DHL shipments (never change 141252268 for DHL!)
+  let defaultCarrierId = 141252268;
+  let defaultCarrierName = 'DHL';
+
+  if (isFedEx) {
+    defaultCarrierId = 699272611;
+    defaultCarrierName = 'FedEx';
+  } else if (isPacketa) {
+    defaultCarrierName = temuCourier;
+  }
 
   // Candidate order SNs
   const parentOrderSn = order.orderNum || order.temuOrderId;
@@ -1132,14 +1207,56 @@ const uploadTrackingToTemu = async (user, order) => {
       }));
     }
 
+    // Resolve official Temu carrier ID
+    let currentCarrierId = defaultCarrierId;
+    let currentCarrierName = defaultCarrierName;
+
+    if (isPacketa) {
+      try {
+        const temuCarriers = await fetchTemuLogisticsCarriers(appKey, appSecret, accessToken);
+        if (Array.isArray(temuCarriers) && temuCarriers.length > 0) {
+          const target = (temuCourier || '').toLowerCase().trim();
+          const cleanCourierWords = target.split(/[\s(/)-]+/).filter(w => w.length > 2);
+
+          const matched = temuCarriers.find(c => {
+            const name = (c.logisticCompanyName || c.carrierName || c.companyName || c.name || '').toLowerCase().trim();
+            const code = (c.code || c.carrierCode || '').toLowerCase().trim();
+            return name === target || code === target || name.startsWith(target) || target.startsWith(name);
+          }) || temuCarriers.find(c => {
+            const name = (c.logisticCompanyName || c.carrierName || c.companyName || c.name || '').toLowerCase();
+            const code = (c.code || c.carrierCode || '').toLowerCase();
+            return name.includes(target) || target.includes(name) || code.includes(target) ||
+                   cleanCourierWords.some(w => name.includes(w) || code.includes(w));
+          });
+
+          if (matched) {
+            const matchedId = Number(matched.logisticCompanyId || matched.carrierId || matched.companyId || matched.id);
+            if (matchedId && !isNaN(matchedId)) {
+              currentCarrierId = matchedId;
+              currentCarrierName = matched.logisticCompanyName || matched.carrierName || temuCourier;
+              console.log(`🎯 [Temu Tracking] Matched official Temu carrier: ${currentCarrierName} (ID: ${currentCarrierId}) for order ${parentOrderSn}`);
+            }
+          } else {
+            console.warn(`⚠️ [Temu Tracking] No direct match for courier "${temuCourier}" in Temu carrier list. Using carrierName in payload.`);
+          }
+        }
+      } catch (err) {
+        console.warn('⚠️ [Temu Tracking] Error during dynamic carrier resolution:', err.message);
+      }
+    } else if (isDHL) {
+      currentCarrierId = 141252268;
+      currentCarrierName = 'DHL';
+    }
+
     // Send shipment confirmation V2
-    console.log(`📤 [Temu Tracking] Confirming shipment on store "${shopName || appKey}" for ${parentOrderSn} (Carrier: ${carrierId}, Tracking: ${order.tracking})...`);
+    console.log(`📤 [Temu Tracking] Confirming shipment on store "${shopName || appKey}" for ${parentOrderSn} (Carrier: ${currentCarrierName} [ID: ${currentCarrierId}], Tracking: ${order.tracking})...`);
 
     const confirmParams = {
       sendType: 0,
       sendRequestList: JSON.stringify([
         {
-          carrierId,
+          carrierId: currentCarrierId,
+          carrierName: currentCarrierName,
           trackingNumber: order.tracking.trim(),
           selfShippingWarehouseId: warehouseId,
           orderSendInfoList
@@ -1159,7 +1276,8 @@ const uploadTrackingToTemu = async (user, order) => {
         sendType: 0,
         sendRequestList: JSON.stringify([
           {
-            carrierId,
+            carrierId: currentCarrierId,
+            carrierName: currentCarrierName,
             trackingNumber: order.tracking.trim(),
             selfShippingWarehouseId: warehouseId,
             orderSendInfoList: cleanList
@@ -1383,6 +1501,7 @@ const submitTemuReturnResolution = async (integration, returnDoc, action, answer
 exports.syncUserTemuOrders = syncUserTemuOrders;
 exports.syncUserTemuReturnsAndIssues = syncUserTemuReturnsAndIssues;
 exports.uploadTrackingToTemu = uploadTrackingToTemu;
+exports.fetchTemuLogisticsCarriers = fetchTemuLogisticsCarriers;
 exports.calculateTemuPackageInfo = calculateTemuPackageInfo;
 exports.submitTemuReturnResolution = submitTemuReturnResolution;
 
