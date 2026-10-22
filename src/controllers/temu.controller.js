@@ -1015,7 +1015,9 @@ exports.testTemuApi = catchAsync(async (req, res, next) => {
 
   const { type, params = {} } = req.body;
   const temuSync = require('../services/temuSync.service');
-  // Call internal callTemuRouterRaw
+  
+  // Use httpHelper exactly as temuSync.service.js does
+  const httpFetch = require('../utils/httpHelper');
   const crypto = require('crypto');
   const url = 'https://openapi-b-eu.temu.com/openapi/router';
   const timestamp = Math.floor(Date.now() / 1000).toString();
@@ -1030,11 +1032,12 @@ exports.testTemuApi = catchAsync(async (req, res, next) => {
   const signStr = integration.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + integration.appSecret;
   const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-  const httpRes = await fetch(url, {
+  const response = await httpFetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ ...payload, sign })
+    body: JSON.stringify({ ...payload, sign }),
+    timeout: 10000
   });
-  const data = await httpRes.json();
+  const data = await response.json();
   res.status(200).json({ type, response: data });
 });
