@@ -19,7 +19,7 @@ const DEFAULT_CARRIERS_BY_COUNTRY = {
   // Additional European Home Delivery options
   LT: { id: 5065, name: "LT Omniva HD", code: "omniva_lt", phonePrefix: "+370", temuCourier: "Omniva" },
   AT: { id: 6830, name: "AT DPD HD", code: "dpd_at", phonePrefix: "+43", temuCourier: "DPD" },
-  DE: { id: 6373, name: "DE Hermes HD", code: "hermes_de", phonePrefix: "+49", temuCourier: "Hermes" },
+  DE: { id: 141252268, name: "DHL Kleinpaket / Warenpost", code: "dhl_de", phonePrefix: "+49", temuCourier: "DHL" },
   IT: { id: 9103, name: "IT Bartolini Home", code: "bartolini", phonePrefix: "+39", temuCourier: "BRT (Bartolini)" },
   ES: { id: 4638, name: "ES Correos HD", code: "correos", phonePrefix: "+34", temuCourier: "Correos" },
   FR: { id: 4309, name: "FR Colissimo HD", code: "colissimo", phonePrefix: "+33", temuCourier: "Colissimo" },

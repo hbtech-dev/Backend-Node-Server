@@ -1090,65 +1090,43 @@ const uploadTrackingToTemu = async (user, order) => {
     return false;
   }
 
-  // Country and Packeta Home Delivery Courier mapping for Temu
+  // Country and courier mapping for Temu
   const countryCode = (order.country || "DE").toUpperCase();
-  const isFedEx = order.shippingMethod && order.shippingMethod.toLowerCase().includes("fedex");
-  const isPacketa = (order.shippingMethod && order.shippingMethod.toLowerCase().includes("packeta")) ||
-                    Boolean(order.packetaPacketId) ||
-                    (order.tracking && String(order.tracking).startsWith("Z"));
+  const isFedEx = Boolean(order.shippingMethod && order.shippingMethod.toLowerCase().includes("fedex"));
+  const isPacketa = Boolean(
+    (order.shippingMethod && order.shippingMethod.toLowerCase().includes("packeta")) ||
+    Boolean(order.packetaPacketId) ||
+    (order.tracking && String(order.tracking).trim().toUpperCase().startsWith("Z"))
+  );
+  const isDHL = !isPacketa && !isFedEx;
 
-  const TEMU_COURIER_MAP = {
-    BG: "Speedy",
-    GR: "ELTA",
-    HR: "Hrvatska Pošta (HR Post)",
-    PL: "DPD",
-    SI: "Pošta Slovenije (SI Post)",
-    CZ: "Packeta / Zásilkovna",
-    SK: "Packeta",
-    RO: "Fan Courier",
-    HU: "Express One",
-    LV: "Omniva",
-    EE: "Omniva",
-    LT: "Omniva",
-    PT: "MRW",
-    CH: "Swiss Post (Die Post)",
-    DK: "PostNord",
-    AT: "DPD",
-    DE: "Hermes",
-    IT: "BRT (Bartolini)",
-    ES: "Correos",
-    FR: "Colissimo",
-    NL: "DHL",
-    BE: "bpost"
-  };
+  // Clean Temu Courier Name: Packeta orders are strictly "Packeta", DHL orders are strictly "DHL", FedEx is "FedEx"
+  const temuCourier = isFedEx ? "FedEx" : (isPacketa ? "Packeta" : "DHL");
 
-  const temuCourier = order.temuCourierName || (isPacketa ? (TEMU_COURIER_MAP[countryCode] || "Packeta") : (isFedEx ? "FedEx" : "DHL"));
-
-  // Ensure temuCourierName is persisted in DB
-  if (!order.temuCourierName && order._id) {
+  // Ensure temuCourierName is updated and persisted in DB
+  if (order._id && order.temuCourierName !== temuCourier) {
     try {
       const TemuOrder = require("../models/temuOrder.model");
       TemuOrder.updateOne({ _id: order._id }, { $set: { temuCourierName: temuCourier } }).catch(() => {});
     } catch (_) {}
   }
 
-  // Determine official Temu carrier ID for Europe:
-  // DHL: 141252268, FedEx: 699272611, Deutsche Post: 203229330, UPS: 314439762
-  const isDHL = (order.shippingMethod && order.shippingMethod.toLowerCase().includes('dhl')) ||
-                (order.shippingMethod && order.shippingMethod.toLowerCase().includes('warenpost')) ||
-                (order.shippingMethod && order.shippingMethod.toLowerCase().includes('kleinpaket')) ||
-                Boolean(order.dhlShipmentNumber) ||
-                (!isPacketa && !isFedEx);
+  // Official Temu Carrier IDs:
+  // DHL: strictly 141252268 (never change for DHL!)
+  // FedEx: strictly 699272611
+  // Packeta: never send DHL ID 141252268! Send carrierName "Packeta"
+  let currentCarrierId = null;
+  let currentCarrierName = temuCourier;
 
-  // Preserve DHL for all German & European DHL shipments (never change 141252268 for DHL!)
-  let defaultCarrierId = 141252268;
-  let defaultCarrierName = 'DHL';
-
-  if (isFedEx) {
-    defaultCarrierId = 699272611;
-    defaultCarrierName = 'FedEx';
+  if (isDHL) {
+    currentCarrierId = 141252268;
+    currentCarrierName = "DHL";
+  } else if (isFedEx) {
+    currentCarrierId = 699272611;
+    currentCarrierName = "FedEx";
   } else if (isPacketa) {
-    defaultCarrierName = temuCourier;
+    currentCarrierId = null;
+    currentCarrierName = "Packeta";
   }
 
   // Candidate order SNs
@@ -1207,83 +1185,86 @@ const uploadTrackingToTemu = async (user, order) => {
       }));
     }
 
-    // Resolve official Temu carrier ID
-    let currentCarrierId = defaultCarrierId;
-    let currentCarrierName = defaultCarrierName;
-
-    if (isPacketa) {
-      try {
-        const temuCarriers = await fetchTemuLogisticsCarriers(appKey, appSecret, accessToken);
-        if (Array.isArray(temuCarriers) && temuCarriers.length > 0) {
-          const target = (temuCourier || '').toLowerCase().trim();
-          const cleanCourierWords = target.split(/[\s(/)-]+/).filter(w => w.length > 2);
-
-          const matched = temuCarriers.find(c => {
-            const name = (c.logisticCompanyName || c.carrierName || c.companyName || c.name || '').toLowerCase().trim();
-            const code = (c.code || c.carrierCode || '').toLowerCase().trim();
-            return name === target || code === target || name.startsWith(target) || target.startsWith(name);
-          }) || temuCarriers.find(c => {
-            const name = (c.logisticCompanyName || c.carrierName || c.companyName || c.name || '').toLowerCase();
-            const code = (c.code || c.carrierCode || '').toLowerCase();
-            return name.includes(target) || target.includes(name) || code.includes(target) ||
-                   cleanCourierWords.some(w => name.includes(w) || code.includes(w));
-          });
-
-          if (matched) {
-            const matchedId = Number(matched.logisticCompanyId || matched.carrierId || matched.companyId || matched.id);
-            if (matchedId && !isNaN(matchedId)) {
-              currentCarrierId = matchedId;
-              currentCarrierName = matched.logisticCompanyName || matched.carrierName || temuCourier;
-              console.log(`🎯 [Temu Tracking] Matched official Temu carrier: ${currentCarrierName} (ID: ${currentCarrierId}) for order ${parentOrderSn}`);
-            }
-          } else {
-            console.warn(`⚠️ [Temu Tracking] No direct match for courier "${temuCourier}" in Temu carrier list. Using carrierName in payload.`);
-          }
-        }
-      } catch (err) {
-        console.warn('⚠️ [Temu Tracking] Error during dynamic carrier resolution:', err.message);
-      }
-    } else if (isDHL) {
-      currentCarrierId = 141252268;
-      currentCarrierName = 'DHL';
-    }
-
     // Send shipment confirmation V2
-    console.log(`📤 [Temu Tracking] Confirming shipment on store "${shopName || appKey}" for ${parentOrderSn} (Carrier: ${currentCarrierName} [ID: ${currentCarrierId}], Tracking: ${order.tracking})...`);
+    console.log(`📤 [Temu Tracking] Confirming shipment on store "${shopName || appKey}" for ${parentOrderSn} (Carrier: ${currentCarrierName}${currentCarrierId ? ` [ID: ${currentCarrierId}]` : ""}, Tracking: ${order.tracking})...`);
+
+    const sendItem = {
+      trackingNumber: order.tracking.trim(),
+      selfShippingWarehouseId: warehouseId,
+      orderSendInfoList
+    };
+    if (currentCarrierId) {
+      sendItem.carrierId = currentCarrierId;
+    }
+    if (currentCarrierName) {
+      sendItem.carrierName = currentCarrierName;
+    }
+    if (isPacketa) {
+      sendItem.carrier = "Packeta";
+      sendItem.shippingMethod = "Packeta";
+      sendItem.shipLogisticsType = "Packeta";
+    }
 
     const confirmParams = {
       sendType: 0,
-      sendRequestList: JSON.stringify([
-        {
-          carrierId: currentCarrierId,
-          carrierName: currentCarrierName,
-          trackingNumber: order.tracking.trim(),
-          selfShippingWarehouseId: warehouseId,
-          orderSendInfoList
-        }
-      ])
+      sendRequestList: JSON.stringify([sendItem])
     };
 
-    let result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.v2.confirm', confirmParams);
+    let result = await callTemuRouterRaw(appKey, appSecret, accessToken, "bg.logistics.shipment.v2.confirm", confirmParams);
 
     // If needed, try with clean parentOrderSn without PO-
     if (!result) {
       const cleanList = orderSendInfoList.map(i => ({
         ...i,
-        parentOrderSn: i.parentOrderSn.replace(/^PO-/i, '')
+        parentOrderSn: i.parentOrderSn.replace(/^PO-/i, "")
       }));
-      result = await callTemuRouterRaw(appKey, appSecret, accessToken, 'bg.logistics.shipment.v2.confirm', {
+      const cleanSendItem = {
+        ...sendItem,
+        orderSendInfoList: cleanList
+      };
+      result = await callTemuRouterRaw(appKey, appSecret, accessToken, "bg.logistics.shipment.v2.confirm", {
         sendType: 0,
-        sendRequestList: JSON.stringify([
-          {
-            carrierId: currentCarrierId,
-            carrierName: currentCarrierName,
-            trackingNumber: order.tracking.trim(),
-            selfShippingWarehouseId: warehouseId,
-            orderSendInfoList: cleanList
-          }
-        ])
+        sendRequestList: JSON.stringify([cleanSendItem])
       });
+    }
+
+    // Fallback: try standard logistics endpoints if needed
+    if (!result) {
+      const endpointsToTry = [
+        "bg.logistics.shipment.create",
+        "bg.logistics.shipment.send",
+        "bg.order.shipment.create",
+        "bg.logistics.order.shipping.confirm"
+      ];
+      for (const endpoint of endpointsToTry) {
+        try {
+          const fallbackParams = {
+            parentOrderSn: parentOrderSn,
+            parent_order_sn: parentOrderSn,
+            orderSn: childOrderSn,
+            order_sn: childOrderSn,
+            trackingNumber: order.tracking.trim(),
+            tracking_number: order.tracking.trim(),
+            carrierName: currentCarrierName,
+            carrier_name: currentCarrierName,
+            express_company_name: currentCarrierName,
+            shippingMethod: currentCarrierName,
+            shipping_method: currentCarrierName
+          };
+          if (currentCarrierId) {
+            fallbackParams.carrierId = currentCarrierId;
+            fallbackParams.expressCompanyId = currentCarrierId;
+            fallbackParams.shippingCompanyId = currentCarrierId;
+            fallbackParams.express_company_id = currentCarrierId;
+            fallbackParams.shipping_company_id = currentCarrierId;
+          }
+          result = await callTemuRouterRaw(appKey, appSecret, accessToken, endpoint, fallbackParams);
+          if (result !== null && result !== false) {
+            console.log(`✅ [Temu Tracking] Successfully submitted tracking ${order.tracking} to Temu via ${endpoint} for order ${parentOrderSn}`);
+            break;
+          }
+        } catch (_) {}
+      }
     }
 
     if (result !== null && result !== false) {
