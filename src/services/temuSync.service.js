@@ -493,6 +493,31 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         const pm = detail.parentOrderMap || {};
         const ol = (detail.orderList || [])[0] || {};
 
+        // If Temu detail confirms this order is already shipped (status 4) or completed (status 5), mark it printed immediately
+        const orderCurrentStatus = pm.parentOrderStatus ?? detail.parentOrderStatus;
+        if (orderCurrentStatus === 4 || orderCurrentStatus === 5) {
+          const detailTracking = (
+            pm.trackingNo || pm.tracking_no || pm.waybillNo || pm.waybill_no || pm.expressNo || pm.express_no ||
+            detail.trackingNo || detail.tracking_no || ol.trackingNo || ol.tracking_no || ''
+          );
+          const $set = { status: 'printed', manuallyRevertedToOpen: false };
+          if (detailTracking) {
+            $set.tracking = detailTracking;
+            $set.qrCodeData = `https://shipstation.dhl.com/track/${detailTracking}`;
+          }
+          TemuOrder.updateOne(
+            {
+              $or: [
+                { orderNum: rawOrderSn },
+                { orderNum: fullSn },
+                { orderNum: cleanSn },
+                { temuOrderId: cleanSn }
+              ]
+            },
+            { $set }
+          ).catch(err => console.warn('Error auto-marking shipped order:', err.message));
+        }
+
         const isDirectAddressObject = Boolean(
           detail.receiptName || detail.addressLineAll || detail.addressLine1 ||
           detail.regionName1 || detail.mobile || detail.mail || detail.addressExtra
@@ -586,6 +611,16 @@ const syncUserTemuOrders = async (user) => {
         pageSize: 100, page_size: 100
       });
 
+      const shippedList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
+        parentOrderStatus: 4, parent_order_status: 4,
+        updateTimeStart: thirtyDaysAgo, update_time_start: thirtyDaysAgo,
+        updateTimeEnd: nowSec, update_time_end: nowSec,
+        createTimeStart: thirtyDaysAgo, create_time_start: thirtyDaysAgo,
+        createTimeEnd: nowSec, create_time_end: nowSec,
+        pageNumber: 1, page_number: 1,
+        pageSize: 100, page_size: 100
+      });
+
       const allList = await callTemuRouterAllRegions(appKey, appSecret, accessToken, 'bg.order.list.v2.get', {
         parentOrderStatus: 0, parent_order_status: 0,
         updateTimeStart: thirtyDaysAgo, update_time_start: thirtyDaysAgo,
@@ -632,7 +667,7 @@ const syncUserTemuOrders = async (user) => {
       const logisticsAddrMap = await fetchTemuLogisticsAddresses(appKey, appSecret, accessToken, activeOrderSns);
 
       // Update shipped/canceled statuses in DB (preserves history and tracking numbers for manual external shipments)
-      for (const rawItem of [...unshippedList, ...pendingList, ...allList]) {
+      for (const rawItem of [...unshippedList, ...pendingList, ...shippedList, ...allList]) {
         const pm = rawItem.parentOrderMap || {};
         const ol = (rawItem.orderList || [])[0] || {};
         const status = pm.parentOrderStatus;
@@ -645,6 +680,9 @@ const syncUserTemuOrders = async (user) => {
           ol.trackingNo || ol.tracking_no || ol.waybillNo || ol.waybill_no || ol.expressNo || ol.express_no || ''
         );
 
+        const fullSn = orderSn.startsWith('PO-') ? orderSn : `PO-${orderSn}`;
+        const cleanSn = orderSn.replace(/^PO-/i, '');
+
         if (status === 4 || status === 5) {
           const $set = { status: 'printed', manuallyRevertedToOpen: false };
           if (trackingNo) {
@@ -652,12 +690,30 @@ const syncUserTemuOrders = async (user) => {
             $set.qrCodeData = `https://shipstation.dhl.com/track/${trackingNo}`;
           }
           await TemuOrder.updateOne(
-            { user: user._id, orderNum: orderSn },
+            {
+              user: user._id,
+              $or: [
+                { orderNum: orderSn },
+                { orderNum: fullSn },
+                { orderNum: cleanSn },
+                { temuOrderId: cleanSn },
+                { temuOrderId: fullSn }
+              ]
+            },
             { $set }
           );
         } else if (status === 3) {
           await TemuOrder.updateOne(
-            { user: user._id, orderNum: orderSn },
+            {
+              user: user._id,
+              $or: [
+                { orderNum: orderSn },
+                { orderNum: fullSn },
+                { orderNum: cleanSn },
+                { temuOrderId: cleanSn },
+                { temuOrderId: fullSn }
+              ]
+            },
             { $set: { status: 'canceled', manuallyRevertedToOpen: false } }
           );
         }
