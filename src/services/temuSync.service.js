@@ -191,7 +191,7 @@ const COUNTRY_NAME_TO_ISO = {
 // like CA (Canton Aargau), CA (Catalonia code), etc. being misread as Canada
 const VALID_COUNTRY_CODES = new Set([
   'GB','DE','FR','IT','ES','PT','NL','AT','PL','BE','SE','GR','CZ','RO','HU','DK',
-  'FI','SK','HR','SI','LT','LV','EE','BG','IE','CY','IS','CH','US','CA','AU','NZ'
+  'FI','SK','HR','SI','LT','LV','EE','BG','IE','CY','IS','CH','US','AU','NZ'
 ]);
 
 const resolveCountryIso = (val) => {
@@ -251,6 +251,7 @@ const getCountryFromTemuOrder = (rawItem, addrMapItem = null) => {
   if (orderSn.startsWith('PO-116-')) return 'DK'; // Denmark
   // NOTE: PO-054 removed — used by DK but address data should provide this; avoid false positives
   if (orderSn.startsWith('PO-119-')) return 'BE'; // Belgium
+  if (orderSn.startsWith('PO-180-')) return 'SK'; // Slovakia
   if (orderSn.startsWith('PO-114-')) return 'CZ'; // Czech Republic
   // NOTE: PO-032 removed — was incorrectly mapping BG orders to CZ
   if (orderSn.startsWith('PO-117-') || orderSn.startsWith('PO-167-')) return 'RO'; // Romania
