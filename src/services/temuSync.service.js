@@ -1114,8 +1114,8 @@ const uploadTrackingToTemu = async (user, order) => {
   // Official Temu Carrier IDs:
   // DHL: strictly 141252268 (never change for DHL!)
   // FedEx: strictly 699272611
-  // Packeta: never send DHL ID 141252268! Send carrierName "Packeta"
-  let currentCarrierId = null;
+  // Packeta: official Temu carrier ID across all EU is 998264724!
+  let currentCarrierId = 141252268;
   let currentCarrierName = temuCourier;
 
   if (isDHL) {
@@ -1125,7 +1125,7 @@ const uploadTrackingToTemu = async (user, order) => {
     currentCarrierId = 699272611;
     currentCarrierName = "FedEx";
   } else if (isPacketa) {
-    currentCarrierId = null;
+    currentCarrierId = 998264724;
     currentCarrierName = "Packeta";
   }
 
@@ -1198,11 +1198,6 @@ const uploadTrackingToTemu = async (user, order) => {
     }
     if (currentCarrierName) {
       sendItem.carrierName = currentCarrierName;
-    }
-    if (isPacketa) {
-      sendItem.carrier = "Packeta";
-      sendItem.shippingMethod = "Packeta";
-      sendItem.shipLogisticsType = "Packeta";
     }
 
     const confirmParams = {

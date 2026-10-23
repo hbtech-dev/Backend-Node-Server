@@ -169,6 +169,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   if (order.dhlShipmentId !== undefined) order.dhlShipmentId = dhlResult.dhlShipmentId;
   if (order.dhlLabelUrl !== undefined) order.dhlLabelUrl = dhlResult.dhlLabelUrl;
   if (order.shippedAt !== undefined) order.shippedAt = new Date();
+  order.temuCourierName = 'DHL';
 
   await order.save();
 
@@ -268,6 +269,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       if (order.dhlShipmentId !== undefined) order.dhlShipmentId = dhlResult.dhlShipmentId;
       if (order.dhlLabelUrl !== undefined) order.dhlLabelUrl = dhlResult.dhlLabelUrl;
       if (order.shippedAt !== undefined) order.shippedAt = new Date();
+      order.temuCourierName = 'DHL';
 
       await order.save();
       processedOrders.push(order);
@@ -339,6 +341,9 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
           });
           order.tracking = dhlResult.trackingNumber;
           order.shippingMethod = dhlResult.shippingMethod;
+        }
+        if (!order.temuCourierName || order.temuCourierName === 'Speedy' || order.temuCourierName === 'Hermes') {
+          order.temuCourierName = (order.tracking && String(order.tracking).startsWith('Z')) ? 'Packeta' : 'DHL';
         }
         await order.save();
         updatedOrders.push(order);

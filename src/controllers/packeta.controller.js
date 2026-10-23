@@ -183,7 +183,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   order.packetaPacketId = result.packetId;
   order.packetaBarcode = result.barcode;
   order.packetaCarrierId = String(result.carrierId);
-  order.temuCourierName = result.temuCourier || result.carrierName || "";
+  order.temuCourierName = "Packeta";
   order.shippedAt = new Date();
   await order.save();
 
@@ -273,7 +273,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       order.packetaPacketId = result.packetId;
       order.packetaBarcode = result.barcode;
       order.packetaCarrierId = String(result.carrierId);
-      order.temuCourierName = result.temuCourier || result.carrierName || "";
+      order.temuCourierName = "Packeta";
       order.shippedAt = new Date();
       await order.save();
 
