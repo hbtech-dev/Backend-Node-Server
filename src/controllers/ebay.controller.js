@@ -253,26 +253,23 @@ const fetchEbayOrdersFromAPI = async (user) => {
  * Uses: POST /sell/fulfillment/v1/order/{orderId}/shipping_fulfillment
  */
 const uploadTrackingToEbay = async (user, ebayOrder) => {
-  if (!ebayOrder.ebayOrderId || !ebayOrder.tracking) {
+  const targetOrderId = ebayOrder.ebayOrderId || (ebayOrder.orderNum ? ebayOrder.orderNum.replace(/^EBAY-/i, '') : '');
+  if (!targetOrderId || !ebayOrder.tracking) {
     console.log('⏭️  Skipping eBay tracking upload: missing ebayOrderId or tracking number');
     return null;
   }
 
   try {
-    // Map carrier name to eBay carrier enum
-    const carrierMap = {
-      'DHL': 'DHL',
-      'DHL Paket': 'DHL',
-      'DHL Paket International': 'DHL',
-      'DHL Express': 'DHL_EXPRESS',
-      'FedEx': 'FEDEX',
-      'FedEx International Priority': 'FEDEX',
-      'FedEx Express': 'FEDEX'
-    };
+    let shippingCarrier = 'DHL';
+    const methodLower = (ebayOrder.shippingMethod || '').toLowerCase();
+    if (methodLower.includes('fedex')) {
+      shippingCarrier = 'FEDEX';
+    } else if (methodLower.includes('packeta')) {
+      shippingCarrier = 'Other';
+    } else {
+      shippingCarrier = 'DHL';
+    }
 
-    const shippingCarrier = carrierMap[ebayOrder.shippingMethod] || 'DHL';
-
-    // Build line item references
     const lineItems = [];
     if (ebayOrder.lineItemId) {
       lineItems.push({
@@ -287,21 +284,33 @@ const uploadTrackingToEbay = async (user, ebayOrder) => {
       shippedDate: new Date().toISOString()
     };
 
-    // Only include lineItems if we have them
     if (lineItems.length > 0) {
       fulfillmentPayload.lineItems = lineItems;
     }
 
-    const path = `/sell/fulfillment/v1/order/${ebayOrder.ebayOrderId}/shipping_fulfillment`;
+    const path = `/sell/fulfillment/v1/order/${targetOrderId}/shipping_fulfillment`;
     const res = await ebayApiCall(user, 'POST', path, fulfillmentPayload);
 
-    if (res.ok || res.status === 201) {
-      console.log(`✅ Tracking ${ebayOrder.tracking} uploaded to eBay for order ${ebayOrder.ebayOrderId}`);
+    if (res.ok || res.status === 201 || res.status === 200 || res.status === 204) {
+      console.log(`✅ Tracking ${ebayOrder.tracking} uploaded to eBay for order ${targetOrderId}`);
+      if (ebayOrder._id) {
+        await EbayOrder.updateOne(
+          { _id: ebayOrder._id },
+          { $set: { trackingUploadedToEbay: true, trackingUploadedAt: new Date() } }
+        ).catch(() => {});
+      }
+      try {
+        await Notification.create({
+          title: '📦 Tracking Sent to eBay',
+          message: `Tracking number ${ebayOrder.tracking} successfully submitted to eBay for order ${ebayOrder.orderNum || targetOrderId}. Marked as Shipped on eBay.`,
+          type: 'success',
+          user: user._id
+        });
+      } catch (_) {}
       return { success: true };
     } else {
-      const errorBody = await res.json();
+      const errorBody = await res.json().catch(() => ({}));
       console.warn('⚠️ eBay tracking upload response:', JSON.stringify(errorBody));
-      // Don't throw — tracking upload failure shouldn't block the shipping flow
       return { success: false, error: errorBody };
     }
   } catch (err) {
@@ -448,9 +457,24 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
 
   const isConnected = Boolean(user.ebayIntegration?.isConnected || (user.ebayIntegrations && user.ebayIntegrations.length > 0));
 
+  let filter = { user: req.user.id };
+  if (req.query.status) {
+    filter.status = req.query.status;
+  }
+
   let orders = [];
   if (mongoose.connection.readyState === 1) {
-    orders = await EbayOrder.find({ user: req.user.id }).sort({ createdAt: -1 });
+    orders = await EbayOrder.find(filter).sort({ createdAt: -1 }).lean();
+  }
+
+  let counts = { open: 0, created_label: 0, printed: 0, canceled: 0 };
+  if (mongoose.connection.readyState === 1) {
+    counts = {
+      open: await EbayOrder.countDocuments({ user: req.user.id, status: 'open' }),
+      created_label: await EbayOrder.countDocuments({ user: req.user.id, status: 'created_label' }),
+      printed: await EbayOrder.countDocuments({ user: req.user.id, status: 'printed' }),
+      canceled: await EbayOrder.countDocuments({ user: req.user.id, status: 'canceled' })
+    };
   }
 
   res.status(200).json({
@@ -458,24 +482,35 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
     data: {
       isConnected,
       lastSyncedAt: user.ebayIntegration?.lastSyncedAt || new Date(),
-      orders
+      orders,
+      counts
     }
   });
 });
 
-// ============================================================
-// Upload Tracking Number to eBay (exposed as route handler)
-// ============================================================
-
 exports.uploadTracking = catchAsync(async (req, res, next) => {
-  const { orderId } = req.body;
+  const { orderId, orderNum } = req.body;
+  const searchId = orderId || orderNum;
 
-  if (!orderId) {
-    return next(new AppError('Order ID is required', 400));
+  if (!searchId) {
+    return next(new AppError('Order ID or order number is required', 400));
   }
 
   const user = await User.findById(req.user.id);
-  const ebayOrder = await EbayOrder.findOne({ _id: orderId, user: user._id });
+  const query = { user: user._id };
+  const mongoose = require('mongoose');
+  const orConditions = [
+    { orderNum: searchId },
+    { orderNum: `EBAY-${searchId}` },
+    { ebayOrderId: searchId },
+    { ebayOrderId: String(searchId).replace(/^EBAY-/i, '') }
+  ];
+  if (mongoose.Types.ObjectId.isValid(searchId)) {
+    orConditions.unshift({ _id: searchId });
+  }
+  query[$or] = orConditions;
+
+  const ebayOrder = await EbayOrder.findOne(query);
 
   if (!ebayOrder) {
     return next(new AppError('eBay order not found', 404));
@@ -489,12 +524,16 @@ exports.uploadTracking = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: result?.success ? 'Tracking uploaded to eBay!' : 'Tracking upload attempted (check logs)',
-    data: result
+    message: result?.success ? `Tracking ${ebayOrder.tracking} uploaded to eBay!` : 'Tracking upload attempted (check logs)',
+    data: {
+      orderNum: ebayOrder.orderNum,
+      tracking: ebayOrder.tracking,
+      trackingUploadedToEbay: Boolean(result?.success),
+      trackingUploadedAt: new Date()
+    }
   });
 });
 
-// Export the tracking upload helper for use from DHL controller
 exports.uploadTrackingToEbay = uploadTrackingToEbay;
 
 // ============================================================

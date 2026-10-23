@@ -187,7 +187,12 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   });
 
   // Auto-upload tracking to eBay if this is an eBay order
-  if (orderType.toLowerCase() === 'ebay' && order.ebayOrderId) {
+  const isEbay = (orderType && orderType.toLowerCase() === 'ebay') ||
+                 Boolean(order.ebayOrderId) ||
+                 (order.source && order.source.toLowerCase() === 'ebay') ||
+                 (order.orderNum && /^EBAY-/i.test(order.orderNum));
+
+  if (isEbay) {
     uploadTrackingToEbay(user, order).catch(err => {
       console.error('⚠️ Background eBay tracking upload failed:', err.message);
     });
@@ -357,6 +362,16 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
           const { uploadTrackingToTemu } = require('../services/temuSync.service');
           uploadTrackingToTemu(user, order).catch(err => {
             console.error('⚠️ Background Temu tracking upload (markPrinted) failed:', err.message);
+          });
+        }
+
+        const isEbay = Boolean(order.ebayOrderId) ||
+                       (order.source && order.source.toLowerCase() === 'ebay') ||
+                       (order.orderNum && /^EBAY-/i.test(order.orderNum));
+
+        if (isEbay) {
+          uploadTrackingToEbay(user, order).catch(err => {
+            console.error('⚠️ Background eBay tracking upload (markPrinted) failed:', err.message);
           });
         }
       }

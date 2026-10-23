@@ -107,6 +107,18 @@ const ebayOrderSchema = new mongoose.Schema(
     source: {
       type: String,
       default: 'eBay'
+    },
+    trackingUploadedToEbay: {
+      type: Boolean,
+      default: false
+    },
+    trackingUploadedAt: {
+      type: Date,
+      default: null
+    },
+    temuCourierName: {
+      type: String,
+      default: 'DHL'
     }
   },
   {
