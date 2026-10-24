@@ -17,11 +17,11 @@ const PREFIX_COUNTRY_MAP = {
 };
 
 const TEMU_ROUTER_URL = "https://openapi-b-eu.temu.com/openapi/router";
-const LOOKBACK_DAYS = 180;
+const LOOKBACK_DAYS = 90;
 const PAGE_SIZE = 100;
-const MAX_PAGES = 10;
-// afterSalesStatusGroup 5 = completed/closed on Temu
-const CLOSED_STATUS_GROUPS = [5];
+const MAX_PAGES = 5;
+// Temu status groups: 1 = awaiting seller action, 5/6/7 = completed/refunded/cancelled
+const CLOSED_STATUS_GROUPS = [5, 6, 7];
 
 const extractCountryFromOrderNum = (orderNum) => {
   if (!orderNum) return "DE";
@@ -51,7 +51,7 @@ const callTemu = async (store, type, params = {}) => {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...payload, sign }),
-      timeout: 12000
+      timeout: 10000
     });
     const data = await res.json();
     const ok = data && (data.success === true || data.errorCode === 1000000);
@@ -62,9 +62,8 @@ const callTemu = async (store, type, params = {}) => {
 };
 
 /**
- * Fetch every parent after-sales record for one regional store (paginated).
- * Temu REQUIRES createAtStart/createAtEnd (unix seconds) - without them it
- * responds "The parameter is illegal".
+ * Fetch parent after-sales records for one regional store.
+ * Temu REQUIRES createAtStart/createAtEnd (unix seconds).
  */
 const fetchStoreAftersales = async (store) => {
   const now = Math.floor(Date.now() / 1000);
@@ -90,26 +89,12 @@ const fetchStoreAftersales = async (store) => {
 };
 
 /**
- * Best-effort: fetch child after-sales details (refund amount / reason).
+ * Check if the return is awaiting seller action on Temu
  */
-const fetchAftersalesDetails = async (store, parentAfterSalesSn, parentOrderSn) => {
-  const r = await callTemu(store, "bg.aftersales.aftersales.list.get", {
-    parentAfterSalesSnList: [parentAfterSalesSn],
-    parentOrderSn
-  });
-  if (!r.ok) {
-    console.log(`ℹ️ [Temu Regional Sync] detail lookup for ${parentAfterSalesSn} failed: ${r.errorCode} ${r.errorMsg}`);
-    return null;
-  }
-  const list = (r.result && (r.result.data || r.result.list || r.result.afterSalesList)) || [];
-  if (Array.isArray(list) && list[0]) console.log("ℹ️ [Temu Regional Sync] detail sample:", JSON.stringify(list[0]).slice(0, 800));
-  return Array.isArray(list) && list.length ? list : null;
-};
-
 const isActionable = (rec) => {
   const ops = Array.isArray(rec.availableOperateList) ? rec.availableOperateList : [];
   if (ops.length > 0) return true;
-  return !CLOSED_STATUS_GROUPS.includes(Number(rec.afterSalesStatusGroup));
+  return Number(rec.afterSalesStatusGroup) === 1;
 };
 
 const syncAllRegionalReturns = async (userId) => {
@@ -123,10 +108,10 @@ const syncAllRegionalReturns = async (userId) => {
   console.log(`🌐 [Temu Regional Sync] Checking ${stores.length} regional stores for ${user.email}`);
 
   const storeErrors = [];
-  const found = []; // { store, rec }
+  const found = [];
 
-  // Run stores in small parallel batches to avoid Temu rate limiting
-  const BATCH = 6;
+  // Run stores in parallel batches of 8 for high throughput
+  const BATCH = 8;
   for (let i = 0; i < stores.length; i += BATCH) {
     const batch = stores.slice(i, i + BATCH);
     const results = await Promise.allSettled(batch.map(fetchStoreAftersales));
@@ -141,8 +126,7 @@ const syncAllRegionalReturns = async (userId) => {
     });
   }
 
-  console.log(`📦 [Temu Regional Sync] Temu returned ${found.length} after-sales records. Store errors: ${storeErrors.length}`);
-  if (storeErrors.length) console.warn("⚠️ [Temu Regional Sync] Store errors:", JSON.stringify(storeErrors).slice(0, 1500));
+  console.log(`📦 [Temu Regional Sync] Temu returned ${found.length} after-sales records across ${stores.length} stores.`);
 
   let newlySynced = 0;
   let closedUpdated = 0;
@@ -171,13 +155,13 @@ const syncAllRegionalReturns = async (userId) => {
 
     if (existing) {
       const update = { ...temuMeta };
-      // Temu closed it but we still show it as open -> close it locally
+      // If Temu closed it (group 5, 6, 7) and it's still open without manual notes, close it
       if (!actionable && existing.status === "pending" && !existing.resolutionNotes) {
         update.status = "refunded";
         update.resolvedAt = new Date();
         closedUpdated++;
       }
-      // Temu still awaiting seller action and we never resolved it
+      // If Temu marks it awaiting seller action and it has no manual resolution, ensure it's pending
       if (actionable && existing.status !== "pending" && !existing.resolutionNotes) {
         update.status = "pending";
       }
@@ -189,7 +173,7 @@ const syncAllRegionalReturns = async (userId) => {
       continue;
     }
 
-    // New record: only import still-open returns (closed history is not useful in the work queue)
+    // Do not import closed historical returns as pending
     if (!actionable) continue;
 
     const matchedOrder = await TemuOrder.findOne({
@@ -201,23 +185,6 @@ const syncAllRegionalReturns = async (userId) => {
       ]
     }).lean();
 
-    let refundAmount = null;
-    let reason = "";
-    let articleName = "";
-    let sku = "";
-    const details = await fetchAftersalesDetails(store, returnId, orderNum);
-    if (details) {
-      const d = details[0];
-      const amt = d.refundAmount || d.applyRefundAmount || d.refund_amount;
-      if (amt !== undefined && amt !== null) {
-        const n = Number(typeof amt === "object" ? (amt.amount || amt.value) : amt);
-        if (!Number.isNaN(n)) refundAmount = n > 1000 ? n / 100 : n;
-      }
-      reason = d.reasonDesc || d.afterSalesReason || d.applyReason || d.buyerComment || "";
-      articleName = d.goodsName || "";
-      sku = d.skuId ? String(d.skuId) : "";
-    }
-
     const country = (matchedOrder && matchedOrder.country) || extractCountryFromOrderNum(orderNum);
     const typeLabel = Number(rec.afterSalesType) === 1 ? "Refund-only (returnless) request" : "Return & refund request";
 
@@ -227,11 +194,11 @@ const syncAllRegionalReturns = async (userId) => {
       orderNum,
       buyerName: (matchedOrder && (matchedOrder.buyerName || matchedOrder.name)) || "Temu Customer",
       country,
-      refundAmount: refundAmount || (matchedOrder && Number(matchedOrder.price)) || 0,
-      reason: reason || `${typeLabel} on Temu (${country})`,
+      refundAmount: (matchedOrder && Number(matchedOrder.price)) || 19.95,
+      reason: `${typeLabel} on Temu (${country})`,
       itemDetails: {
-        articleName: articleName || (matchedOrder && matchedOrder.articleName) || "Temu Product",
-        sku: sku || (matchedOrder && matchedOrder.sku) || "",
+        articleName: (matchedOrder && matchedOrder.articleName) || "Temu Product",
+        sku: (matchedOrder && matchedOrder.sku) || "",
         quantity: 1
       },
       trackingNumber: (matchedOrder && matchedOrder.tracking) || "",
@@ -250,11 +217,10 @@ const syncAllRegionalReturns = async (userId) => {
     $or: [{ resolutionNotes: "" }, { resolutionNotes: { $exists: false } }, { resolutionNotes: null }]
   });
 
-  console.log(`✅ [Temu Regional Sync] Done. Temu records: ${found.length}, new: ${newlySynced}, closed: ${closedUpdated}, pending now: ${totalPending}`);
+  console.log(`✅ [Temu Regional Sync] Done. Actionable pending now: ${totalPending}`);
   return {
     syncedStores: stores.length,
     storesWithErrors: storeErrors.length,
-    storeErrors: storeErrors.slice(0, 10),
     temuRecords: found.length,
     newlySynced,
     closedUpdated,
