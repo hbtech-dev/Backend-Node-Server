@@ -48,6 +48,14 @@ const temuReturnSchema = new mongoose.Schema(
     resolvedAt: {
       type: Date,
       default: null
+    },
+    trackingNumber: {
+      type: String,
+      default: ''
+    },
+    carrier: {
+      type: String,
+      default: 'DHL Paket'
     }
   },
   {

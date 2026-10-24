@@ -550,7 +550,7 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
  */
 exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { action, notes, responseText } = req.body;
+  const { action, notes, responseText, tracking, carrier } = req.body;
   const answerText = responseText || notes || `Processed ${action} via Eder App`;
 
   const mongoose = require('mongoose');
@@ -563,7 +563,30 @@ exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
 
       returnDoc.resolutionNotes = answerText;
       returnDoc.resolvedAt = new Date();
+      if (tracking) returnDoc.trackingNumber = tracking;
+      if (carrier) returnDoc.carrier = carrier;
       await returnDoc.save();
+
+      if (tracking && returnDoc.orderNum) {
+        const TemuOrder = require('../models/temuOrder.model');
+        await TemuOrder.updateOne(
+          {
+            user: req.user.id,
+            $or: [
+              { orderNum: returnDoc.orderNum },
+              { orderNum: returnDoc.orderNum.replace(/^PO-/i, '') },
+              { orderNum: `PO-${returnDoc.orderNum.replace(/^PO-/i, '')}` }
+            ]
+          },
+          {
+            $set: {
+              tracking,
+              shippingMethod: carrier || 'DHL Paket',
+              status: 'printed'
+            }
+          }
+        ).catch(() => {});
+      }
 
       // Submit answer & resolution to Temu Open API
       try {
