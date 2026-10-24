@@ -180,7 +180,7 @@ const fetchTemuTrackingForOrder = async (userId, orderNum) => {
     };
   }
 
-  // 2. Query Temu OpenAPI across stores
+  // 2. Query Temu OpenAPI across stores in parallel
   const stores = (user.temuIntegrations && user.temuIntegrations.length > 0)
     ? user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret)
     : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
@@ -189,10 +189,23 @@ const fetchTemuTrackingForOrder = async (userId, orderNum) => {
     return { success: false, error: "No connected Temu stores found" };
   }
 
-  for (const store of stores) {
-    const found = await queryTemuForOrderTracking(store, cleanOrderSn);
-    if (found && found.tracking) {
-      console.log(`🎯 [Temu Tracking Lookup] Found tracking ${found.tracking} from store ${store.shopName} for ${orderNum}`);
+  // Prioritize matching regional store if known from prefix
+  const targetCountry = extractCountryFromOrderNum(orderNum);
+  const sortedStores = [...stores].sort((a, b) => {
+    const aMatch = (a.region === targetCountry || (a.shopName && a.shopName.includes(targetCountry))) ? -1 : 1;
+    const bMatch = (b.region === targetCountry || (b.shopName && b.shopName.includes(targetCountry))) ? -1 : 1;
+    return aMatch - bMatch;
+  });
+
+  const promises = sortedStores.map(store =>
+    queryTemuForOrderTracking(store, cleanOrderSn).then(res => (res && res.tracking ? { ...res, store: store.shopName } : null))
+  );
+
+  const results = await Promise.allSettled(promises);
+  for (const r of results) {
+    if (r.status === "fulfilled" && r.value && r.value.tracking) {
+      const found = r.value;
+      console.log(`🎯 [Temu Tracking Lookup] Found tracking ${found.tracking} from store ${found.store} for ${orderNum}`);
       await TemuOrder.updateOne(
         { user: user._id, $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }] },
         { $set: { tracking: found.tracking, status: "printed" } }
@@ -207,7 +220,7 @@ const fetchTemuTrackingForOrder = async (userId, orderNum) => {
         tracking: found.tracking,
         carrier: found.carrier,
         source: "temu_api",
-        store: store.shopName
+        store: found.store
       };
     }
   }
@@ -381,5 +394,7 @@ const syncAllRegionalReturns = async (userId) => {
 
 module.exports = {
   syncAllRegionalReturns,
-  extractCountryFromOrderNum
+  extractCountryFromOrderNum,
+  fetchTemuTrackingForOrder,
+  queryTemuForOrderTracking
 };
