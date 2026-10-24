@@ -18,7 +18,7 @@ try {
 // In-memory bot execution log and state
 const botState = {
   isRunning: false,
-  isAutoActive: true,
+  isAutoActive: false,
   lastRunAt: null,
   totalProcessed: 0,
   autoApproveUnshipped: false, // Orders are NOT refunded - shipping in progress policy
