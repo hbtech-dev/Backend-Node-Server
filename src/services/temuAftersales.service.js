@@ -103,6 +103,7 @@ const isActionable = (rec) => {
  */
 const extractTrackingFromTemuResult = (resObj) => {
   if (!resObj) return null;
+  if (typeof resObj !== 'object') return null;
   const pm = resObj.parentOrderMap || {};
   const ol = (resObj.orderList || [])[0] || {};
   const pkg = (resObj.packageList || pm.packageList || ol.packageList || [])[0] || {};
@@ -124,6 +125,7 @@ const extractTrackingFromTemuResult = (resObj) => {
  * Query Temu router for a single store to find tracking for an order
  */
 const queryTemuForOrderTracking = async (store, orderNum) => {
+  if (!store || !store.appKey || !store.appSecret || !orderNum) return null;
   if (!store || !orderNum) return null;
   const cleanSn = String(orderNum).replace(/^PO-/i, "").trim();
   const fullSn = `PO-${cleanSn}`;
