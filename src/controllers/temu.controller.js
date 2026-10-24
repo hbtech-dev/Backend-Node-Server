@@ -528,9 +528,9 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
 
   // Only sync returns when explicitly requested with ?sync=true
   if (req.query.sync === 'true') {
-    const temuSyncService = require('../services/temuSync.service');
-    if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
-      await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(err => console.warn('Return sync warning:', err.message));
+    const temuAftersalesService = require('../services/temuAftersales.service');
+    if (typeof temuAftersalesService.syncAllRegionalReturns === 'function') {
+      await temuAftersalesService.syncAllRegionalReturns(req.user.id).catch(err => console.warn('Aftersales sync warning:', err.message));
     }
   }
 
@@ -1063,4 +1063,16 @@ exports.testTemuApi = catchAsync(async (req, res, next) => {
   });
   const data = await response.json();
   res.status(200).json({ type, response: data });
+});
+/**
+ * One-click sync for all regional stores across Europe
+ */
+exports.syncAllRegionalReturns = catchAsync(async (req, res, next) => {
+  const temuAftersalesService = require('../services/temuAftersales.service');
+  const result = await temuAftersalesService.syncAllRegionalReturns(req.user.id);
+  res.status(200).json({
+    status: 'success',
+    message: `Successfully synchronized returns across ${result.syncedStores} regional stores!`,
+    data: result
+  });
 });
