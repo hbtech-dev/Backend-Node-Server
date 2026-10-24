@@ -56,7 +56,15 @@ const temuReturnSchema = new mongoose.Schema(
     carrier: {
       type: String,
       default: 'DHL Paket'
-    }
+    },
+    // Live status mirrored from Temu bg.aftersales.parentaftersales.list.get
+    temuStatusGroup: { type: Number, default: null },
+    temuStatus: { type: Number, default: null },
+    temuAfterSalesType: { type: Number, default: null },
+    availableActions: { type: [String], default: [] },
+    operateExpireAt: { type: Date, default: null },
+    temuCreatedAt: { type: Date, default: null },
+    lastTemuSyncAt: { type: Date, default: null }
   },
   {
     timestamps: true
