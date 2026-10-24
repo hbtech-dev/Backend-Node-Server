@@ -97,6 +97,128 @@ const isActionable = (rec) => {
   return Number(rec.afterSalesStatusGroup) === 1;
 };
 
+
+/**
+ * Extract tracking number and courier from any Temu order / package / shipment payload structure
+ */
+const extractTrackingFromTemuResult = (resObj) => {
+  if (!resObj) return null;
+  const pm = resObj.parentOrderMap || {};
+  const ol = (resObj.orderList || [])[0] || {};
+  const pkg = (resObj.packageList || pm.packageList || ol.packageList || [])[0] || {};
+  const shipList = (resObj.shippingList || pm.shippingList || ol.shippingList || [])[0] || {};
+
+  const candidates = [
+    pm.trackingNo, pm.tracking_no, pm.waybillNo, pm.waybill_no, pm.expressNo, pm.express_no,
+    pkg.trackingNo, pkg.tracking_no, pkg.waybillNo, pkg.waybill_no, pkg.expressNo, pkg.express_no, pkg.trackingNumber,
+    shipList.trackingNo, shipList.tracking_no, shipList.waybillNo, shipList.waybill_no, shipList.expressNo, shipList.express_no,
+    ol.trackingNo, ol.tracking_no, ol.waybillNo, ol.waybill_no, ol.expressNo, ol.express_no,
+    resObj.trackingNo, resObj.tracking_no, resObj.waybillNo, resObj.waybill_no, resObj.expressNo, resObj.express_no
+  ];
+  const foundTrk = candidates.find(c => Boolean(c && String(c).trim()));
+  const carrier = pm.shippingMethod || pkg.carrierName || pkg.expressCompanyName || shipList.expressCompanyName || ol.shippingMethod || "DHL Warenpost";
+  return foundTrk ? { tracking: String(foundTrk).trim(), carrier } : null;
+};
+
+/**
+ * Query Temu router for a single store to find tracking for an order
+ */
+const queryTemuForOrderTracking = async (store, orderNum) => {
+  if (!store || !orderNum) return null;
+  const cleanSn = String(orderNum).replace(/^PO-/i, "").trim();
+  const fullSn = `PO-${cleanSn}`;
+
+  try {
+    // 1. Try bg.order.shippinginfo.v2.get
+    let r = await callTemu(store, "bg.order.shippinginfo.v2.get", { parentOrderSn: fullSn });
+    if (!r.ok || !r.result) {
+      r = await callTemu(store, "bg.order.shippinginfo.v2.get", { parentOrderSn: cleanSn });
+    }
+    let found = extractTrackingFromTemuResult(r && r.result);
+
+    // 2. Try bg.order.detail.v2.get
+    if (!found) {
+      r = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: fullSn });
+      if (!r.ok || !r.result) {
+        r = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: cleanSn });
+      }
+      found = extractTrackingFromTemuResult(r && r.result);
+    }
+    return found;
+  } catch (e) {
+    return null;
+  }
+};
+
+/**
+ * On-demand lookup of real tracking for an order across all connected Temu regional stores
+ */
+const fetchTemuTrackingForOrder = async (userId, orderNum) => {
+  const user = await User.findById(userId);
+  if (!user) return { success: false, error: "User not found" };
+
+  const cleanOrderSn = String(orderNum).replace(/^PO-/i, "").trim();
+  const fullOrderSn = `PO-${cleanOrderSn}`;
+
+  // 1. Check local DB first
+  const existingOrder = await TemuOrder.findOne({
+    user: user._id,
+    $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }],
+    tracking: { $exists: true, $ne: "" }
+  }).lean();
+
+  if (existingOrder && existingOrder.tracking) {
+    await TemuReturn.updateMany(
+      { user: user._id, orderNum: { $in: [fullOrderSn, cleanOrderSn] } },
+      { $set: { trackingNumber: existingOrder.tracking, carrier: existingOrder.shippingMethod || "DHL Warenpost" } }
+    );
+    return {
+      success: true,
+      tracking: existingOrder.tracking,
+      carrier: existingOrder.shippingMethod || "DHL Warenpost",
+      source: "database"
+    };
+  }
+
+  // 2. Query Temu OpenAPI across stores
+  const stores = (user.temuIntegrations && user.temuIntegrations.length > 0)
+    ? user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret)
+    : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
+
+  if (!stores.length) {
+    return { success: false, error: "No connected Temu stores found" };
+  }
+
+  for (const store of stores) {
+    const found = await queryTemuForOrderTracking(store, cleanOrderSn);
+    if (found && found.tracking) {
+      console.log(`🎯 [Temu Tracking Lookup] Found tracking ${found.tracking} from store ${store.shopName} for ${orderNum}`);
+      await TemuOrder.updateOne(
+        { user: user._id, $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }] },
+        { $set: { tracking: found.tracking, status: "printed" } }
+      ).catch(() => {});
+      await TemuReturn.updateMany(
+        { user: user._id, orderNum: { $in: [fullOrderSn, cleanOrderSn] } },
+        { $set: { trackingNumber: found.tracking, carrier: found.carrier } }
+      ).catch(() => {});
+
+      return {
+        success: true,
+        tracking: found.tracking,
+        carrier: found.carrier,
+        source: "temu_api",
+        store: store.shopName
+      };
+    }
+  }
+
+  return {
+    success: false,
+    message: "Tracking number not exposed by Temu OpenAPI for this order.",
+    orderNum
+  };
+};
+
 const syncAllRegionalReturns = async (userId) => {
   const user = await User.findById(userId);
   if (!user) return { syncedStores: 0, newlySynced: 0, totalPending: 0, storeErrors: [] };
@@ -165,6 +287,19 @@ const syncAllRegionalReturns = async (userId) => {
       if (actionable && existing.status !== "pending" && !existing.resolutionNotes) {
         update.status = "pending";
       }
+      if (!existing.trackingNumber) {
+        const fetched = (matchedOrder && matchedOrder.tracking)
+          ? { tracking: matchedOrder.tracking, carrier: matchedOrder.shippingMethod }
+          : await queryTemuForOrderTracking(store, orderNum);
+        if (fetched && fetched.tracking) {
+          update.trackingNumber = fetched.tracking;
+          if (fetched.carrier) update.carrier = fetched.carrier;
+          await TemuOrder.updateOne(
+            { user: user._id, $or: [{ orderNum }, { orderNum: orderNum.replace(/^PO-/i, "") }, { orderNum: "PO-" + orderNum.replace(/^PO-/i, "") }] },
+            { $set: { tracking: fetched.tracking, status: "printed" } }
+          ).catch(() => {});
+        }
+      }
       await TemuReturn.updateOne({ _id: existing._id }, { $set: update });
       if (actionable) {
         const c = existing.country || extractCountryFromOrderNum(orderNum);
@@ -188,6 +323,21 @@ const syncAllRegionalReturns = async (userId) => {
     const country = (matchedOrder && matchedOrder.country) || extractCountryFromOrderNum(orderNum);
     const typeLabel = Number(rec.afterSalesType) === 1 ? "Refund-only (returnless) request" : "Return & refund request";
 
+    let trackingNumber = (matchedOrder && matchedOrder.tracking) || "";
+    let carrier = (matchedOrder && matchedOrder.shippingMethod) || "DHL Paket";
+
+    if (!trackingNumber) {
+      const fetched = await queryTemuForOrderTracking(store, orderNum);
+      if (fetched && fetched.tracking) {
+        trackingNumber = fetched.tracking;
+        if (fetched.carrier) carrier = fetched.carrier;
+        await TemuOrder.updateOne(
+          { user: user._id, $or: [{ orderNum }, { orderNum: orderNum.replace(/^PO-/i, "") }, { orderNum: "PO-" + orderNum.replace(/^PO-/i, "") }] },
+          { $set: { tracking: trackingNumber, status: "printed" } }
+        ).catch(() => {});
+      }
+    }
+
     await TemuReturn.create({
       user: user._id,
       returnId,
@@ -201,8 +351,8 @@ const syncAllRegionalReturns = async (userId) => {
         sku: (matchedOrder && matchedOrder.sku) || "",
         quantity: 1
       },
-      trackingNumber: (matchedOrder && matchedOrder.tracking) || "",
-      carrier: (matchedOrder && matchedOrder.shippingMethod) || "DHL Paket",
+      trackingNumber,
+      carrier,
       status: "pending",
       resolutionNotes: "",
       ...temuMeta

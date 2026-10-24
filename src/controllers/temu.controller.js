@@ -1076,3 +1076,15 @@ exports.syncAllRegionalReturns = catchAsync(async (req, res, next) => {
     data: result
   });
 });
+
+/**
+ * On-demand live lookup of order tracking from Temu OpenAPI / DB
+ */
+exports.fetchOrderTracking = catchAsync(async (req, res, next) => {
+  const temuAftersalesService = require("../services/temuAftersales.service");
+  const result = await temuAftersalesService.fetchTemuTrackingForOrder(req.user.id, req.params.orderNum);
+  res.status(200).json({
+    status: "success",
+    data: result
+  });
+});
