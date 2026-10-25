@@ -39,7 +39,8 @@ const temuReturnSchema = new mongoose.Schema(
     itemDetails: {
       articleName: String,
       sku: String,
-      quantity: Number
+      quantity: Number,
+      orderItemId: String
     },
     resolutionNotes: {
       type: String,

@@ -316,6 +316,22 @@ const syncAllRegionalReturns = async (userId) => {
     const matchedOrder = orderMap.get(orderNum) || orderMap.get(cleanSn) || orderMap.get(`PO-${cleanSn}`);
     const existing = existingMap.get(returnId) || existingMap.get(`RET-${orderNum}`);
 
+    // Parse Temu specific refund amount & reasons if present in payload
+    let temuRefund = null;
+    const rawAmount = rec.refundAmount ?? rec.applyRefundAmount ?? rec.refundFee ?? rec.actualRefundAmount;
+    if (rawAmount !== undefined && rawAmount !== null) {
+      const num = Number(rawAmount);
+      if (!isNaN(num) && num > 0) {
+        temuRefund = (Number.isInteger(num) && num > 100 && (!matchedOrder || num > (Number(matchedOrder.price) || 0) * 2)) ? num / 100 : num;
+      }
+    }
+
+    const orderItemSn = rec.orderItemSn || rec.orderItemId || rec.orderGoodsId || rec.orderDetailId || '';
+    const rawReason = rec.buyerReasonDesc || rec.buyerReason || rec.reason || rec.afterSalesReason || rec.buyerApplyReason || '';
+    const buyerComment = rec.buyerComment || rec.comment || rec.afterSalesDesc || '';
+    let reasonText = rawReason ? (buyerComment ? `${rawReason} (Buyer: "${buyerComment}")` : rawReason) : null;
+
+
     const temuMeta = {
       temuStatusGroup: Number(rec.afterSalesStatusGroup),
       temuStatus: rec.parentAfterSalesStatus,
@@ -337,6 +353,13 @@ const syncAllRegionalReturns = async (userId) => {
       // If Temu marks it awaiting seller action and it has no manual resolution, ensure it's pending
       if (actionable && existing.status !== 'pending' && !existing.resolutionNotes) {
         update.status = 'pending';
+      }
+      if (temuRefund) update.refundAmount = temuRefund;
+      if (reasonText && (!existing.reason || existing.reason.startsWith('Customer Returnless') || existing.reason.startsWith('Return & refund') || existing.reason.startsWith('Refund-only'))) {
+        update.reason = reasonText;
+      }
+      if (orderItemSn) {
+        update['itemDetails.orderItemId'] = orderItemSn;
       }
       if (!existing.trackingNumber) {
         const fetched = (matchedOrder && matchedOrder.tracking)
@@ -386,12 +409,13 @@ const syncAllRegionalReturns = async (userId) => {
       orderNum,
       buyerName: (matchedOrder && (matchedOrder.buyerName || matchedOrder.name)) || 'Temu Customer',
       country,
-      refundAmount: (matchedOrder && Number(matchedOrder.price)) || 19.95,
-      reason: `${typeLabel} on Temu (${country})`,
+      refundAmount: temuRefund || (matchedOrder && Number(matchedOrder.price)) || 19.95,
+      reason: reasonText || `${typeLabel} on Temu (${country})`,
       itemDetails: {
         articleName: (matchedOrder && matchedOrder.articleName) || 'Temu Product',
         sku: (matchedOrder && matchedOrder.sku) || '',
-        quantity: 1
+        quantity: 1,
+        orderItemId: orderItemSn
       },
       trackingNumber,
       carrier,
