@@ -12,9 +12,9 @@ module.exports = {
   },
   
   jwt: {
-    secret: process.env.JWT_SECRET || 'your-secret-key-change-in-production',
+    secret: process.env.JWT_SECRET || 'ederapp_secure_jwt_secret_production_2026_x89',
     expiresIn: process.env.JWT_EXPIRES_IN || '7d',
-    refreshSecret: process.env.JWT_REFRESH_SECRET || 'your-refresh-secret-key',
+    refreshSecret: process.env.JWT_REFRESH_SECRET || 'ederapp_secure_refresh_secret_production_2026_z99',
     refreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '30d'
   },
   
