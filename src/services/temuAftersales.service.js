@@ -36,26 +36,27 @@ const signValue = (v) => (v !== null && typeof v === "object" ? JSON.stringify(v
  * Call Temu router. Returns { ok, result, errorCode, errorMsg }.
  */
 const callTemu = async (store, type, params = {}) => {
+  const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = {
     app_key: store.appKey,
     access_token: store.accessToken || "",
-    timestamp: Math.floor(Date.now() / 1000).toString(),
+    timestamp,
     type,
-    data_type: "JSON",
     ...params
   };
-  const signStr = store.appSecret + Object.keys(payload).sort().map(k => k + signValue(payload[k])).join("") + store.appSecret;
+  const sortedKeys = Object.keys(payload).sort();
+  const signStr = store.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join("") + store.appSecret;
   const sign = crypto.createHash("md5").update(signStr).digest("hex").toUpperCase();
   try {
     const res = await httpFetch(TEMU_ROUTER_URL, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ...payload, sign }),
-      timeout: 10000
+      timeout: 15000
     });
     const data = await res.json();
-    const ok = data && (data.success === true || data.errorCode === 1000000);
-    return { ok, result: data && data.result, errorCode: data && data.errorCode, errorMsg: data && data.errorMsg };
+    const ok = data && (data.success === true || data.errorCode === 1000000 || data.errorCode === 0);
+    return { ok, result: data && (data.result || data.data), errorCode: data && data.errorCode, errorMsg: data && (data.errorMsg || data.error_msg) };
   } catch (err) {
     return { ok: false, errorCode: "NETWORK", errorMsg: err.message };
   }
