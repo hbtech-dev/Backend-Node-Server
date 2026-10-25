@@ -536,7 +536,17 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
 
   let returnsList = [];
   if (mongoose.connection.readyState === 1) {
-    returnsList = await TemuReturn.find({ user: req.user.id }).sort({ createdAt: -1 }).lean();
+    const filter = { user: req.user.id };
+    if (req.query.status) {
+      filter.status = req.query.status;
+      if (req.query.status === 'pending') {
+        filter.$or = [{ temuStatusGroup: 1 }, { temuStatusGroup: { $exists: false } }];
+        filter.$and = [
+          { $or: [{ resolutionNotes: '' }, { resolutionNotes: null }, { resolutionNotes: { $exists: false } }] }
+        ];
+      }
+    }
+    returnsList = await TemuReturn.find(filter).sort({ createdAt: -1 }).lean();
   }
 
   res.status(200).json({

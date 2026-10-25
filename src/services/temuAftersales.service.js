@@ -92,8 +92,6 @@ const fetchStoreAftersales = async (store) => {
  * Check if the return is awaiting seller action on Temu
  */
 const isActionable = (rec) => {
-  const ops = Array.isArray(rec.availableOperateList) ? rec.availableOperateList : [];
-  if (ops.length > 0) return true;
   return Number(rec.afterSalesStatusGroup) === 1;
 };
 
@@ -269,19 +267,57 @@ const syncAllRegionalReturns = async (userId) => {
   let closedUpdated = 0;
   const countries = {};
 
+  // Bulk query existing records & matched orders to eliminate hundreds of slow sequential roundtrips
+  const allReturnIds = [];
+  const allOrderNums = [];
+  for (const { rec } of found) {
+    if (rec.parentAfterSalesSn) {
+      allReturnIds.push(rec.parentAfterSalesSn);
+    }
+    if (rec.parentOrderSn) {
+      allReturnIds.push(`RET-${rec.parentOrderSn}`);
+      const cleanSn = String(rec.parentOrderSn).replace(/^PO-/i, '').trim();
+      allOrderNums.push(cleanSn);
+      allOrderNums.push(`PO-${cleanSn}`);
+    }
+  }
+
+  const existingReturns = await TemuReturn.find({
+    user: user._id,
+    returnId: { $in: allReturnIds }
+  }).lean();
+  const existingMap = new Map();
+  for (const doc of existingReturns) {
+    existingMap.set(doc.returnId, doc);
+    if (doc.orderNum) {
+      existingMap.set(`RET-${doc.orderNum}`, doc);
+    }
+  }
+
+  const matchedOrders = await TemuOrder.find({
+    user: user._id,
+    orderNum: { $in: allOrderNums }
+  }).lean();
+  const orderMap = new Map();
+  for (const o of matchedOrders) {
+    orderMap.set(o.orderNum, o);
+    const clean = String(o.orderNum).replace(/^PO-/i, '').trim();
+    orderMap.set(clean, o);
+    orderMap.set(`PO-${clean}`, o);
+  }
+
   for (const { store, rec } of found) {
     const returnId = rec.parentAfterSalesSn;
     const orderNum = rec.parentOrderSn;
     if (!returnId || !orderNum) continue;
 
     const actionable = isActionable(rec);
-    const existing = await TemuReturn.findOne({
-      user: user._id,
-      returnId: { $in: [returnId, `RET-${orderNum}`] }
-    });
+    const cleanSn = String(orderNum).replace(/^PO-/i, '').trim();
+    const matchedOrder = orderMap.get(orderNum) || orderMap.get(cleanSn) || orderMap.get(`PO-${cleanSn}`);
+    const existing = existingMap.get(returnId) || existingMap.get(`RET-${orderNum}`);
 
     const temuMeta = {
-      temuStatusGroup: rec.afterSalesStatusGroup,
+      temuStatusGroup: Number(rec.afterSalesStatusGroup),
       temuStatus: rec.parentAfterSalesStatus,
       temuAfterSalesType: rec.afterSalesType,
       availableActions: Array.isArray(rec.availableOperateList) ? rec.availableOperateList.map(String) : [],
@@ -293,25 +329,25 @@ const syncAllRegionalReturns = async (userId) => {
     if (existing) {
       const update = { ...temuMeta };
       // If Temu closed it (group 5, 6, 7) and it's still open without manual notes, close it
-      if (!actionable && existing.status === "pending" && !existing.resolutionNotes) {
-        update.status = "refunded";
+      if (!actionable && existing.status === 'pending' && !existing.resolutionNotes) {
+        update.status = Number(rec.afterSalesStatusGroup) === 7 ? 'rejected' : 'refunded';
         update.resolvedAt = new Date();
         closedUpdated++;
       }
       // If Temu marks it awaiting seller action and it has no manual resolution, ensure it's pending
-      if (actionable && existing.status !== "pending" && !existing.resolutionNotes) {
-        update.status = "pending";
+      if (actionable && existing.status !== 'pending' && !existing.resolutionNotes) {
+        update.status = 'pending';
       }
       if (!existing.trackingNumber) {
         const fetched = (matchedOrder && matchedOrder.tracking)
           ? { tracking: matchedOrder.tracking, carrier: matchedOrder.shippingMethod }
-          : await queryTemuForOrderTracking(store, orderNum);
+          : (actionable ? await queryTemuForOrderTracking(store, orderNum) : null);
         if (fetched && fetched.tracking) {
           update.trackingNumber = fetched.tracking;
           if (fetched.carrier) update.carrier = fetched.carrier;
           await TemuOrder.updateOne(
-            { user: user._id, $or: [{ orderNum }, { orderNum: orderNum.replace(/^PO-/i, "") }, { orderNum: "PO-" + orderNum.replace(/^PO-/i, "") }] },
-            { $set: { tracking: fetched.tracking, status: "printed" } }
+            { user: user._id, $or: [{ orderNum }, { orderNum: cleanSn }, { orderNum: `PO-${cleanSn}` }] },
+            { $set: { tracking: fetched.tracking, status: 'printed' } }
           ).catch(() => {});
         }
       }
@@ -326,20 +362,11 @@ const syncAllRegionalReturns = async (userId) => {
     // Do not import closed historical returns as pending
     if (!actionable) continue;
 
-    const matchedOrder = await TemuOrder.findOne({
-      user: user._id,
-      $or: [
-        { orderNum },
-        { orderNum: orderNum.replace(/^PO-/i, "") },
-        { orderNum: "PO-" + orderNum.replace(/^PO-/i, "") }
-      ]
-    }).lean();
-
     const country = (matchedOrder && matchedOrder.country) || extractCountryFromOrderNum(orderNum);
-    const typeLabel = Number(rec.afterSalesType) === 1 ? "Refund-only (returnless) request" : "Return & refund request";
+    const typeLabel = Number(rec.afterSalesType) === 1 ? 'Refund-only (returnless) request' : 'Return & refund request';
 
-    let trackingNumber = (matchedOrder && matchedOrder.tracking) || "";
-    let carrier = (matchedOrder && matchedOrder.shippingMethod) || "DHL Paket";
+    let trackingNumber = (matchedOrder && matchedOrder.tracking) || '';
+    let carrier = (matchedOrder && matchedOrder.shippingMethod) || 'DHL Paket';
 
     if (!trackingNumber) {
       const fetched = await queryTemuForOrderTracking(store, orderNum);
@@ -347,41 +374,43 @@ const syncAllRegionalReturns = async (userId) => {
         trackingNumber = fetched.tracking;
         if (fetched.carrier) carrier = fetched.carrier;
         await TemuOrder.updateOne(
-          { user: user._id, $or: [{ orderNum }, { orderNum: orderNum.replace(/^PO-/i, "") }, { orderNum: "PO-" + orderNum.replace(/^PO-/i, "") }] },
-          { $set: { tracking: trackingNumber, status: "printed" } }
+          { user: user._id, $or: [{ orderNum }, { orderNum: cleanSn }, { orderNum: `PO-${cleanSn}` }] },
+          { $set: { tracking: trackingNumber, status: 'printed' } }
         ).catch(() => {});
       }
     }
 
-    await TemuReturn.create({
+    const createdDoc = await TemuReturn.create({
       user: user._id,
       returnId,
       orderNum,
-      buyerName: (matchedOrder && (matchedOrder.buyerName || matchedOrder.name)) || "Temu Customer",
+      buyerName: (matchedOrder && (matchedOrder.buyerName || matchedOrder.name)) || 'Temu Customer',
       country,
       refundAmount: (matchedOrder && Number(matchedOrder.price)) || 19.95,
       reason: `${typeLabel} on Temu (${country})`,
       itemDetails: {
-        articleName: (matchedOrder && matchedOrder.articleName) || "Temu Product",
-        sku: (matchedOrder && matchedOrder.sku) || "",
+        articleName: (matchedOrder && matchedOrder.articleName) || 'Temu Product',
+        sku: (matchedOrder && matchedOrder.sku) || '',
         quantity: 1
       },
       trackingNumber,
       carrier,
-      status: "pending",
-      resolutionNotes: "",
+      status: 'pending',
+      resolutionNotes: '',
       ...temuMeta
     });
+    existingMap.set(returnId, createdDoc);
+    existingMap.set(`RET-${orderNum}`, createdDoc);
     newlySynced++;
     countries[country] = (countries[country] || 0) + 1;
   }
 
   const totalPending = await TemuReturn.countDocuments({
     user: user._id,
-    status: "pending",
-    $or: [{ resolutionNotes: "" }, { resolutionNotes: { $exists: false } }, { resolutionNotes: null }]
+    status: 'pending',
+    temuStatusGroup: 1,
+    $or: [{ resolutionNotes: '' }, { resolutionNotes: { $exists: false } }, { resolutionNotes: null }]
   });
-
   console.log(`✅ [Temu Regional Sync] Done. Actionable pending now: ${totalPending}`);
   return {
     syncedStores: stores.length,

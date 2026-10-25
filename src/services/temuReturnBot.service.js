@@ -293,15 +293,20 @@ const runReturnBotCycle = async (userId) => {
     const users = await User.find(userQuery);
 
     for (const user of users) {
-      // Refresh user returns from Temu first
-      if (typeof temuSyncService.syncUserTemuReturnsAndIssues === 'function') {
-        await temuSyncService.syncUserTemuReturnsAndIssues(user).catch(() => {});
+      // Refresh user returns from Temu OpenAPI aftersales service
+      const temuAftersalesService = require('./temuAftersales.service');
+      if (typeof temuAftersalesService.syncAllRegionalReturns === 'function') {
+        await temuAftersalesService.syncAllRegionalReturns(user._id).catch(() => {});
       }
 
-      // Find all pending returns for this user
+      // Find all pending returns for this user awaiting seller action
       const pendingReturns = await TemuReturn.find({
         user: user._id,
-        status: 'pending'
+        status: 'pending',
+        $or: [{ temuStatusGroup: 1 }, { temuStatusGroup: { $exists: false } }],
+        $and: [
+          { $or: [{ resolutionNotes: '' }, { resolutionNotes: null }, { resolutionNotes: { $exists: false } }] }
+        ]
       });
 
       console.log(`🤖 [Temu Return Bot] Found ${pendingReturns.length} pending returns for user ${user.email || user._id}`);
