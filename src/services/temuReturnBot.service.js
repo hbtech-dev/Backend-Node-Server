@@ -211,32 +211,32 @@ const processSingleReturn = async (user, returnDoc) => {
   const trackingNo = analysis.trackingNo;
   const carrier = analysis.carrier;
 
-  // 1. Update Return status in DB to 'rejected' (cancellation/refund declined because shipping is in progress)
-  returnDoc.status = 'rejected';
-  returnDoc.resolutionNotes = replyText;
-  returnDoc.resolvedAt = new Date();
-  await returnDoc.save();
+  // 1. Attach tracking number to internal TemuOrder and keep it active in fulfillment
+  if (trackingNo) {
+    returnDoc.trackingNumber = trackingNo;
+    returnDoc.carrier = carrier || returnDoc.carrier || 'DHL Warenpost';
+    await returnDoc.save();
 
-  // 2. Attach tracking number to internal TemuOrder and keep it active in fulfillment
-  await TemuOrder.updateOne(
-    {
-      user: user._id,
-      $or: [
-        { orderNum: returnDoc.orderNum },
-        { orderNum: returnDoc.orderNum.replace(/^PO-/i, '') },
-        { orderNum: `PO-${returnDoc.orderNum.replace(/^PO-/i, '')}` }
-      ]
-    },
-    {
-      $set: {
-        tracking: trackingNo,
-        shippingMethod: carrier,
-        status: 'printed'
+    await TemuOrder.updateOne(
+      {
+        user: user._id,
+        $or: [
+          { orderNum: returnDoc.orderNum },
+          { orderNum: returnDoc.orderNum.replace(/^PO-/i, '') },
+          { orderNum: `PO-${returnDoc.orderNum.replace(/^PO-/i, '')}` }
+        ]
+      },
+      {
+        $set: {
+          tracking: trackingNo,
+          shippingMethod: carrier,
+          status: 'printed'
+        }
       }
-    }
-  ).catch(() => {});
+    ).catch(() => {});
+  }
 
-  // 3. Submit reply and rejection resolution to Temu Open API
+  // 2. Submit reply and rejection resolution to Temu Open API
   let temuSubmitted = false;
   try {
     const integration = (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
@@ -245,6 +245,14 @@ const processSingleReturn = async (user, returnDoc) => {
     }
   } catch (err) {
     console.warn(`[Temu Bot] Return API submission warning for ${returnDoc.returnId}:`, err.message);
+  }
+
+  // Only close/reject in DB if Temu OpenAPI confirmed successful submission
+  if (temuSubmitted) {
+    returnDoc.status = 'rejected';
+    returnDoc.resolutionNotes = replyText;
+    returnDoc.resolvedAt = new Date();
+    await returnDoc.save();
   }
 
   const logEntry = {
