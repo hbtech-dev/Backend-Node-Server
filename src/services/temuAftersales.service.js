@@ -99,60 +99,91 @@ const isActionable = (rec) => {
 
 /**
  * Extract tracking number and courier from any Temu order / package / shipment payload structure
+ * Supports bg.logistics.shipment.v2.get and trackingNum / logisticsStatus specifications
  */
 const extractTrackingFromTemuResult = (resObj) => {
   if (!resObj) return null;
   if (typeof resObj !== 'object') return null;
   const pm = resObj.parentOrderMap || {};
   const ol = (resObj.orderList || [])[0] || {};
-  const pkg = (resObj.packageList || pm.packageList || ol.packageList || [])[0] || {};
-  const shipList = (resObj.shippingList || pm.shippingList || ol.shippingList || [])[0] || {};
+  const pkg = (resObj.packageList || pm.packageList || ol.packageList || resObj.packageDTOList || [])[0] || {};
+  const shipList = (resObj.shippingList || pm.shippingList || ol.shippingList || resObj.shipmentList || resObj.sendRequestList || [])[0] || {};
+  const shipment = resObj.shipment || resObj.shipmentInfo || {};
 
   const candidates = [
-    pm.trackingNo, pm.tracking_no, pm.waybillNo, pm.waybill_no, pm.expressNo, pm.express_no,
-    pkg.trackingNo, pkg.tracking_no, pkg.waybillNo, pkg.waybill_no, pkg.expressNo, pkg.express_no, pkg.trackingNumber,
-    shipList.trackingNo, shipList.tracking_no, shipList.waybillNo, shipList.waybill_no, shipList.expressNo, shipList.express_no,
-    ol.trackingNo, ol.tracking_no, ol.waybillNo, ol.waybill_no, ol.expressNo, ol.express_no,
-    resObj.trackingNo, resObj.tracking_no, resObj.waybillNo, resObj.waybill_no, resObj.expressNo, resObj.express_no
+    resObj.trackingNumber, resObj.tracking_number, resObj.trackingNum, resObj.tracking_num,
+    resObj.trackingNo, resObj.tracking_no, resObj.waybillNo, resObj.waybill_no, resObj.expressNo, resObj.express_no,
+    shipment.trackingNumber, shipment.trackingNum, shipment.trackingNo, shipment.waybillNo,
+    pm.trackingNo, pm.tracking_no, pm.trackingNum, pm.trackingNumber, pm.waybillNo, pm.waybill_no, pm.expressNo, pm.express_no,
+    pkg.trackingNo, pkg.tracking_no, pkg.trackingNum, pkg.trackingNumber, pkg.waybillNo, pkg.waybill_no, pkg.expressNo, pkg.express_no,
+    shipList.trackingNo, shipList.tracking_no, shipList.trackingNum, shipList.trackingNumber, shipList.waybillNo, shipList.waybill_no, shipList.expressNo, shipList.express_no,
+    ol.trackingNo, ol.tracking_no, ol.trackingNum, ol.trackingNumber, ol.waybillNo, ol.waybill_no, ol.expressNo, ol.express_no
   ];
-  const foundTrk = candidates.find(c => Boolean(c && String(c).trim()));
-  const carrier = pm.shippingMethod || pkg.carrierName || pkg.expressCompanyName || shipList.expressCompanyName || ol.shippingMethod || "DHL Warenpost";
-  return foundTrk ? { tracking: String(foundTrk).trim(), carrier } : null;
+  const foundTrk = candidates.find(c => Boolean(c && String(c).trim() && String(c).trim() !== "null" && String(c).trim() !== "undefined"));
+
+  const carrierCandidates = [
+    resObj.carrierName, resObj.carrier_name, resObj.carrierType, resObj.carrier_type, resObj.expressCompanyName,
+    shipment.carrierName, shipment.carrierType, shipment.expressCompanyName,
+    pkg.carrierName, pkg.carrierType, pkg.expressCompanyName,
+    shipList.carrierName, shipList.carrierType, shipList.expressCompanyName,
+    pm.shippingMethod, ol.shippingMethod
+  ];
+  const foundCarrier = carrierCandidates.find(c => Boolean(c && String(c).trim() && String(c).trim() !== "null")) || "DHL Warenpost";
+
+  const logisticsStatus = resObj.logisticsStatus || resObj.logistics_status || shipment.logisticsStatus || pkg.logisticsStatus || null;
+
+  return foundTrk ? { tracking: String(foundTrk).trim(), carrier: String(foundCarrier).trim(), logisticsStatus } : null;
 };
 
 /**
- * Query Temu router for a single store to find tracking for an order
+ * Query Temu router across logistics & order endpoints (including bg.logistics.shipment.v2.get)
  */
-const queryTemuForOrderTracking = async (store, orderNum) => {
+const queryTemuForOrderTracking = async (store, orderNum, childOrderSn = null) => {
   if (!store || !store.appKey || !store.appSecret || !orderNum) return null;
-  if (!store || !orderNum) return null;
   const cleanSn = String(orderNum).replace(/^PO-/i, "").trim();
   const fullSn = `PO-${cleanSn}`;
+  const targetChildSn = childOrderSn || cleanSn;
 
-  try {
-    // 1. Try bg.order.shippinginfo.v2.get
-    let r = await callTemu(store, "bg.order.shippinginfo.v2.get", { parentOrderSn: fullSn });
-    if (!r.ok || !r.result) {
-      r = await callTemu(store, "bg.order.shippinginfo.v2.get", { parentOrderSn: cleanSn });
-    }
-    let found = extractTrackingFromTemuResult(r && r.result);
+  const endpointsToTry = [
+    // 1. bg.logistics.shipment.v2.get (Temu official carrier type & shipment getter)
+    { type: "bg.logistics.shipment.v2.get", params: { parentOrderSn: fullSn, orderSn: targetChildSn } },
+    { type: "bg.logistics.shipment.v2.get", params: { parentOrderSn: cleanSn, orderSn: targetChildSn } },
+    { type: "bg.logistics.shipment.v2.get", params: { parentOrderSn: fullSn } },
 
-    // 2. Try bg.order.detail.v2.get
-    if (!found) {
-      r = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: fullSn });
-      if (!r.ok || !r.result) {
-        r = await callTemu(store, "bg.order.detail.v2.get", { parentOrderSn: cleanSn });
+    // 2. bg.logistics.shipment.get
+    { type: "bg.logistics.shipment.get", params: { parentOrderSn: fullSn, orderSn: targetChildSn } },
+    { type: "bg.logistics.shipment.get", params: { parentOrderSn: cleanSn, orderSn: targetChildSn } },
+
+    // 3. bg.order.shippinginfo.v2.get
+    { type: "bg.order.shippinginfo.v2.get", params: { parentOrderSn: fullSn } },
+    { type: "bg.order.shippinginfo.v2.get", params: { parentOrderSn: cleanSn } },
+
+    // 4. bg.order.detail.v2.get
+    { type: "bg.order.detail.v2.get", params: { parentOrderSn: fullSn } },
+    { type: "bg.order.detail.v2.get", params: { parentOrderSn: cleanSn } },
+
+    // 5. bg.logistics.shipment.result.get
+    { type: "bg.logistics.shipment.result.get", params: { parentOrderSn: fullSn, orderSn: targetChildSn } }
+  ];
+
+  for (const ep of endpointsToTry) {
+    try {
+      const r = await callTemu(store, ep.type, ep.params);
+      if (r && r.ok && r.result) {
+        const found = extractTrackingFromTemuResult(r.result);
+        if (found && found.tracking) {
+          console.log(`🎯 [Temu Tracking Lookup] Hit on ${ep.type} for ${orderNum}: ${found.tracking} (${found.carrier})`);
+          return found;
+        }
       }
-      found = extractTrackingFromTemuResult(r && r.result);
-    }
-    return found;
-  } catch (e) {
-    return null;
+    } catch (_) {}
   }
+
+  return null;
 };
 
 /**
- * On-demand lookup of real tracking for an order across all connected Temu regional stores
+ * On-demand lookup of real tracking for an order across local DB, return records, and Temu OpenAPI
  */
 const fetchTemuTrackingForOrder = async (userId, orderNum) => {
   const user = await User.findById(userId);
@@ -161,27 +192,46 @@ const fetchTemuTrackingForOrder = async (userId, orderNum) => {
   const cleanOrderSn = String(orderNum).replace(/^PO-/i, "").trim();
   const fullOrderSn = `PO-${cleanOrderSn}`;
 
-  // 1. Check local DB first
+  // 1. Check local DB (TemuOrder) first
   const existingOrder = await TemuOrder.findOne({
     user: user._id,
-    $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }],
-    tracking: { $exists: true, $ne: "" }
+    $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }]
   }).lean();
 
-  if (existingOrder && existingOrder.tracking) {
+  if (existingOrder && existingOrder.tracking && existingOrder.tracking.trim()) {
     await TemuReturn.updateMany(
       { user: user._id, orderNum: { $in: [fullOrderSn, cleanOrderSn] } },
-      { $set: { trackingNumber: existingOrder.tracking, carrier: existingOrder.shippingMethod || "DHL Warenpost" } }
-    );
+      { $set: { trackingNumber: existingOrder.tracking.trim(), carrier: existingOrder.shippingMethod || "DHL Warenpost" } }
+    ).catch(() => {});
     return {
       success: true,
-      tracking: existingOrder.tracking,
+      tracking: existingOrder.tracking.trim(),
       carrier: existingOrder.shippingMethod || "DHL Warenpost",
       source: "database"
     };
   }
 
-  // 2. Query Temu OpenAPI across stores in parallel
+  // 2. Check TemuReturn record if it already has tracking
+  const existingReturn = await TemuReturn.findOne({
+    user: user._id,
+    $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }],
+    trackingNumber: { $exists: true, $ne: "" }
+  }).lean();
+
+  if (existingReturn && existingReturn.trackingNumber && existingReturn.trackingNumber.trim()) {
+    await TemuOrder.updateOne(
+      { user: user._id, $or: [{ orderNum: fullOrderSn }, { orderNum: cleanOrderSn }] },
+      { $set: { tracking: existingReturn.trackingNumber.trim() } }
+    ).catch(() => {});
+    return {
+      success: true,
+      tracking: existingReturn.trackingNumber.trim(),
+      carrier: existingReturn.carrier || "DHL Warenpost",
+      source: "database"
+    };
+  }
+
+  // 3. Query Temu OpenAPI across stores in parallel
   const stores = (user.temuIntegrations && user.temuIntegrations.length > 0)
     ? user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret)
     : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
@@ -189,6 +239,8 @@ const fetchTemuTrackingForOrder = async (userId, orderNum) => {
   if (!stores.length) {
     return { success: false, error: "No connected Temu stores found" };
   }
+
+  const childOrderSn = (existingOrder && (existingOrder.temuOrderId || existingOrder.orderId)) || cleanOrderSn;
 
   // Prioritize matching regional store if known from prefix
   const targetCountry = extractCountryFromOrderNum(orderNum);
@@ -199,7 +251,7 @@ const fetchTemuTrackingForOrder = async (userId, orderNum) => {
   });
 
   const promises = sortedStores.map(store =>
-    queryTemuForOrderTracking(store, cleanOrderSn).then(res => (res && res.tracking ? { ...res, store: store.shopName } : null))
+    queryTemuForOrderTracking(store, cleanOrderSn, childOrderSn).then(res => (res && res.tracking ? { ...res, store: store.shopName } : null))
   );
 
   const results = await Promise.allSettled(promises);
