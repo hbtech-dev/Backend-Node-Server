@@ -7,7 +7,7 @@ module.exports = {
   mongodb: {
     url: process.env.MONGODB_URI || process.env.MONGO_URI || '',
     options: {
-      serverSelectionTimeoutMS: parseInt(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS || '5000', 10)
+      serverSelectionTimeoutMS: parseInt(process.env.MONGO_SERVER_SELECTION_TIMEOUT_MS || '15000', 10)
     }
   },
   

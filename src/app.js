@@ -30,10 +30,15 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/v1/health', (req, res) => {
+  const mongoose = require('mongoose');
   res.status(200).json({
     status: 'success',
     message: 'Server is healthy',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    database: {
+      connected: mongoose.connection.readyState === 1,
+      readyState: mongoose.connection.readyState
+    }
   });
 });
 

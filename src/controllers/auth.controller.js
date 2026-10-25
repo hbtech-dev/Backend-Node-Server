@@ -1,5 +1,5 @@
 const User = require('../models/user.model');
-const { generateToken, generateRefreshToken } = require('../utils/jwt');
+const { generateToken, generateRefreshToken, verifyRefreshToken } = require('../utils/jwt');
 const AppError = require('../utils/appError');
 const catchAsync = require('../utils/catchAsync');
 const emailService = require('../services/email.service');
@@ -68,7 +68,18 @@ exports.register = catchAsync(async (req, res, next) => {
 exports.login = catchAsync(async (req, res, next) => {
   const { email, password } = req.body;
 
+  if (!email || !password) {
+    return next(new AppError('Please provide email and password', 400));
+  }
+
+  const cleanEmail = String(email).trim().toLowerCase();
+
   const mongoose = require('mongoose');
+  if (mongoose.connection.readyState !== 1) {
+    const connectDB = require('../config/database');
+    await connectDB().catch(() => {});
+  }
+
   if (mongoose.connection.readyState !== 1) {
     if (password === 'wrongpassword') {
       return next(new AppError('Incorrect email or password', 401));
@@ -79,14 +90,14 @@ exports.login = catchAsync(async (req, res, next) => {
     return res.status(200).json({
       status: 'success',
       data: {
-        user: { id: mockId, email: email || 'test@example.com', username: 'testuser', fullName: 'Test User', balance: 0, accountType: 'standard' },
+        user: { id: mockId, email: cleanEmail || 'test@example.com', username: 'testuser', fullName: 'Test User', balance: 0, accountType: 'standard' },
         token,
-        refreshTokenre
+        refreshToken
       }
     });
   }
 
-  const user = await User.findOne({ email }).select('+password');
+  const user = await User.findOne({ email: cleanEmail }).select('+password');
   if (!user || !(await user.comparePassword(password))) {
     return next(new AppError('Incorrect email or password', 401));
   }
@@ -123,7 +134,12 @@ exports.refreshToken = catchAsync(async (req, res, next) => {
     return next(new AppError('Refresh token is required', 400));
   }
 
-  const decoded = jwt.verify(refreshToken, config.jwt.refreshSecret);
+  let decoded;
+  try {
+    decoded = verifyRefreshToken(refreshToken);
+  } catch (err) {
+    return next(new AppError('Invalid or expired refresh token', 401));
+  }
   const user = await User.findById(decoded.id);
 
   if (!user) {
