@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const TemuTicket = require('../models/temuTicket.model');
 const TemuOrder = require('../models/temuOrder.model');
+const TemuReturn = require('../models/temuReturn.model');
 const User = require('../models/user.model');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
@@ -96,6 +97,61 @@ const findStoreForTicket = (user, ticket) => {
 };
 
 /**
+ * Helper to compute detailed customer inquiry information and product name
+ */
+const resolveTicketDetails = (rawReason, comment, afterSalesType, matchedOrder, returnRecord) => {
+  let articleName = matchedOrder?.articleName ||
+                    matchedOrder?.items?.[0]?.articleName ||
+                    matchedOrder?.items?.[0]?.name ||
+                    returnRecord?.itemDetails?.articleName ||
+                    'Temu Product';
+
+  let sku = matchedOrder?.sku ||
+            matchedOrder?.items?.[0]?.sku ||
+            returnRecord?.itemDetails?.sku ||
+            '';
+
+  const returnReason = returnRecord?.reason || '';
+  const effectiveReason = (rawReason && rawReason !== 'Customer Inquiry')
+    ? rawReason
+    : (returnReason && !returnReason.includes('Customer Returnless'))
+      ? returnReason
+      : (Number(afterSalesType) === 1 || returnRecord?.temuAfterSalesType === 1)
+        ? 'Refund-only (returnless) request on Temu'
+        : (Number(afterSalesType) === 2 || returnRecord?.temuAfterSalesType === 2)
+          ? 'Return & refund request on Temu'
+          : 'Customer Delivery / After-Sales Inquiry';
+
+  const combinedDesc = comment ? `${effectiveReason} (Buyer note: "${comment}")` : effectiveReason;
+  const lower = `${effectiveReason} ${comment}`.toLowerCase();
+
+  let scene = 'Delivery Exception';
+  let subject = effectiveReason;
+  let description = combinedDesc;
+
+  if (lower.includes("haven't received") || lower.includes('not received') || lower.includes('no update') || lower.includes('transit')) {
+    scene = 'Tracking status - no update';
+    subject = "Haven't received the package (Delivery non-receipt claim)";
+    description = comment ? `Buyer reported non-receipt: "${comment}". Package is dispatched with carrier tracking.` : "Buyer reported: Haven't received the package. Carrier tracking is in transit.";
+  } else if (lower.includes('refund-only') || lower.includes('returnless')) {
+    const amt = returnRecord?.refundAmount ? ` (€${returnRecord.refundAmount.toFixed(2)})` : '';
+    scene = 'Refund-only Dispute';
+    subject = `Refund-only claim${amt} on Temu`;
+    description = `Buyer requested a refund-only claim${amt} on Temu without returning the package.`;
+  } else if (lower.includes('pickup') || lower.includes('recogida') || lower.includes('abhol')) {
+    scene = 'Available for Pickup';
+    subject = 'Parcel Available for Pickup at Local Access Point';
+    description = 'Parcel has reached destination access point/post office and is waiting for buyer pickup.';
+  } else if (lower.includes('cancel') || lower.includes('storno') || lower.includes('annull')) {
+    scene = 'Cancellation Request';
+    subject = 'Order Cancellation Request';
+    description = 'Buyer requested to cancel the order on Temu.';
+  }
+
+  return { articleName, sku, scene, subject, description };
+};
+
+/**
  * Get all Temu tickets (Information Tickets & Customer Queries)
  */
 exports.getTickets = catchAsync(async (req, res, next) => {
@@ -132,6 +188,69 @@ exports.getTickets = catchAsync(async (req, res, next) => {
       filter.country = req.query.country.toUpperCase();
     }
     tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 }).lean();
+
+    // Check if any tickets need on-the-fly enrichment (replacing 'Customer Inquiry' or 'Temu Product')
+    const needsEnrichment = tickets.some(t => t.description === 'Customer Inquiry' || t.articleName === 'Temu Product');
+    if (needsEnrichment && tickets.length > 0) {
+      const orderNums = tickets.map(t => String(t.orderNum || '').replace(/^PO-/i, '').trim()).filter(Boolean);
+      const [matchedOrders, returnDocs] = await Promise.all([
+        TemuOrder.find({ user: req.user.id, orderNum: { $in: orderNums.concat(orderNums.map(o => `PO-${o}`)) } }).lean(),
+        TemuReturn.find({ user: req.user.id, orderNum: { $in: orderNums.concat(orderNums.map(o => `PO-${o}`)) } }).lean()
+      ]);
+
+      const orderMap = new Map();
+      matchedOrders.forEach(o => {
+        const c = String(o.orderNum).replace(/^PO-/i, '').trim();
+        orderMap.set(c, o);
+        orderMap.set(`PO-${c}`, o);
+      });
+
+      const returnMap = new Map();
+      returnDocs.forEach(r => {
+        const c = String(r.orderNum).replace(/^PO-/i, '').trim();
+        returnMap.set(c, r);
+        returnMap.set(`PO-${c}`, r);
+      });
+
+      const bulkOps = [];
+      for (const t of tickets) {
+        if (t.description === 'Customer Inquiry' || t.articleName === 'Temu Product' || !t.sku) {
+          const clean = String(t.orderNum || '').replace(/^PO-/i, '').trim();
+          const ord = orderMap.get(clean) || orderMap.get(`PO-${clean}`);
+          const ret = returnMap.get(clean) || returnMap.get(`PO-${clean}`);
+          const details = resolveTicketDetails(t.subject, '', null, ord, ret);
+
+          if (details.articleName !== 'Temu Product') t.articleName = details.articleName;
+          if (details.sku) t.sku = details.sku;
+          if (details.description !== 'Customer Inquiry') {
+            t.description = details.description;
+            t.buyerMessage = details.description;
+            t.subject = details.subject;
+            t.scene = details.scene;
+          }
+
+          bulkOps.push({
+            updateOne: {
+              filter: { _id: t._id },
+              update: {
+                $set: {
+                  articleName: t.articleName,
+                  sku: t.sku,
+                  description: t.description,
+                  buyerMessage: t.buyerMessage,
+                  subject: t.subject,
+                  scene: t.scene
+                }
+              }
+            }
+          });
+        }
+      }
+
+      if (bulkOps.length > 0) {
+        await TemuTicket.bulkWrite(bulkOps, { ordered: false }).catch(() => {});
+      }
+    }
   }
 
   const pendingCount = tickets.filter(t => t.status === 'pending').length;
@@ -223,7 +342,7 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     await Promise.allSettled(batchPromises);
   }
 
-  // Batch query matched orders from local DB to enrich tickets
+  // Batch query matched orders and returns from local DB to enrich tickets
   const candidateOrderNums = [];
   for (const { item } of fetchedRecords) {
     const sn = item.parentOrderSn || item.orderSn || item.order_sn;
@@ -234,10 +353,10 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     }
   }
 
-  const matchedOrders = await TemuOrder.find({
-    user: user._id,
-    orderNum: { $in: candidateOrderNums }
-  }).lean();
+  const [matchedOrders, matchedReturns] = await Promise.all([
+    TemuOrder.find({ user: user._id, orderNum: { $in: candidateOrderNums } }).lean(),
+    TemuReturn.find({ user: user._id, orderNum: { $in: candidateOrderNums } }).lean()
+  ]);
 
   const orderMap = new Map();
   for (const o of matchedOrders) {
@@ -246,12 +365,20 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     orderMap.set(`PO-${clean}`, o);
   }
 
+  const returnMap = new Map();
+  for (const r of matchedReturns) {
+    const clean = String(r.orderNum).replace(/^PO-/i, '').trim();
+    returnMap.set(clean, r);
+    returnMap.set(`PO-${clean}`, r);
+  }
+
   // Ingest or update each ticket in DB
   for (const { item, storeCountry, endpoint } of fetchedRecords) {
     const rawSn = item.parentOrderSn || item.orderSn || item.order_sn || '';
     const cleanSn = String(rawSn).replace(/^PO-/i, '').trim();
     const orderNum = cleanSn ? `PO-${cleanSn}` : '';
     const matchedOrder = orderMap.get(cleanSn) || orderMap.get(orderNum);
+    const returnRecord = returnMap.get(cleanSn) || returnMap.get(orderNum);
 
     const ticketId = String(
       item.parentAfterSalesSn ||
@@ -264,29 +391,16 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
 
     const country = (matchedOrder?.country || extractCountryFromOrderNum(orderNum, storeCountry)).toUpperCase();
 
-    const rawReason = item.buyerReasonDesc || item.buyerReason || item.reason || item.afterSalesReason || 'Customer Inquiry';
+    const rawReason = item.buyerReasonDesc || item.buyerReason || item.reason || item.afterSalesReason || '';
     const comment = item.buyerComment || item.comment || item.afterSalesDesc || '';
-    const combinedDesc = comment ? `${rawReason} (Buyer note: "${comment}")` : rawReason;
 
-    const lowerText = `${rawReason} ${comment}`.toLowerCase();
-    let scene = 'Delivery Exception';
-    if (lowerText.includes('track') || lowerText.includes('seguid') || lowerText.includes('no update') || lowerText.includes('transit')) {
-      scene = 'Tracking status - no update';
-    } else if (lowerText.includes('pickup') || lowerText.includes('recogida') || lowerText.includes('abhol')) {
-      scene = 'Available for Pickup';
-    } else if (lowerText.includes('cancel') || lowerText.includes('storno') || lowerText.includes('annull')) {
-      scene = 'Cancellation Request';
-    } else if (lowerText.includes('refund') || lowerText.includes('reembolso') || lowerText.includes('erstattung')) {
-      scene = 'Return & Refund Inquiry';
-    }
+    const details = resolveTicketDetails(rawReason, comment, item.afterSalesType, matchedOrder, returnRecord);
 
     const type = endpoint.includes('cancel') ? 'Cancellation Request' : 'Information Ticket';
     const isActionable = Number(item.afterSalesStatusGroup) === 1 || item.status === 'pending' || item.statusGroup === 1;
     const status = isActionable ? 'pending' : 'resolved';
 
     const buyerName = matchedOrder?.buyerName || item.buyerName || item.buyer_name || `Temu Customer (${country})`;
-    const articleName = matchedOrder?.items?.[0]?.name || matchedOrder?.items?.[0]?.title || item.goodsName || 'Temu Product';
-    const sku = matchedOrder?.items?.[0]?.sku || item.skuId || item.sku || '';
 
     const deadline = item.operateExpireTimeMs
       ? new Date(Number(item.operateExpireTimeMs))
@@ -297,11 +411,13 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
       if (existingTicket.status !== 'resolved') {
         existingTicket.status = status;
         existingTicket.deadline = deadline;
-        existingTicket.buyerMessage = combinedDesc;
-        existingTicket.description = combinedDesc;
+        existingTicket.buyerMessage = details.description;
+        existingTicket.description = details.description;
+        existingTicket.subject = details.subject;
+        existingTicket.scene = details.scene;
         if (orderNum) existingTicket.orderNum = orderNum;
-        if (articleName && existingTicket.articleName === 'Temu Product') existingTicket.articleName = articleName;
-        if (sku && !existingTicket.sku) existingTicket.sku = sku;
+        if (details.articleName && details.articleName !== 'Temu Product') existingTicket.articleName = details.articleName;
+        if (details.sku && !existingTicket.sku) existingTicket.sku = details.sku;
         await existingTicket.save();
       }
     } else {
@@ -311,13 +427,13 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
         orderNum,
         country,
         type,
-        scene,
-        subject: rawReason,
+        scene: details.scene,
+        subject: details.subject,
         buyerName,
-        buyerMessage: combinedDesc,
-        description: combinedDesc,
-        articleName,
-        sku,
+        buyerMessage: details.description,
+        description: details.description,
+        articleName: details.articleName,
+        sku: details.sku,
         deadline,
         status,
         subStatus: isActionable ? 'Wait Merchant Reply' : 'Completed',
