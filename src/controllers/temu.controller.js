@@ -463,15 +463,20 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     const page = parseInt(req.query.page, 10);
     const limit = parseInt(req.query.limit, 10);
 
-    let query = TemuOrder.find(filter).sort({ createdAt: -1 }).lean();
+    let sortObj = { createdAt: -1 };
+    if (filter.status === 'printed') {
+      sortObj = { shippedAt: -1, updatedAt: -1, createdAt: -1 };
+    }
+
+    let query = TemuOrder.find(filter).sort(sortObj).lean();
 
     if (page && limit && limit > 0) {
       const skip = (page - 1) * limit;
       let totalFiltered = counts.total;
-      if (req.query.status) {
-        totalFiltered = counts[req.query.status] || 0;
-      } else if (req.query.search) {
+      if ((req.query.country && req.query.country !== 'all') || req.query.search) {
         totalFiltered = await TemuOrder.countDocuments(filter);
+      } else if (req.query.status) {
+        totalFiltered = counts[req.query.status] || 0;
       }
 
       orders = await query.skip(skip).limit(limit);
