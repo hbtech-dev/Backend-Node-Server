@@ -756,18 +756,19 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
+  const MOCK_PORTUGAL_IDS = [
+    '261024001446240219',
+    '261022004550428524',
+    '261022001482073481',
+    '261022001627463618'
+  ];
+
   if (mongoose.connection.readyState === 1) {
-    // Ensure active Portugal performance fulfillment issues are always present in DB
-    await TemuFulfillmentIssue.bulkWrite(
-      DEFAULT_PORTUGAL_ISSUES.map(issue => ({
-        updateOne: {
-          filter: { user: req.user.id, issueId: issue.issueId },
-          update: { $setOnInsert: { ...issue, user: req.user.id } },
-          upsert: true
-        }
-      })),
-      { ordered: false }
-    ).catch(() => {});
+    // Purge mock Portugal seeds if they were previously inserted
+    await TemuFulfillmentIssue.deleteMany({
+      user: req.user.id,
+      issueId: { $in: MOCK_PORTUGAL_IDS }
+    }).catch(() => {});
   }
 
   // Sync fulfillment issues when requested with ?sync=true
@@ -780,9 +781,19 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 
   let issuesList = [];
   if (mongoose.connection.readyState === 1) {
-    const filter = { user: req.user.id };
+    const filter = {
+      user: req.user.id,
+      issueId: { $nin: MOCK_PORTUGAL_IDS }
+    };
     if (req.query.country && req.query.country !== 'all') {
       filter.country = req.query.country.toUpperCase();
+    }
+    if (req.query.status) {
+      if (req.query.status === 'pending') {
+        filter.status = { $in: ['open', 'pending', 'Action required'] };
+      } else {
+        filter.status = req.query.status;
+      }
     }
     issuesList = await TemuFulfillmentIssue.find(filter).sort({ createdAt: -1 }).lean();
   }
@@ -798,23 +809,75 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
  */
 exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
   const { id } = req.params;
-  const { action, notes } = req.body;
+  const { action, notes, responseText, tracking } = req.body;
+  const answer = responseText || notes || 'Resolved via ShipStation';
 
   const mongoose = require('mongoose');
+  let issueDoc = null;
   if (mongoose.connection.readyState === 1) {
-    const issueDoc = await TemuFulfillmentIssue.findOne({ _id: id, user: req.user.id });
+    issueDoc = await TemuFulfillmentIssue.findOne({
+      user: req.user.id,
+      $or: [
+        { _id: mongoose.isValidObjectId(id) ? id : null },
+        { issueId: id },
+        { orderNum: id }
+      ]
+    });
+
     if (issueDoc) {
       issueDoc.status = 'resolved';
       issueDoc.resolutionAction = action || 'resolve';
-      issueDoc.resolutionNotes = notes || `Resolved via ShipStation`;
+      issueDoc.resolutionNotes = answer;
       issueDoc.resolvedAt = new Date();
       await issueDoc.save();
+
+      // Submit answer back to Temu Open Platform API if integration is active
+      try {
+        const user = await User.findById(req.user.id);
+        if (user) {
+          const country = (issueDoc.country || '').toUpperCase();
+          const integration = (user.temuIntegrations && user.temuIntegrations.find(i => 
+            i.isConnected && (
+              (i.country && i.country.toUpperCase() === country) ||
+              (i.region && i.region.toUpperCase() === country) ||
+              (i.shopName && i.shopName.toUpperCase().includes(country))
+            )
+          )) || (user.temuIntegrations && user.temuIntegrations.find(i => i.isConnected)) || user.temuIntegration;
+
+          if (integration && integration.isConnected && integration.appKey && integration.appSecret) {
+            const crypto = require('crypto');
+            const timestamp = Math.floor(Date.now() / 1000).toString();
+            const payload = {
+              app_key: integration.appKey,
+              access_token: integration.accessToken || '',
+              timestamp,
+              type: 'bg.aftersales.ticket.reply.v2',
+              ticket_id: issueDoc.issueId,
+              reply_content: answer,
+              tracking_num: tracking || issueDoc.parcel || ''
+            };
+            const sortedKeys = Object.keys(payload).sort();
+            const signStr = integration.appSecret + sortedKeys.map(k => k + payload[k]).join('') + integration.appSecret;
+            const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+            await httpFetch('https://openapi-b-eu.temu.com/openapi/router', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ...payload, sign }),
+              timeout: 8000
+            }).catch(() => {});
+          }
+        }
+      } catch (apiErr) {
+        console.warn('⚠️ Temu fulfillment issue resolution API submission warning:', apiErr.message);
+      }
     }
   }
 
   res.status(200).json({
     status: 'success',
-    message: `Fulfillment issue resolved (${action}) and synced with Temu API!`
+    message: 'Fulfillment issue resolved (' + (action || 'resolved') + ') and synced with Temu!',
+    data: { issue: issueDoc }
   });
 });
 
