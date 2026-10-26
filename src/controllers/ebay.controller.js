@@ -451,30 +451,35 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   let user = req.user;
 
-  if (mongoose.connection.readyState === 1) {
+  if (mongoose.connection.readyState === 1 && !user.ebayIntegration && !user.ebayIntegrations) {
     user = await User.findById(req.user.id) || req.user;
   }
 
   const isConnected = Boolean(user.ebayIntegration?.isConnected || (user.ebayIntegrations && user.ebayIntegrations.length > 0));
+  const userId = req.user._id || req.user.id;
 
-  let filter = { user: req.user.id };
+  let filter = { user: userId };
   if (req.query.status) {
     filter.status = req.query.status;
   }
 
   let orders = [];
-  if (mongoose.connection.readyState === 1) {
-    orders = await EbayOrder.find(filter).sort({ createdAt: -1 }).lean();
-  }
-
   let counts = { open: 0, created_label: 0, printed: 0, canceled: 0 };
+
   if (mongoose.connection.readyState === 1) {
-    counts = {
-      open: await EbayOrder.countDocuments({ user: req.user.id, status: 'open' }),
-      created_label: await EbayOrder.countDocuments({ user: req.user.id, status: 'created_label' }),
-      printed: await EbayOrder.countDocuments({ user: req.user.id, status: 'printed' }),
-      canceled: await EbayOrder.countDocuments({ user: req.user.id, status: 'canceled' })
-    };
+    const [foundOrders, countsAgg] = await Promise.all([
+      EbayOrder.find(filter).sort({ createdAt: -1 }).lean(),
+      EbayOrder.aggregate([
+        { $match: { user: userId } },
+        { $group: { _id: "$status", count: { $sum: 1 } } }
+      ])
+    ]);
+    orders = foundOrders;
+    countsAgg.forEach(c => {
+      if (c._id && counts[c._id] !== undefined) {
+        counts[c._id] = c.count;
+      }
+    });
   }
 
   res.status(200).json({

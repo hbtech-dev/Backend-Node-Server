@@ -128,5 +128,6 @@ const ebayOrderSchema = new mongoose.Schema(
 
 ebayOrderSchema.index({ user: 1, orderNum: 1 });
 ebayOrderSchema.index({ user: 1, ebayOrderId: 1 });
+ebayOrderSchema.index({ user: 1, status: 1, createdAt: -1 });
 
 module.exports = mongoose.model('EbayOrder', ebayOrderSchema);
