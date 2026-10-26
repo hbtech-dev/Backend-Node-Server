@@ -1,10 +1,10 @@
-const mongoose = require('mongoose');
+const mongoose = require("mongoose");
 
 const temuFulfillmentIssueSchema = new mongoose.Schema(
   {
     user: {
       type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
+      ref: "User",
       required: true
     },
     issueId: {
@@ -13,41 +13,55 @@ const temuFulfillmentIssueSchema = new mongoose.Schema(
     },
     orderNum: {
       type: String,
-      required: true
+      default: ""
     },
     buyerName: {
       type: String,
-      required: true
+      default: "Temu Customer"
     },
     issueType: {
       type: String,
-      enum: ['address_change', 'cancellation_request', 'late_shipment', 'logistics_query'],
-      required: true
+      default: "delayed_fulfillment"
     },
     country: {
       type: String,
-      default: 'DE'
+      default: "DE"
     },
     description: {
       type: String,
-      required: true
+      default: ""
     },
     requestedAddress: {
       type: String,
-      default: ''
+      default: ""
+    },
+    quantity: {
+      type: Number,
+      default: 1
+    },
+    compensationRaw: {
+      type: String,
+      default: ""
+    },
+    noticeDate: {
+      type: String,
+      default: ""
+    },
+    parcel: {
+      type: String,
+      default: ""
     },
     status: {
       type: String,
-      enum: ['open', 'resolved'],
-      default: 'open'
+      default: "open"
     },
     resolutionAction: {
       type: String,
-      default: ''
+      default: ""
     },
     resolutionNotes: {
       type: String,
-      default: ''
+      default: ""
     },
     resolvedAt: {
       type: Date,
@@ -61,5 +75,6 @@ const temuFulfillmentIssueSchema = new mongoose.Schema(
 
 temuFulfillmentIssueSchema.index({ user: 1, createdAt: -1 });
 temuFulfillmentIssueSchema.index({ user: 1, issueId: 1 }, { unique: true });
+temuFulfillmentIssueSchema.index({ user: 1, country: 1 });
 
-module.exports = mongoose.model('TemuFulfillmentIssue', temuFulfillmentIssueSchema);
+module.exports = mongoose.model("TemuFulfillmentIssue", temuFulfillmentIssueSchema);

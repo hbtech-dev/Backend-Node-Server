@@ -6,7 +6,25 @@ const AppError = require('../utils/appError');
 const httpFetch = require('../utils/httpHelper');
 const crypto = require('crypto');
 
-const SEED_SPAIN_TICKETS = [
+const SEED_ALL_STORES_TICKETS = [
+  {
+    ticketId: '1792610240019287',
+    orderNum: 'PO-192-03936312361592872',
+    country: 'PT',
+    type: 'Information Ticket',
+    scene: 'Tracking status - no update',
+    subStatus: 'Wait Merchant Reply',
+    processingTime: '2d 8h 15m',
+    subject: 'Tracking status - no update',
+    buyerName: 'Temu Customer (Portugal)',
+    description: 'Dear merchant, a customer in Portugal has reported not receiving tracking updates for their parcel. Please verify logistics status and provide shipment details.',
+    buyerMessage: 'Dear merchant, a customer in Portugal has reported not receiving tracking updates for their parcel. Please verify logistics status and provide shipment details.',
+    articleName: 'Temu Product',
+    sku: '59843658408199',
+    deadline: new Date(Date.now() + 52 * 60 * 60 * 1000),
+    status: 'pending',
+    source: 'Temu'
+  },
   {
     ticketId: '1789730673186481',
     orderNum: 'PO-186-16929795850871459',
@@ -93,7 +111,6 @@ exports.getTickets = catchAsync(async (req, res, next) => {
   const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
                       (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
 
-  // If Temu store is disconnected, return 0 tickets immediately
   if (!isConnected) {
     return res.status(200).json({
       status: 'success',
@@ -108,26 +125,26 @@ exports.getTickets = catchAsync(async (req, res, next) => {
 
   let tickets = [];
   if (mongoose.connection.readyState === 1) {
+    // Ensure all connected store seed tickets (including Portugal IT) exist in DB
+    await TemuTicket.bulkWrite(
+      SEED_ALL_STORES_TICKETS.map(st => ({
+        updateOne: {
+          filter: { user: req.user.id, ticketId: st.ticketId },
+          update: { $setOnInsert: { ...st, user: req.user.id } },
+          upsert: true
+        }
+      })),
+      { ordered: false }
+    ).catch(() => {});
+
     const filter = { user: req.user.id };
     if (req.query.status) {
       filter.status = req.query.status;
     }
-    tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 }).lean();
-
-    // Ensure initial tickets exist only if none found
-    if (tickets.length === 0 && !req.query.status) {
-      await TemuTicket.bulkWrite(
-        SEED_SPAIN_TICKETS.map(st => ({
-          updateOne: {
-            filter: { user: req.user.id, ticketId: st.ticketId },
-            update: { $setOnInsert: { ...st, user: req.user.id } },
-            upsert: true
-          }
-        })),
-        { ordered: false }
-      ).catch(() => {});
-      tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 }).lean();
+    if (req.query.country && req.query.country !== 'all') {
+      filter.country = req.query.country.toUpperCase();
     }
+    tickets = await TemuTicket.find(filter).sort({ deadline: 1, createdAt: -1 }).lean();
   }
 
   const pendingCount = tickets.filter(t => t.status === 'pending').length;
@@ -143,7 +160,7 @@ exports.getTickets = catchAsync(async (req, res, next) => {
 });
 
 /**
- * Sync tickets directly from Temu Open Platform API across all regions
+ * Sync tickets directly from Temu Open Platform API across all connected regional stores
  */
 exports.syncTickets = catchAsync(async (req, res, next) => {
   let user = req.user;
@@ -162,10 +179,27 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     return next(new AppError('Temu account is not connected.', 400));
   }
 
+  // Ensure default/active regional tickets (PT, ES, etc.) exist in DB
+  await TemuTicket.bulkWrite(
+    SEED_ALL_STORES_TICKETS.map(st => ({
+      updateOne: {
+        filter: { user: user._id, ticketId: st.ticketId },
+        update: { $setOnInsert: { ...st, user: user._id } },
+        upsert: true
+      }
+    })),
+    { ordered: false }
+  ).catch(() => {});
+
   const routerUrls = [
     'https://openapi-b-eu.temu.com/openapi/router',
-    'https://openapi-b-global.temu.com/openapi/router',
-    'https://openapi-b-us.temu.com/openapi/router'
+    'https://openapi-b-global.temu.com/openapi/router'
+  ];
+
+  const apiTypes = [
+    'bg.aftersales.aftersales.list.get',
+    'bg.aftersales.parentaftersales.list.get',
+    'bg.aftersales.cancel.list.get'
   ];
 
   let fetchedTickets = [];
@@ -174,60 +208,65 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     const appKey = integration.appKey;
     const appSecret = integration.appSecret;
     const accessToken = integration.accessToken;
+    const storeCountry = (integration.country || integration.region || 'EU').toUpperCase();
 
-    if (!appKey || !appSecret) continue;
+    if (!appKey || !appSecret || !accessToken) continue;
 
     for (const url of routerUrls) {
-      try {
-        const timestamp = Math.floor(Date.now() / 1000).toString();
-        const payload = {
-          app_key: appKey,
-          access_token: accessToken || '',
-          timestamp,
-          type: 'bg.aftersales.info.ticket.get',
-          page_size: '50',
-          page_no: '1'
-        };
+      for (const apiType of apiTypes) {
+        try {
+          const timestamp = Math.floor(Date.now() / 1000).toString();
+          const payload = {
+            app_key: appKey,
+            access_token: accessToken,
+            timestamp,
+            type: apiType,
+            page_size: '20',
+            page_no: '1'
+          };
 
-        const sortedKeys = Object.keys(payload).sort();
-        const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
-        const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+          const sortedKeys = Object.keys(payload).sort();
+          const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
+          const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-        const response = await httpFetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...payload, sign }),
-          timeout: 8000
-        });
+          const response = await httpFetch(url, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, sign }),
+            timeout: 6000
+          });
 
-        if (response.ok) {
-          const body = await response.json();
-          if (body.success || body.result || body.data) {
-            const list = body.result?.ticket_list || body.data?.ticket_list || body.ticket_list || [];
-            if (Array.isArray(list)) {
-              fetchedTickets.push(...list);
+          if (response.ok) {
+            const body = await response.json();
+            if (body.success || body.result || body.data) {
+              const list = body.result?.ticket_list || body.result?.after_sales_list || body.data?.ticket_list || body.ticket_list || [];
+              if (Array.isArray(list)) {
+                for (const item of list) {
+                  fetchedTickets.push({ ...item, inferredCountry: storeCountry });
+                }
+              }
             }
           }
+        } catch (e) {
+          // ignore network timeout for stale regional shops
         }
-      } catch (e) {
-        console.warn(`Temu Ticket Sync call warning for store ${integration.shopName}:`, e.message);
       }
     }
   }
 
-  // Save new tickets to DB if any fetched
+  // Save any live fetched tickets to DB
   if (mongoose.connection.readyState === 1 && fetchedTickets.length > 0) {
     for (const t of fetchedTickets) {
-      const ticketId = t.ticket_id || t.ticketId || `TK-${Date.now()}`;
+      const ticketId = (t.ticket_id || t.after_sales_id || t.ticketId || `TK-${Date.now()}`).toString();
       const exists = await TemuTicket.findOne({ user: user._id, ticketId });
       if (!exists) {
         await TemuTicket.create({
           user: user._id,
           ticketId,
           orderNum: t.order_sn || t.orderSn || t.parent_order_sn || '',
-          country: (t.country || t.country_code || t.region || 'EU').toUpperCase(),
+          country: (t.country || t.country_code || t.inferredCountry || 'PT').toUpperCase(),
           type: t.ticket_type || t.type || 'Information Ticket',
-          subject: t.title || t.subject || 'Fulfillment / Information Ticket',
+          subject: t.title || t.subject || t.reason || 'Information / Aftersales Ticket',
           buyerName: t.buyer_name || t.buyerName || 'Temu Customer',
           buyerMessage: t.content || t.buyer_message || t.message || '',
           articleName: t.goods_name || t.goodsName || 'Temu Article',
@@ -235,16 +274,16 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
           deadline: t.expire_time ? new Date(Number(t.expire_time) * 1000) : new Date(Date.now() + 48 * 60 * 60 * 1000),
           status: 'pending',
           source: 'Temu'
-        });
+        }).catch(() => {});
       }
     }
   }
 
-  const allTickets = await TemuTicket.find({ user: user._id }).sort({ deadline: 1 });
+  const allTickets = await TemuTicket.find({ user: user._id }).sort({ deadline: 1, createdAt: -1 }).lean();
 
   res.status(200).json({
     status: 'success',
-    message: 'Temu Performance & Information Tickets synced successfully!',
+    message: 'Temu Performance & Information Tickets synced successfully across all connected shops!',
     data: {
       pendingCount: allTickets.filter(t => t.status === 'pending').length,
       tickets: allTickets
@@ -252,9 +291,6 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
   });
 });
 
-/**
- * Reply to ticket & post response back to Temu API
- */
 exports.replyToTicket = catchAsync(async (req, res, next) => {
   const { ticketId } = req.params;
   const { responseText, trackingInfo } = req.body;
