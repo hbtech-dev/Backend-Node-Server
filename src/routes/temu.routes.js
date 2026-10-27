@@ -30,6 +30,7 @@ router.get('/orders/:orderNum/fetch-tracking', auth, temuController.fetchOrderTr
 router.post('/returns/sync-all', auth, temuController.syncAllRegionalReturns);
 router.get('/returns', auth, temuController.getUserTemuReturns);
 router.post('/returns/:id/resolve', auth, temuController.resolveTemuReturn);
+router.post('/fulfillment-issues/sync', auth, temuController.syncTemuFulfillmentIssues);
 router.get('/fulfillment-issues', auth, temuController.getUserTemuFulfillmentIssues);
 router.post('/fulfillment-issues/:id/resolve', auth, temuController.resolveTemuFulfillmentIssue);
 

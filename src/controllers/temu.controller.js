@@ -739,6 +739,205 @@ const DEFAULT_PORTUGAL_ISSUES = [
   }
 ];
 
+/**
+ * Synchronize Temu Fulfillment Issues
+ * Reconciles cancellations, marks fulfilled/printed orders as resolved,
+ * removes obsolete legacy mock data, and pulls live cancellations.
+ */
+exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
+  const mongoose = require('mongoose');
+  let user = req.user;
+
+  if (mongoose.connection.readyState === 1 && !user.temuIntegration && !user.temuIntegrations) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
+                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+
+  if (!isConnected) {
+    return res.status(200).json({
+      status: 'success',
+      message: 'No active Temu stores connected.',
+      data: { issues: [], totalPending: 0, totalResolved: 0 }
+    });
+  }
+
+  const MOCK_PORTUGAL_IDS = [
+    '261024001446240219',
+    '261022004550428524',
+    '261022001482073481',
+    '261022001627463618'
+  ];
+
+  if (mongoose.connection.readyState === 1) {
+    // 1. Purge legacy mock seed issues
+    await TemuFulfillmentIssue.deleteMany({
+      user: req.user.id,
+      issueId: { $in: MOCK_PORTUGAL_IDS }
+    }).catch(() => {});
+
+    // 2. Reconcile existing issues: if the order is printed/shipped or has tracking, mark as resolved!
+    const allIssues = await TemuFulfillmentIssue.find({ user: req.user.id });
+    for (const issue of allIssues) {
+      if (issue.status === 'resolved') continue;
+      const order = await TemuOrder.findOne({ user: req.user.id, orderNum: issue.orderNum }).lean();
+      if (order) {
+        const isFixed = order.status === 'printed' || order.status === 'shipped' || !!order.trackingNumber;
+        if (isFixed) {
+          issue.status = 'resolved';
+          issue.resolutionAction = 'fulfilled';
+          issue.resolutionNotes = issue.resolutionNotes || 'Order fulfilled & printed via carrier';
+          issue.resolvedAt = issue.resolvedAt || new Date();
+          if (order.trackingNumber && !issue.parcel) {
+            issue.parcel = order.trackingNumber;
+          }
+          await issue.save();
+        }
+      }
+    }
+
+    // 3. Scan TemuOrder for genuine cancellation requests
+    const canceledOrders = await TemuOrder.find({
+      user: req.user.id,
+      status: 'canceled'
+    }).lean();
+
+    const issueOps = [];
+    for (const order of canceledOrders) {
+      const isShippedOrPrinted = order.status === 'printed' || order.status === 'shipped' || !!order.trackingNumber;
+      const country = (order.country || 'DE').toUpperCase();
+      const noticeDate = order.createdAt 
+        ? new Date(order.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+        : new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+      
+      const compensationRaw = country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : '5,00 €';
+
+      issueOps.push({
+        updateOne: {
+          filter: { user: req.user.id, issueId: `ISS-${order.orderNum}` },
+          update: {
+            $set: {
+              orderNum: order.orderNum,
+              buyerName: order.buyerName || order.name || 'Temu Customer',
+              issueType: 'cancellation_request',
+              country,
+              noticeDate,
+              quantity: order.quantity || 1,
+              compensationRaw,
+              description: `Buyer cancellation request for order ${order.orderNum}`,
+              parcel: order.trackingNumber || ''
+            },
+            $setOnInsert: {
+              user: req.user.id,
+              issueId: `ISS-${order.orderNum}`,
+              status: isShippedOrPrinted ? 'resolved' : 'open',
+              resolutionNotes: isShippedOrPrinted ? 'Order fulfilled & printed via carrier' : '',
+              resolvedAt: isShippedOrPrinted ? new Date() : null
+            }
+          },
+          upsert: true
+        }
+      });
+    }
+
+    if (issueOps.length > 0) {
+      await TemuFulfillmentIssue.bulkWrite(issueOps, { ordered: false }).catch(err => console.warn('Bulk write issues warning:', err.message));
+    }
+
+    // 4. Also scan live cancellations from connected Temu stores via bg.aftersales.cancel.list.get
+    const stores = (user.temuIntegrations && user.temuIntegrations.filter(i => i.isConnected)) || 
+                   (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
+
+    for (const store of stores.slice(0, 10)) {
+      if (store.appKey && store.appSecret) {
+        try {
+          const crypto = require('crypto');
+          const now = Math.floor(Date.now() / 1000);
+          const start = now - 30 * 86400;
+          const payload = {
+            app_key: store.appKey,
+            access_token: store.accessToken || '',
+            timestamp: now.toString(),
+            type: 'bg.aftersales.cancel.list.get',
+            pageNo: 1,
+            pageSize: 50,
+            createAtStart: start,
+            createAtEnd: now
+          };
+          const sortedKeys = Object.keys(payload).sort();
+          const signStr = store.appSecret + sortedKeys.map(k => k + payload[k]).join('') + store.appSecret;
+          const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+
+          const res = await httpFetch('https://openapi-b-eu.temu.com/openapi/router', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, sign }),
+            timeout: 6000
+          });
+
+          if (res && res.success && res.result && Array.isArray(res.result.list)) {
+            for (const cancelItem of res.result.list) {
+              const orderSn = cancelItem.parentOrderSn || cancelItem.orderSn;
+              if (!orderSn) continue;
+              const fullSn = orderSn.startsWith('PO-') ? orderSn : `PO-${orderSn}`;
+              const issueId = `ISS-${fullSn}`;
+              const isFinishedOnTemu = cancelItem.afterSaleStatus === 5 || cancelItem.status === 'success' || cancelItem.status === 'closed';
+
+              await TemuFulfillmentIssue.updateOne(
+                { user: req.user.id, issueId },
+                {
+                  $set: {
+                    orderNum: fullSn,
+                    buyerName: cancelItem.buyerName || 'Temu Customer',
+                    issueType: 'cancellation_request',
+                    country: (store.country || 'DE').toUpperCase(),
+                    description: cancelItem.cancelReason || 'Buyer requested cancellation on Temu',
+                    compensationRaw: cancelItem.refundAmount ? `€${(cancelItem.refundAmount / 100).toFixed(2)}` : '€5.00',
+                    status: isFinishedOnTemu ? 'resolved' : 'open',
+                    resolvedAt: isFinishedOnTemu ? new Date() : null,
+                    resolutionNotes: isFinishedOnTemu ? 'Cancellation processed on Temu' : ''
+                  },
+                  $setOnInsert: {
+                    user: req.user.id,
+                    issueId,
+                    noticeDate: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+                  }
+                },
+                { upsert: true }
+              ).catch(() => {});
+            }
+          }
+        } catch (e) {}
+      }
+    }
+  }
+
+  const totalPending = await TemuFulfillmentIssue.countDocuments({
+    user: req.user.id,
+    status: { $in: ['open', 'pending', 'Action required'] }
+  });
+  const totalResolved = await TemuFulfillmentIssue.countDocuments({
+    user: req.user.id,
+    status: 'resolved'
+  });
+
+  const updatedIssues = await TemuFulfillmentIssue.find({
+    user: req.user.id,
+    issueId: { $nin: MOCK_PORTUGAL_IDS }
+  }).sort({ createdAt: -1 }).lean();
+
+  res.status(200).json({
+    status: 'success',
+    message: `Fulfillment issues synced! Found ${totalPending} pending incidents across Europe (${totalResolved} resolved).`,
+    data: {
+      issues: updatedIssues,
+      totalPending,
+      totalResolved
+    }
+  });
+});
+
 exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   let user = req.user;
@@ -797,6 +996,19 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       }
     }
     issuesList = await TemuFulfillmentIssue.find(filter).sort({ createdAt: -1 }).lean();
+
+    // Enrich missing fields for accurate display
+    issuesList = issuesList.map(issue => {
+      const country = (issue.country || 'DE').toUpperCase();
+      const noticeDate = issue.noticeDate || (issue.createdAt ? new Date(issue.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent');
+      const compensationRaw = issue.compensationRaw || (country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : '5,00 €');
+      return {
+        ...issue,
+        noticeDate,
+        compensationRaw,
+        quantity: issue.quantity || 1
+      };
+    });
   }
 
   res.status(200).json({
