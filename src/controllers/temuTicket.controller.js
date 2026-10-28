@@ -61,7 +61,7 @@ const callTemu = async (store, type, params = {}) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ ...payload, sign }),
-      timeout: 12000
+      timeout: 4500
     });
     const data = await res.json();
     const ok = data && (data.success === true || data.errorCode === 1000000 || data.errorCode === 0);
@@ -303,48 +303,31 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
 
   const fetchedRecords = [];
 
-  // Query stores in parallel batches of 6 for fast execution
-  const BATCH_SIZE = 6;
-  for (let i = 0; i < stores.length; i += BATCH_SIZE) {
-    const batch = stores.slice(i, i + BATCH_SIZE);
-    const batchPromises = batch.map(async (store) => {
-      const storeCountry = (store.country || store.region || 'DE').toUpperCase();
-      for (const endpoint of endpoints) {
-        for (let pageNo = 1; pageNo <= LOOKBACK_PAGES; pageNo++) {
-          try {
-            const resp = await callTemu(store, endpoint, {
-              pageNo,
-              pageSize: 50,
-              createAtStart: start,
-              createAtEnd: now
-            });
+  // Query all connected regional stores concurrently in parallel
+  const storePromises = stores.map(async (store) => {
+    const storeCountry = (store.country || store.region || "DE").toUpperCase();
+    for (const endpoint of endpoints) {
+      try {
+        const resp = await callTemu(store, endpoint, {
+          pageNo: 1,
+          pageSize: 50,
+          createAtStart: start,
+          createAtEnd: now
+        });
 
-            if (!resp.ok) {
-              break;
-            }
+        if (!resp.ok) continue;
 
-            const rawList = (resp.result && (resp.result.data || resp.result.list || resp.result.pageItems)) || [];
-            if (!Array.isArray(rawList) || rawList.length === 0) {
-              break;
-            }
-
-            for (const item of rawList) {
-              fetchedRecords.push({ item, store, storeCountry, endpoint });
-            }
-
-            const total = (resp.result && resp.result.total) || 0;
-            if (rawList.length < 50 || fetchedRecords.length >= total) {
-              break;
-            }
-          } catch (e) {
-            break;
+        const rawList = (resp.result && (resp.result.data || resp.result.list || resp.result.pageItems)) || [];
+        if (Array.isArray(rawList)) {
+          for (const item of rawList) {
+            fetchedRecords.push({ item, store, storeCountry, endpoint });
           }
         }
-      }
-    });
+      } catch (e) {}
+    }
+  });
 
-    await Promise.allSettled(batchPromises);
-  }
+  await Promise.allSettled(storePromises);
 
   // Batch query matched orders and returns from local DB to enrich tickets
   const candidateOrderNums = [];
