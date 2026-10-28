@@ -69,10 +69,39 @@ const temuTicketSchema = new mongoose.Schema({
     type: Date,
     default: () => new Date(Date.now() + 48 * 60 * 60 * 1000)
   },
+  subOrderId: {
+    type: String,
+    default: ""
+  },
+  productName: {
+    type: String,
+    default: ""
+  },
+  tag: {
+    type: String,
+    default: ""
+  },
+  uploadFiles: {
+    type: [String],
+    default: []
+  },
+  processHistory: {
+    type: [
+      {
+        author: { type: String },
+        role: { type: String },
+        date: { type: Date },
+        dateString: { type: String },
+        type: { type: String },
+        content: { type: String }
+      }
+    ],
+    default: []
+  },
   status: {
     type: String,
-    enum: ['pending', 'resolved', 'escalated'],
-    default: 'pending'
+    enum: ["pending", "platform_processing", "closed", "resolved", "escalated"],
+    default: "pending"
   },
   merchantResponse: {
     responseText: { type: String, default: '' },

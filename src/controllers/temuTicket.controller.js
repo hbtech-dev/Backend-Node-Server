@@ -182,7 +182,11 @@ exports.getTickets = catchAsync(async (req, res, next) => {
       ticketId: { $nin: SEED_TICKET_IDS }
     };
     if (req.query.status) {
-      filter.status = req.query.status;
+      if (req.query.status === "closed" || req.query.status === "resolved") {
+        filter.status = { $in: ["closed", "resolved"] };
+      } else {
+        filter.status = req.query.status;
+      }
     }
     if (req.query.country && req.query.country !== 'all') {
       filter.country = req.query.country.toUpperCase();
@@ -396,9 +400,14 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
 
     const details = resolveTicketDetails(rawReason, comment, item.afterSalesType, matchedOrder, returnRecord);
 
-    const type = endpoint.includes('cancel') ? 'Cancellation Request' : 'Information Ticket';
-    const isActionable = Number(item.afterSalesStatusGroup) === 1 || item.status === 'pending' || item.statusGroup === 1;
-    const status = isActionable ? 'pending' : 'resolved';
+    // Return disputes belong to TemuReturn model, not Information Ticket
+    if (item.parentAfterSalesSn || item.afterSalesSn || (ticketId && (ticketId.includes("-D01") || ticketId.includes("-D02")))) {
+      continue;
+    }
+
+    const type = endpoint.includes("cancel") ? "Cancellation Request" : "Information Ticket";
+    const isActionable = item.status === "pending" || item.ticketStatus === 1;
+    const status = isActionable ? "pending" : "closed";
 
     const buyerName = matchedOrder?.buyerName || item.buyerName || item.buyer_name || `Temu Customer (${country})`;
 
@@ -520,12 +529,33 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
     }
   }
 
+  const { evidenceCardUrl, screenshotUrl } = req.body;
+  const now = new Date();
+  const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + ", " +
+                  now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+
+  if (!Array.isArray(ticket.processHistory)) ticket.processHistory = [];
+  ticket.processHistory.unshift({
+    author: "205911379182",
+    role: "merchant",
+    date: now,
+    dateString: dateStr,
+    type: "processing_result",
+    content: responseText
+  });
+
+  if (evidenceCardUrl || screenshotUrl) {
+    if (!Array.isArray(ticket.uploadFiles)) ticket.uploadFiles = [];
+    ticket.uploadFiles.push(evidenceCardUrl || screenshotUrl);
+  }
+
   // Update ticket in DB
-  ticket.status = 'resolved';
+  ticket.status = "closed";
+  ticket.subStatus = "Completed";
   ticket.merchantResponse = {
     responseText,
-    trackingInfo: trackingInfo || '',
-    respondedAt: new Date()
+    trackingInfo: trackingInfo || "",
+    respondedAt: now
   };
 
   if (mongoose.connection.readyState === 1 && typeof ticket.save === 'function') {
