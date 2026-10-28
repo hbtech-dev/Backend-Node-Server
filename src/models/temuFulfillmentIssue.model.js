@@ -63,6 +63,22 @@ const temuFulfillmentIssueSchema = new mongoose.Schema(
       type: String,
       default: ""
     },
+    denialReason: {
+      type: String,
+      default: ""
+    },
+    evidenceCardUrl: {
+      type: String,
+      default: ""
+    },
+    trackingNumber: {
+      type: String,
+      default: ""
+    },
+    carrier: {
+      type: String,
+      default: "DHL Warenpost"
+    },
     resolvedAt: {
       type: Date,
       default: null
