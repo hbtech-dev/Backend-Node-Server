@@ -27,6 +27,7 @@ const temuReturnSchema = new mongoose.Schema(
       type: String,
       default: 'Item not as described / size issue'
     },
+    buyerComment: { type: String, default: "" },
     refundAmount: {
       type: Number,
       required: true
@@ -40,8 +41,14 @@ const temuReturnSchema = new mongoose.Schema(
       articleName: String,
       sku: String,
       quantity: Number,
-      orderItemId: String
+      orderItemId: String,
+      productImage: String,
+      variation: String
     },
+    orderDate: { type: Date, default: null },
+    requestedDate: { type: Date, default: null },
+    mediaUrls: { type: [String], default: [] },
+    afterSaleHistory: { type: Array, default: [] },
     resolutionNotes: {
       type: String,
       default: ''

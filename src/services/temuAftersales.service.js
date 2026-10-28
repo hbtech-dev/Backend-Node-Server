@@ -379,10 +379,16 @@ const syncAllRegionalReturns = async (userId) => {
       }
     }
 
-    const orderItemSn = rec.orderItemSn || rec.orderItemId || rec.orderGoodsId || rec.orderDetailId || '';
-    const rawReason = rec.buyerReasonDesc || rec.buyerReason || rec.reason || rec.afterSalesReason || rec.buyerApplyReason || '';
-    const buyerComment = rec.buyerComment || rec.comment || rec.afterSalesDesc || '';
-    let reasonText = rawReason ? (buyerComment ? `${rawReason} (Buyer: "${buyerComment}")` : rawReason) : null;
+    const goodsItem = (rec.goodsList && rec.goodsList[0]) || {};
+    const orderItemSn = rec.orderItemSn || rec.orderItemId || rec.orderGoodsId || rec.orderDetailId || goodsItem.orderGoodsId || (matchedOrder && matchedOrder.temuOrderId) || "";
+    const rawReason = rec.buyerReasonDesc || rec.buyerReason || rec.reason || rec.afterSalesReason || rec.buyerApplyReason || goodsItem.buyerReasonDesc || goodsItem.buyerReason || (existing && existing.reason && !existing.reason.startsWith("Refund-only") && !existing.reason.startsWith("Return & refund") ? existing.reason : "");
+    const buyerComment = rec.buyerComment || rec.comment || rec.afterSalesDesc || goodsItem.buyerComment || (existing && existing.buyerComment) || "";
+    let reasonText = rawReason || (existing && existing.reason) || null;
+    const mediaUrls = (Array.isArray(rec.pictureList) && rec.pictureList.length) ? rec.pictureList : (Array.isArray(rec.pictures) && rec.pictures.length) ? rec.pictures : (Array.isArray(rec.evidenceList) && rec.evidenceList.length) ? rec.evidenceList : (goodsItem.pictureList && Array.isArray(goodsItem.pictureList) && goodsItem.pictureList.length) ? goodsItem.pictureList : (existing && existing.mediaUrls && existing.mediaUrls.length) ? existing.mediaUrls : ((matchedOrder && matchedOrder.productImage) ? [matchedOrder.productImage] : []);
+    const productImage = (matchedOrder && matchedOrder.productImage) || goodsItem.goodsImgUrl || (existing && existing.itemDetails && existing.itemDetails.productImage) || "";
+    const variation = (matchedOrder && matchedOrder.variation) || goodsItem.specDesc || (existing && existing.itemDetails && existing.itemDetails.variation) || "Pack of 1";
+    const orderDate = (matchedOrder && matchedOrder.createdAt) || (existing && existing.orderDate) || (rec.orderTime ? new Date(rec.orderTime * 1000) : null);
+    const requestedDate = rec.createAt ? new Date(Number(rec.createAt) * 1000) : (existing && existing.requestedDate) || (existing && existing.temuCreatedAt) || new Date();
 
 
     const temuMeta = {
