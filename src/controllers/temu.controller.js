@@ -691,8 +691,8 @@ const DEFAULT_PORTUGAL_ISSUES = [
   {
     issueId: '261024001446240219',
     orderNum: 'PO-PT-261024001446240219',
-    buyerName: 'Temu Customer (PT)',
-    country: 'PT',
+    buyerName: 'Temu Customer (ES)',
+    country: 'ES',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 2,
@@ -703,8 +703,8 @@ const DEFAULT_PORTUGAL_ISSUES = [
   {
     issueId: '261022004550428524',
     orderNum: 'PO-PT-261022004550428524',
-    buyerName: 'Temu Customer (PT)',
-    country: 'PT',
+    buyerName: 'Temu Customer (ES)',
+    country: 'ES',
     issueType: 'Abnormal fulfillment',
     parcel: 'PK-0011875833610941232',
     description: 'No tracking updates for an extended period after shipment',
@@ -716,8 +716,8 @@ const DEFAULT_PORTUGAL_ISSUES = [
   {
     issueId: '261022001482073481',
     orderNum: 'PO-PT-261022001482073481',
-    buyerName: 'Temu Customer (PT)',
-    country: 'PT',
+    buyerName: 'Temu Customer (ES)',
+    country: 'ES',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 1,
@@ -728,8 +728,8 @@ const DEFAULT_PORTUGAL_ISSUES = [
   {
     issueId: '261022001627463618',
     orderNum: 'PO-PT-261022001627463618',
-    buyerName: 'Temu Customer (PT)',
-    country: 'PT',
+    buyerName: 'Temu Customer (ES)',
+    country: 'ES',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 3,
@@ -763,11 +763,11 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  const AUTHENTIC_PORTUGAL_ISSUE = {
+  const AUTHENTIC_SPAIN_ISSUE = {
     issueId: '261028001904297179',
     orderNum: 'PO-192-06915161042798835',
-    buyerName: 'Temu Customer (PT)',
-    country: 'PT',
+    buyerName: 'Temu Customer (ES)',
+    country: 'ES',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 2,
@@ -788,11 +788,11 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 
     // 2. Ensure authentic active Portugal fulfillment issue exists
     await TemuFulfillmentIssue.updateOne(
-      { user: req.user.id, issueId: AUTHENTIC_PORTUGAL_ISSUE.issueId },
+      { user: req.user.id, issueId: AUTHENTIC_SPAIN_ISSUE.issueId },
       {
         $set: {
           user: req.user.id,
-          ...AUTHENTIC_PORTUGAL_ISSUE
+          ...AUTHENTIC_SPAIN_ISSUE
         }
       },
       { upsert: true }
@@ -864,7 +864,7 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
                     orderNum: fullSn,
                     buyerName: cancelItem.buyerName || 'Temu Customer',
                     issueType: 'cancellation_request',
-                    country: (store.country || 'DE').toUpperCase(),
+                    country: (store.country || 'ES').toUpperCase(),
                     description: cancelItem.cancelReason || 'Buyer requested cancellation on Temu',
                     compensationRaw: cancelItem.refundAmount ? `€${(cancelItem.refundAmount / 100).toFixed(2)}` : '€5.00',
                     status: isFinishedOnTemu ? 'resolved' : 'open',
@@ -929,11 +929,11 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  const AUTHENTIC_PORTUGAL_ISSUE = {
+  const AUTHENTIC_SPAIN_ISSUE = {
     issueId: '261028001904297179',
     orderNum: 'PO-192-06915161042798835',
-    buyerName: 'Temu Customer (PT)',
-    country: 'PT',
+    buyerName: 'Temu Customer (ES)',
+    country: 'ES',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 2,
@@ -954,11 +954,11 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 
     // Ensure authentic Portugal issue is present
     await TemuFulfillmentIssue.updateOne(
-      { user: req.user.id, issueId: AUTHENTIC_PORTUGAL_ISSUE.issueId },
+      { user: req.user.id, issueId: AUTHENTIC_SPAIN_ISSUE.issueId },
       {
         $setOnInsert: {
           user: req.user.id,
-          ...AUTHENTIC_PORTUGAL_ISSUE
+          ...AUTHENTIC_SPAIN_ISSUE
         }
       },
       { upsert: true }
@@ -1014,7 +1014,7 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 
     // Enrich missing fields for accurate display
     issuesList = issuesList.map(issue => {
-      const country = (issue.country || 'DE').toUpperCase();
+      const country = (issue.country || 'ES').toUpperCase();
       const order = orderMap.get(issue.orderNum) || orderMap.get(issue.orderNum?.replace(/^PO-/i, ''));
       const realTracking = issue.parcel || issue.trackingNumber || order?.tracking || order?.dhlShipmentId || '';
       const carrier = issue.carrier || order?.shippingMethod || 'DHL Warenpost';
@@ -1327,7 +1327,7 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
       tracking = `00340434${suffix}`;
     }
 
-    const countryCode = (issue.country || 'DE').toUpperCase();
+    const countryCode = (issue.country || 'ES').toUpperCase();
     let defenseNote = '';
     try {
       const geminiService = require('../services/gemini.service');
@@ -1947,7 +1947,7 @@ exports.fetchFulfillmentIssueTracking = catchAsync(async (req, res, next) => {
         deliverWithin: "Didn't deliver on time",
         shippingService: order?.shippingMethod || 'Standard',
         recipientName: order?.recipientName || issue.buyerName || 'Customer',
-        country: order?.country || issue.country || 'DE'
+        country: order?.country || issue.country || 'ES'
       },
       defenseReply
     }
@@ -1985,7 +1985,7 @@ exports.generateFulfillmentAppeal = catchAsync(async (req, res, next) => {
   const carrier = req.body?.carrier || issue?.carrier || order?.shippingMethod || 'DHL Warenpost';
   const orderDate = req.body?.orderDate || formatEuropeanDate(order?.orderDate || order?.createdAt || issue?.createdAt) || '08.10.2026';
   const statusDate = req.body?.statusDate || formatEuropeanDate(order?.shippedAt || (order?.createdAt ? new Date(new Date(order.createdAt).getTime() + 3*86400000) : null)) || '11.10.2026';
-  const country = issue?.country || order?.country || 'DE';
+  const country = issue?.country || order?.country || 'ES';
 
   let appealText = '';
   try {
