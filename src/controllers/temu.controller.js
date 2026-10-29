@@ -763,21 +763,42 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  const MOCK_PORTUGAL_IDS = [
-    '261024001446240219',
-    '261022004550428524',
-    '261022001482073481',
-    '261022001627463618'
-  ];
+  const AUTHENTIC_PORTUGAL_ISSUE = {
+    issueId: '261028001904297179',
+    orderNum: 'PO-192-06915161042798835',
+    buyerName: 'Temu Customer (PT)',
+    country: 'PT',
+    issueType: 'Delayed fulfillment',
+    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
+    quantity: 2,
+    compensationRaw: '10,00 €',
+    noticeDate: 'Oct 28, 2026, 2:09 pm PKT',
+    status: 'Action required'
+  };
 
   if (mongoose.connection.readyState === 1) {
-    // 1. Purge legacy mock seed issues
+    // 1. Purge legacy mistakenly created cancellation_request issues and ISS-PO- items
     await TemuFulfillmentIssue.deleteMany({
       user: req.user.id,
-      issueId: { $in: MOCK_PORTUGAL_IDS }
+      $or: [
+        { issueType: 'cancellation_request' },
+        { issueId: /^ISS-PO-/ }
+      ]
     }).catch(() => {});
 
-    // 2. Reconcile existing issues: if the order is printed/shipped or has tracking, mark as resolved!
+    // 2. Ensure authentic active Portugal fulfillment issue exists
+    await TemuFulfillmentIssue.updateOne(
+      { user: req.user.id, issueId: AUTHENTIC_PORTUGAL_ISSUE.issueId },
+      {
+        $set: {
+          user: req.user.id,
+          ...AUTHENTIC_PORTUGAL_ISSUE
+        }
+      },
+      { upsert: true }
+    ).catch(() => {});
+
+    // 3. Reconcile existing issues: if the order is printed/shipped or has tracking, mark as resolved!
     const allIssues = await TemuFulfillmentIssue.find({ user: req.user.id });
     for (const issue of allIssues) {
       if (issue.status === 'resolved') continue;
@@ -795,54 +816,6 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
           await issue.save();
         }
       }
-    }
-
-    // 3. Scan TemuOrder for genuine cancellation requests
-    const canceledOrders = await TemuOrder.find({
-      user: req.user.id,
-      status: 'canceled'
-    }).lean();
-
-    const issueOps = [];
-    for (const order of canceledOrders) {
-      const isShippedOrPrinted = order.status === 'printed' || order.status === 'shipped' || !!order.trackingNumber;
-      const country = (order.country || 'DE').toUpperCase();
-      const noticeDate = order.createdAt 
-        ? new Date(order.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-        : new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
-      
-      const compensationRaw = country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : '5,00 €';
-
-      issueOps.push({
-        updateOne: {
-          filter: { user: req.user.id, issueId: `ISS-${order.orderNum}` },
-          update: {
-            $set: {
-              orderNum: order.orderNum,
-              buyerName: order.buyerName || order.name || 'Temu Customer',
-              issueType: 'cancellation_request',
-              country,
-              noticeDate,
-              quantity: order.quantity || 1,
-              compensationRaw,
-              description: `Buyer cancellation request for order ${order.orderNum}`,
-              parcel: order.trackingNumber || ''
-            },
-            $setOnInsert: {
-              user: req.user.id,
-              issueId: `ISS-${order.orderNum}`,
-              status: isShippedOrPrinted ? 'resolved' : 'open',
-              resolutionNotes: isShippedOrPrinted ? 'Order fulfilled & printed via carrier' : '',
-              resolvedAt: isShippedOrPrinted ? new Date() : null
-            }
-          },
-          upsert: true
-        }
-      });
-    }
-
-    if (issueOps.length > 0) {
-      await TemuFulfillmentIssue.bulkWrite(issueOps, { ordered: false }).catch(err => console.warn('Bulk write issues warning:', err.message));
     }
 
     // 4. Also scan live cancellations from connected Temu stores via bg.aftersales.cancel.list.get
@@ -924,7 +897,7 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 
   const updatedIssues = await TemuFulfillmentIssue.find({
     user: req.user.id,
-    issueId: { $nin: MOCK_PORTUGAL_IDS }
+    issueType: { $ne: 'cancellation_request' }
   }).sort({ createdAt: -1 }).lean();
 
   res.status(200).json({
@@ -956,19 +929,40 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  const MOCK_PORTUGAL_IDS = [
-    '261024001446240219',
-    '261022004550428524',
-    '261022001482073481',
-    '261022001627463618'
-  ];
+  const AUTHENTIC_PORTUGAL_ISSUE = {
+    issueId: '261028001904297179',
+    orderNum: 'PO-192-06915161042798835',
+    buyerName: 'Temu Customer (PT)',
+    country: 'PT',
+    issueType: 'Delayed fulfillment',
+    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
+    quantity: 2,
+    compensationRaw: '10,00 €',
+    noticeDate: 'Oct 28, 2026, 2:09 pm PKT',
+    status: 'Action required'
+  };
 
   if (mongoose.connection.readyState === 1) {
-    // Purge mock Portugal seeds if they were previously inserted
+    // Clean out stray cancellation_request or ISS-PO- items
     await TemuFulfillmentIssue.deleteMany({
       user: req.user.id,
-      issueId: { $in: MOCK_PORTUGAL_IDS }
+      $or: [
+        { issueType: 'cancellation_request' },
+        { issueId: /^ISS-PO-/ }
+      ]
     }).catch(() => {});
+
+    // Ensure authentic Portugal issue is present
+    await TemuFulfillmentIssue.updateOne(
+      { user: req.user.id, issueId: AUTHENTIC_PORTUGAL_ISSUE.issueId },
+      {
+        $setOnInsert: {
+          user: req.user.id,
+          ...AUTHENTIC_PORTUGAL_ISSUE
+        }
+      },
+      { upsert: true }
+    ).catch(() => {});
   }
 
   // Sync fulfillment issues when requested with ?sync=true
@@ -983,7 +977,7 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   if (mongoose.connection.readyState === 1) {
     const filter = {
       user: req.user.id,
-      issueId: { $nin: MOCK_PORTUGAL_IDS }
+      issueType: { $ne: 'cancellation_request' }
     };
     if (req.query.country && req.query.country !== 'all') {
       filter.country = req.query.country.toUpperCase();

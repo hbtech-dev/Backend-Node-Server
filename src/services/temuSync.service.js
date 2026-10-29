@@ -1379,43 +1379,8 @@ const syncUserTemuReturnsAndIssues = async (user) => {
       await TemuReturn.bulkWrite(returnOps, { ordered: false }).catch(err => console.warn('Bulk write returns warning:', err.message));
     }
 
-    // 2. Sync Address Change / Cancellation Issues to TemuFulfillmentIssue
-    const issueOrders = await TemuOrder.find({
-      user: user._id,
-      $or: [
-        { status: 'canceled' },
-        { address: { $regex: 'change', $options: 'i' } }
-      ]
-    }).select('orderNum buyerName name country status address').lean();
-
-    const issueOps = issueOrders.map(order => {
-      const isCancel = order.status === 'canceled';
-      return {
-        updateOne: {
-          filter: { user: user._id, issueId: `ISS-${order.orderNum}` },
-          update: {
-            $set: {
-              user: user._id,
-              issueId: `ISS-${order.orderNum}`,
-              orderNum: order.orderNum,
-              buyerName: order.buyerName || order.name || 'Temu Customer',
-              issueType: isCancel ? 'cancellation_request' : 'address_change',
-              country: order.country || 'DE',
-              description: isCancel 
-                ? `Buyer requested order cancellation for ${order.orderNum}` 
-                : `Delivery address update request for ${order.orderNum}`,
-              requestedAddress: order.address || '',
-              status: 'open'
-            }
-          },
-          upsert: true
-        }
-      };
-    });
-
-    if (issueOps.length > 0) {
-      await TemuFulfillmentIssue.bulkWrite(issueOps, { ordered: false }).catch(err => console.warn('Bulk write issues warning:', err.message));
-    }
+    // Note: Temu fulfillment issues are performance policy claims (Delayed / Abnormal fulfillment)
+    // Buyer cancellations are kept in TemuReturn and do not pollute performance fulfillment issues.
   } finally {
     activeReturnSyncUsers.delete(userIdStr);
   }
