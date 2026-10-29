@@ -280,76 +280,38 @@ const generateRandomHumanFulfillmentAppeal = ({
   carrier = 'DHL Warenpost',
   orderDateVal,
   statusDateVal,
-  country = 'DE'
+  country = 'DE',
+  shipWithin = 'Shipped in time',
+  deliverWithin = "Didn't deliver on time",
+  purchaseDate = 'Oct 18, 2026, 9:31 am PKT(UTC+5)',
+  shippingService = 'Standard',
+  penaltyAmount = '5,00€'
 }) => {
-  const safeTrk = trackingNo ? String(trackingNo).trim() : '[TRACKING_NUMBER]';
+  const safeTrk = (trackingNo && String(trackingNo).trim() && trackingNo !== '[TRACKING_NUMBER]') ? String(trackingNo).trim() : 'LG282205803DE';
   const orderDate = orderDateVal || '08.10.2026';
   const statusDate = statusDateVal || '11.10.2026';
 
-  const salutations = [
-    'Dear Temu Support Team,',
-    'Dear Temu Appeals Team,',
-    'Hello Temu Fulfillment Operations,',
-    'Dear Temu Team,',
-    'Dear Temu Dispute Resolution Team,'
-  ];
-
-  const intros = [
-    `We are writing to appeal the delayed fulfillment penalty applied to order ${orderNum || ''}.`,
-    `Please find our official appeal and logistics documentation for order ${orderNum || ''}.`,
-    `We respectfully submit this appeal regarding the fulfillment delay penalty for order ${orderNum || ''}.`,
-    `This is our formal appeal concerning the late delivery claim on order ${orderNum || ''}.`
-  ];
-
-  const handoverExplanations = [
-    `As documented in the carrier scan history, our warehouse packed, labeled, and handed over this parcel to ${carrier} on ${statusDate} strictly within the designated dispatch deadline.`,
-    `Our shipping records confirm that this order was fulfilled and transferred to ${carrier} on ${statusDate} in full compliance with store dispatch guidelines.`,
-    `We fulfilled this order without delay, handing it over to logistics carrier ${carrier} on ${statusDate} well within the allocated timeframe.`,
-    `The package was properly verified, prepared, and dispatched with ${carrier} on ${statusDate} in timely accordance with Temu shipping standards.`
-  ];
-
-  const borderExplanations = [
-    `The subsequent transit delay to ${country} is due to international border clearance, customs inspections, and cross-border logistics transfers, which are entirely beyond our merchant control.`,
-    `Any delay encountered during delivery is solely attributable to border clearance and international postal inspection checkpoints along the transit route.`,
-    `Carrier tracking confirms active transit progress; the extended delivery timeline was caused by customs clearance and border controls at regional entry hubs.`,
-    `The shipment is proceeding in the carrier network, and the delay was caused by cross-border customs clearance and logistics congestion, not seller delay.`
-  ];
-
-  const closingRequests = [
-    `We respectfully ask Temu to review the carrier tracking proof, waive the fulfillment delay penalty, and reject the customer's compensation fee.`,
-    `Therefore, we kindly request the Temu team to approve our appeal, cancel the late delivery fine, and dismiss this penalty claim.`,
-    `We appreciate your fair evaluation of our on-time dispatch and request full exemption from the delayed fulfillment penalty.`,
-    `We thank you for reviewing the logistics trail and request the removal of this fulfillment delay penalty.`
-  ];
-
-  const signoffs = [
-    'Regards,\nEDER TEAM',
-    'Best regards,\nEDER TEAM',
-    'Sincerely,\nEDER TEAM',
-    'With regards,\nEDER TEAM'
-  ];
-
-  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
-
-  return `${pick(salutations)}
-
-${pick(intros)}
+  return `Dear Customer,
 
 Tracking #: ${safeTrk}
 Order Date: ${orderDate}
 Order Status: ${statusDate}
 
-${pick(handoverExplanations)} ${pick(borderExplanations)}
+Order summary:
+Ship within: ${shipWithin}
+Deliver within: ${deliverWithin}
+Purchase date: ${purchaseDate}
+Shipping service: ${shippingService}
 
-${pick(closingRequests)}
+Here are order details: The package was dispatched promptly in accordance with store fulfillment deadlines. The order might be delayed due to clearance etc on border or international carrier transit checkpoints beyond the merchant's control. The goods are on their way to the delivery address.
 
-${pick(signoffs)}`;
+We have submitted our official dispatch timeline and carrier records to Temu to formally reject this fulfillment delay issue and dismiss the ${penaltyAmount} compensation claim.
+
+We appreciate your understanding and patience.
+Regards,
+EDER TEAM`;
 };
 
-/**
- * Generate a dynamic, unique, human appeal statement addressed TO TEMU SUPPORT
- * for fulfillment issues (late delivery penalty waiver defense).
- */
 const generateHumanFulfillmentAppeal = async ({
   orderNum,
   trackingNo,
