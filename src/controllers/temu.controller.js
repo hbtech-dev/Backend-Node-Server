@@ -1212,9 +1212,8 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
       tracking = `00340434${suffix}`;
     }
 
-    const denialReason = 'Items have been shipped / The parcel has been handed over to the carrier';
     const countryCode = (issue.country || 'DE').toUpperCase();
-    const defenseNote = generateFulfillmentRejectionNote(countryCode, tracking, carrier, orderNum);
+    const defenseNote = `The order ${orderNum || ''} was packed, verified, and handed over to logistics carrier (${carrier}) with tracking number ${tracking} within the designated dispatch window. The logistics tracking confirms active handover and transit. We respectfully request exemption from delayed fulfillment penalties.`;
     const dateFormatted = new Date().toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -1225,10 +1224,10 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
     }) + ' GMT+1';
     const evidenceCardUrl = generateTemuEvidenceSvgUri(tracking, carrier, dateFormatted);
 
-    // Save resolution in database
+    // Save resolution in database matching Temu appeal flow
     issue.status = 'resolved';
-    issue.resolutionAction = 'deny';
-    issue.denialReason = denialReason;
+    issue.resolutionAction = 'appeal';
+    issue.denialReason = 'Start fulfillment issue appeal';
     issue.resolutionNotes = defenseNote;
     issue.trackingNumber = tracking;
     issue.carrier = carrier;
@@ -1285,7 +1284,7 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
       tracking,
       reason: denialReason,
       status: 'success',
-      details: `Auto-denied fulfillment request for order ${issue.orderNum || issue.issueId}. Attached carrier tracking proof card (${tracking}) and submitted defense note.`
+      details: `Auto-appealed fulfillment issue ${issue.orderNum || issue.issueId}. Attached carrier tracking proof image (${tracking}) and submitted appeal.`
     });
   }
 
