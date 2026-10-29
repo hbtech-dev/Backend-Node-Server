@@ -997,16 +997,71 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     }
     issuesList = await TemuFulfillmentIssue.find(filter).sort({ createdAt: -1 }).lean();
 
+    // Batch fetch associated orders to enrich tracking and dates
+    const orderNums = issuesList.map(i => i.orderNum).filter(Boolean);
+    const cleanNums = orderNums.map(n => n.replace(/^PO-/i, ''));
+    const matchedOrders = await TemuOrder.find({
+      user: req.user.id,
+      $or: [
+        { orderNum: { $in: [...orderNums, ...cleanNums] } },
+        { temuOrderId: { $in: cleanNums } }
+      ]
+    }).select('orderNum temuOrderId tracking dhlShipmentId orderDate createdAt shippedAt country shippingMethod recipientName address').lean();
+
+    const orderMap = new Map();
+    for (const ord of matchedOrders) {
+      if (ord.orderNum) {
+        orderMap.set(ord.orderNum, ord);
+        orderMap.set(ord.orderNum.replace(/^PO-/i, ''), ord);
+        orderMap.set(`PO-${ord.orderNum.replace(/^PO-/i, '')}`, ord);
+      }
+      if (ord.temuOrderId) orderMap.set(ord.temuOrderId, ord);
+    }
+
     // Enrich missing fields for accurate display
     issuesList = issuesList.map(issue => {
       const country = (issue.country || 'DE').toUpperCase();
+      const order = orderMap.get(issue.orderNum) || orderMap.get(issue.orderNum?.replace(/^PO-/i, ''));
+      const realTracking = issue.parcel || issue.trackingNumber || order?.tracking || order?.dhlShipmentId || '';
+      const carrier = issue.carrier || order?.shippingMethod || 'DHL Warenpost';
       const noticeDate = issue.noticeDate || (issue.createdAt ? new Date(issue.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent');
       const compensationRaw = issue.compensationRaw || (country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : '5,00 €');
+
+      const orderDateFormatted = formatEuropeanDate(order?.orderDate || order?.createdAt || issue.createdAt) || '08.10.2026';
+      const statusDateFormatted = formatEuropeanDate(order?.shippedAt || (order?.createdAt ? new Date(new Date(order.createdAt).getTime() + 3*86400000) : null)) || '11.10.2026';
+      const purchaseDateTemu = order?.createdAt ? formatTemuTimestamp(order.createdAt) : (issue.noticeDate ? `${issue.noticeDate} PKT(UTC+5)` : 'Oct 18, 2026, 9:31 am PKT(UTC+5)');
+
+      const suggestedReply = generateFulfillmentRejectionNote(
+        country,
+        realTracking,
+        carrier,
+        issue.orderNum,
+        orderDateFormatted,
+        statusDateFormatted
+      );
+
       return {
         ...issue,
         noticeDate,
         compensationRaw,
-        quantity: issue.quantity || 1
+        quantity: issue.quantity || 1,
+        parcel: realTracking,
+        trackingNumber: realTracking,
+        carrier,
+        orderSummary: {
+          orderNum: issue.orderNum,
+          tracking: realTracking,
+          carrier,
+          purchaseDate: purchaseDateTemu,
+          orderDateFormatted,
+          statusDateFormatted,
+          shipWithin: 'Shipped in time',
+          deliverWithin: "Didn't deliver on time",
+          shippingService: order?.shippingMethod || 'Standard',
+          recipientName: order?.recipientName || issue.buyerName || 'Temu Customer',
+          country: order?.country || country
+        },
+        suggestedReply: issue.resolutionNotes || suggestedReply
       };
     });
   }
@@ -1057,25 +1112,63 @@ const generateTemuEvidenceSvgUri = (tracking, carrier, dateStr) => {
   return `data:image/svg+xml;base64,${Buffer.from(svg).toString('base64')}`;
 };
 
-const generateFulfillmentRejectionNote = (countryCode, trackingNo, carrier = 'DHL Paket', orderSn = '') => {
-  const cc = (countryCode || 'DE').toUpperCase();
+const formatEuropeanDate = (dateVal) => {
+  if (!dateVal) return '';
+  if (typeof dateVal === 'string' && /^\d{1,2}\.\d{1,2}\.\d{4}$/.test(dateVal.trim())) {
+    const parts = dateVal.trim().split('.');
+    return `${parts[0].padStart(2, '0')}.${parts[1].padStart(2, '0')}.${parts[2]}`;
+  }
+  const d = new Date(dateVal);
+  if (isNaN(d.getTime())) return '';
+  const day = String(d.getDate()).padStart(2, '0');
+  const month = String(d.getMonth() + 1).padStart(2, '0');
+  const year = d.getFullYear();
+  return `${day}.${month}.${year}`;
+};
+
+const formatTemuTimestamp = (dateInput) => {
+  const date = dateInput ? new Date(dateInput) : new Date();
+  try {
+    return date.toLocaleString('en-US', {
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      hour12: true,
+      timeZone: 'Asia/Karachi'
+    }).replace(' AM', ' am').replace(' PM', ' pm') + ' PKT(UTC+5)';
+  } catch (_) {
+    return date.toLocaleString() + ' PKT(UTC+5)';
+  }
+};
+
+const generateFulfillmentRejectionNote = (countryCode, trackingNo, carrier = 'DHL Warenpost', orderSn = '', orderDateVal = null, statusDateVal = null) => {
   const safeTrk = trackingNo ? trackingNo.trim() : '[TRACKING_NUMBER]';
-  if (cc === 'DE' || cc === 'AT') {
-    return `Guten Tag, Ihre Bestellung ${orderSn || ''} befindet sich bereits in der Versandabwicklung und wurde an den Versanddienstleister (${carrier}) übergeben. Ihre Sendungsnummer lautet: ${safeTrk}. Gemäß unseren Versandrichtlinien können bereits versendete Bestellungen während des Transports nicht storniert oder erstattet werden. Ihre Sendung befindet sich auf dem direkten Zustellweg und wird Sie schnellstmöglich erreichen. Bitte prüfen Sie den Sendungsstatus mit der angegebenen Sendungsnummer. Viele Grüße, Ihr Kundenservice-Team`;
+  const formattedOrderDate = formatEuropeanDate(orderDateVal) || '08.10.2026';
+  let formattedStatusDate = formatEuropeanDate(statusDateVal);
+  if (!formattedStatusDate && formattedOrderDate) {
+    const parts = formattedOrderDate.split('.').map(Number);
+    if (parts.length === 3) {
+      const estDate = new Date(parts[2], parts[1] - 1, parts[0] + 3);
+      formattedStatusDate = formatEuropeanDate(estDate);
+    }
   }
-  if (cc === 'ES') {
-    return `Hola, su pedido ${orderSn || ''} ya se encuentra en proceso de entrega y ha sido entregado al transportista (${carrier}). Su número de seguimiento oficial es: ${safeTrk}. Conforme a nuestra política de envíos, los pedidos despachados en tránsito activo no pueden cancelarse ni reembolsarse mientras se encuentren en camino. Su paquete avanza correctamente hacia su dirección. Atentamente, Servicio de Atención al Cliente`;
-  }
-  if (cc === 'FR' || cc === 'BE') {
-    return `Bonjour, votre commande ${orderSn || ''} est déjà en cours d'acheminement et a été remise au transporteur (${carrier}). Voici votre numéro de suivi officiel : ${safeTrk}. Conformément à nos conditions de livraison, les commandes déjà expédiées ne peuvent être ni annulées ni remboursées pendant leur transit. Votre colis progresse normalement et vous parviendra dans les meilleurs délais. Cordialement, Le Service Client`;
-  }
-  if (cc === 'IT') {
-    return `Buongiorno, il suo ordine ${orderSn || ''} è già in fase di spedizione ed è stato affidato al corriere (${carrier}). Il suo codice di tracciamento è: ${safeTrk}. In base alle nostre conditions di vendita, gli ordini già affidati al corriere e in transito non possono essere annullati o rimborsati durante il trasporto. Il pacco le arriverà al più presto. Cordiali saluti, Servizio Clienti`;
-  }
-  if (cc === 'PL') {
-    return `Dzień dobry, Twoje zamówienie ${orderSn || ''} zostało już przekazane przewoźnikowi (${carrier}) i jest w drodze. Twój numer przesyłki to: ${safeTrk}. Zgodnie z naszym regulaminem, zamówienia będące w trakcie doręczenia nie podlegają anulowaniu ani zwrotowi środków w trakcie transportu. Przesyłka jest w drodze i dotrze najszybciej jak to możliwe. Pozdrawiamy, Dział Obsługi Klienta`;
-  }
-  return `Hello, your order ${orderSn || ''} is already in progress and has been handed over to the carrier (${carrier}). Here is your official tracking number: ${safeTrk}. Under our store fulfillment policy, orders already dispatched with active carrier transit cannot be canceled or refunded while in transit. Your parcel is progressing and will reach you as soon as possible. Please monitor the delivery status with your tracking number. Best regards, Customer Service Team`;
+  if (!formattedStatusDate) formattedStatusDate = '11.10.2026';
+
+  return `Dear Customer,
+
+Tracking #: ${safeTrk}
+
+Order Date: ${formattedOrderDate}
+Order Status: ${formattedStatusDate}
+
+Here are order details order might be delayed due to clearance etc on border.
+
+We appreciate your understanding and patience.
+
+Regards,
+EDER TEAM`;
 };
 
 exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
@@ -1184,26 +1277,42 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
     const orderNum = issue.orderNum || '';
     const cleanNum = orderNum.replace(/^PO-/i, '');
 
-    // Look up associated order in DB to find tracking
+    // Look up associated order in DB to find tracking and dates
     let tracking = issue.parcel || issue.trackingNumber;
     let carrier = issue.carrier || 'DHL Warenpost';
+    let orderDateVal = issue.createdAt;
+    let statusDateVal = null;
+    let orderDoc = null;
 
-    if (!tracking && orderNum) {
-      const order = await TemuOrder.findOne({
+    if (orderNum) {
+      orderDoc = await TemuOrder.findOne({
         user: user._id,
         $or: [
           { orderNum: orderNum },
           { orderNum: cleanNum },
-          { orderNum: `PO-${cleanNum}` }
+          { orderNum: `PO-${cleanNum}` },
+          { temuOrderId: cleanNum }
         ]
       }).lean();
 
-      if (order && order.tracking) {
-        tracking = order.tracking;
+      if (orderDoc) {
+        if (orderDoc.tracking) tracking = orderDoc.tracking;
+        if (orderDoc.shippingMethod) carrier = orderDoc.shippingMethod;
+        if (orderDoc.orderDate || orderDoc.createdAt) orderDateVal = orderDoc.orderDate || orderDoc.createdAt;
+        if (orderDoc.shippedAt) statusDateVal = orderDoc.shippedAt;
       }
-      if (order && order.shippingMethod) {
-        carrier = order.shippingMethod;
-      }
+    }
+
+    // If still missing tracking, query Temu OpenAPI in real-time
+    if (!tracking && orderNum) {
+      try {
+        const temuAftersalesService = require('../services/temuAftersales.service');
+        const apiTrk = await temuAftersalesService.fetchTemuTrackingForOrder(user._id, orderNum);
+        if (apiTrk && apiTrk.success && apiTrk.tracking) {
+          tracking = apiTrk.tracking;
+          if (apiTrk.carrier) carrier = apiTrk.carrier;
+        }
+      } catch (_) {}
     }
 
     if (!tracking) {
@@ -1213,7 +1322,15 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
     }
 
     const countryCode = (issue.country || 'DE').toUpperCase();
-    const defenseNote = `The order ${orderNum || ''} was packed, verified, and handed over to logistics carrier (${carrier}) with tracking number ${tracking} within the designated dispatch window. The logistics tracking confirms active handover and transit. We respectfully request exemption from delayed fulfillment penalties.`;
+    const defenseNote = generateFulfillmentRejectionNote(
+      countryCode,
+      tracking,
+      carrier,
+      orderNum,
+      orderDateVal,
+      statusDateVal
+    );
+
     const dateFormatted = new Date().toLocaleString('en-US', {
       month: 'short',
       day: 'numeric',
@@ -1277,12 +1394,12 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
     logs.push({
       id: `LOG-FULFILL-${issue.issueId}-${Date.now()}`,
       timestamp: new Date(),
-      action: 'deny',
+      action: 'appeal',
       issueId: issue.issueId,
       orderNum: issue.orderNum,
       carrier,
       tracking,
-      reason: denialReason,
+      reason: 'Start fulfillment issue appeal',
       status: 'success',
       details: `Auto-appealed fulfillment issue ${issue.orderNum || issue.issueId}. Attached carrier tracking proof image (${tracking}) and submitted appeal.`
     });
@@ -1716,4 +1833,98 @@ exports.fetchOrderTracking = catchAsync(async (req, res, next) => {
       }
     });
   }
+});
+
+/**
+ * Live lookup & sync tracking for a fulfillment issue from Temu OpenAPI or DB
+ */
+exports.fetchFulfillmentIssueTracking = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const mongoose = require('mongoose');
+  const temuAftersalesService = require('../services/temuAftersales.service');
+
+  const issue = await TemuFulfillmentIssue.findOne({
+    user: req.user.id,
+    $or: [
+      { _id: mongoose.isValidObjectId(id) ? id : null },
+      { issueId: id },
+      { orderNum: id }
+    ]
+  });
+
+  if (!issue) {
+    return next(new AppError('Fulfillment issue not found', 404));
+  }
+
+  const orderNum = issue.orderNum || '';
+  let tracking = issue.parcel || issue.trackingNumber || '';
+  let carrier = issue.carrier || 'DHL Warenpost';
+
+  // 1. Try Temu OpenAPI
+  if (!tracking && orderNum) {
+    try {
+      const apiResult = await temuAftersalesService.fetchTemuTrackingForOrder(req.user.id, orderNum);
+      if (apiResult && apiResult.success && apiResult.tracking) {
+        tracking = apiResult.tracking;
+        if (apiResult.carrier) carrier = apiResult.carrier;
+      }
+    } catch (_) {}
+  }
+
+  // 2. Try local DB
+  const order = await TemuOrder.findOne({
+    user: req.user.id,
+    $or: [
+      { orderNum: orderNum },
+      { orderNum: orderNum.replace(/^PO-/i, '') },
+      { orderNum: `PO-${orderNum.replace(/^PO-/i, '')}` }
+    ]
+  }).lean();
+
+  if (order) {
+    if (!tracking && order.tracking) tracking = order.tracking;
+    if (order.shippingMethod) carrier = order.shippingMethod;
+  }
+
+  if (tracking) {
+    issue.trackingNumber = tracking;
+    issue.parcel = tracking;
+    issue.carrier = carrier;
+    await issue.save().catch(() => {});
+  }
+
+  const orderDateFormatted = formatEuropeanDate(order?.orderDate || order?.createdAt || issue.createdAt) || '08.10.2026';
+  const statusDateFormatted = formatEuropeanDate(order?.shippedAt || (order?.createdAt ? new Date(new Date(order.createdAt).getTime() + 3*86400000) : null)) || '11.10.2026';
+  const purchaseDateTemu = order?.createdAt ? formatTemuTimestamp(order.createdAt) : 'Oct 18, 2026, 9:31 am PKT(UTC+5)';
+
+  const defenseReply = generateFulfillmentRejectionNote(
+    issue.country,
+    tracking,
+    carrier,
+    orderNum,
+    orderDateFormatted,
+    statusDateFormatted
+  );
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      tracking,
+      carrier,
+      orderSummary: {
+        orderNum,
+        tracking,
+        carrier,
+        purchaseDate: purchaseDateTemu,
+        orderDateFormatted,
+        statusDateFormatted,
+        shipWithin: 'Shipped in time',
+        deliverWithin: "Didn't deliver on time",
+        shippingService: order?.shippingMethod || 'Standard',
+        recipientName: order?.recipientName || issue.buyerName || 'Customer',
+        country: order?.country || issue.country || 'DE'
+      },
+      defenseReply
+    }
+  });
 });
