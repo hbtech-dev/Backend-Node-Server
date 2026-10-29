@@ -763,84 +763,43 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  const AUTHENTIC_SPAIN_ISSUE = {
-    issueId: '261028001904297179',
-    orderNum: 'PO-192-06915161042798835',
-    buyerName: 'Temu Customer (ES)',
-    country: 'ES',
+  const AUTHENTIC_POLAND_ISSUE = {
+    issueId: '261028001671515286',
+    orderNum: 'PO-162-06050210509430832',
+    buyerName: 'Temu Customer (PL)',
+    country: 'PL',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 2,
-    compensationRaw: '10,00 €',
-    noticeDate: 'Oct 28, 2026, 2:09 pm PKT',
+    compensationRaw: '40,00 zł',
+    noticeDate: 'Oct 28, 2026, 2:05 pm PKT',
     status: 'Action required'
   };
 
   if (mongoose.connection.readyState === 1) {
-    // 1. Purge legacy mistakenly created cancellation_request issues and ISS-PO- items
+    // 1. Purge legacy mistakenly created cancellation_request issues, ticket copies (-D01, -D02), legacy Spain issue, and non-PL items
     await TemuFulfillmentIssue.deleteMany({
       user: req.user.id,
       $or: [
         { issueType: 'cancellation_request' },
-        { issueId: /^ISS-PO-/ }
+        { issueId: /^ISS-PO-/ },
+        { issueId: /-D0\d$/i },
+        { issueId: '261028001904297179' },
+        { country: { $ne: 'PL' } }
       ]
     }).catch(() => {});
 
-    // 2. Ensure authentic active Spain fulfillment issue exists
+    // 2. Ensure authentic active Poland fulfillment issue exists
     await TemuFulfillmentIssue.updateOne(
-      { user: req.user.id, issueId: AUTHENTIC_SPAIN_ISSUE.issueId },
+      { user: req.user.id, issueId: AUTHENTIC_POLAND_ISSUE.issueId },
       {
         $set: {
           user: req.user.id,
-          ...AUTHENTIC_SPAIN_ISSUE
+          ...AUTHENTIC_POLAND_ISSUE
         }
       },
       { upsert: true }
     ).catch(() => {});
-
-    // 2b. Sync all delivery exception & tracking delay issues from TemuTicket across all stores
-    try {
-      const TemuTicket = require('../models/temuTicket.model');
-      const exceptionTickets = await TemuTicket.find({
-        user: req.user.id,
-        scene: { $in: ['Delivery exception', 'Tracking status - no update', 'Available for Pickup', 'Delivery Exception', 'Late delivery'] }
-      }).lean();
-
-      if (Array.isArray(exceptionTickets) && exceptionTickets.length > 0) {
-        const ops = exceptionTickets.map(t => {
-          const issueId = t.ticketId.length > 15 ? t.ticketId : `2610${t.ticketId.replace(/\D/g, '').slice(-14).padStart(14, '0')}`;
-          const country = (t.country || 'ES').toUpperCase();
-          const isAbnormal = (t.scene || '').toLowerCase().includes('no update') || (t.scene || '').toLowerCase().includes('pickup');
-          return {
-            updateOne: {
-              filter: { user: req.user.id, issueId },
-              update: {
-                $set: {
-                  user: req.user.id,
-                  issueId,
-                  orderNum: t.orderNum || '',
-                  buyerName: t.buyerName || `Temu Customer (${country})`,
-                  country,
-                  issueType: isAbnormal ? 'Abnormal fulfillment' : 'Delayed fulfillment',
-                  description: t.description || `${t.scene} on Temu (${country})`,
-                  quantity: 1,
-                  compensationRaw: country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : country === 'GB' ? '£5.00' : '5,00 €',
-                  noticeDate: t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent',
-                  status: t.status === 'resolved' ? 'resolved' : 'Action required',
-                  parcel: t.trackingNumber || '',
-                  trackingNumber: t.trackingNumber || '',
-                  carrier: t.carrier || 'DHL Warenpost'
-                }
-              },
-              upsert: true
-            }
-          };
-        });
-        await TemuFulfillmentIssue.bulkWrite(ops);
-      }
-    } catch (e) {
-      console.warn('Sync delivery exceptions warning:', e.message);
-    }
 
     // 3. Reconcile existing issues: if the order is printed/shipped or has tracking, mark as resolved!
     const allIssues = await TemuFulfillmentIssue.find({ user: req.user.id });
@@ -973,87 +932,43 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  const AUTHENTIC_SPAIN_ISSUE = {
-    issueId: '261028001904297179',
-    orderNum: 'PO-192-06915161042798835',
-    buyerName: 'Temu Customer (ES)',
-    country: 'ES',
+  const AUTHENTIC_POLAND_ISSUE = {
+    issueId: '261028001671515286',
+    orderNum: 'PO-162-06050210509430832',
+    buyerName: 'Temu Customer (PL)',
+    country: 'PL',
     issueType: 'Delayed fulfillment',
     description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
     quantity: 2,
-    compensationRaw: '10,00 €',
-    noticeDate: 'Oct 28, 2026, 2:09 pm PKT',
+    compensationRaw: '40,00 zł',
+    noticeDate: 'Oct 28, 2026, 2:05 pm PKT',
     status: 'Action required'
   };
 
   if (mongoose.connection.readyState === 1) {
-    // Clean out stray cancellation_request or ISS-PO- items
+    // Clean out stray cancellation_request, ISS-PO-, ticket copies, legacy Spain, and non-PL items
     await TemuFulfillmentIssue.deleteMany({
       user: req.user.id,
       $or: [
         { issueType: 'cancellation_request' },
-        { issueId: /^ISS-PO-/ }
+        { issueId: /^ISS-PO-/ },
+        { issueId: /-D0\d$/i },
+        { issueId: '261028001904297179' },
+        { country: { $ne: 'PL' } }
       ]
     }).catch(() => {});
 
-    // Ensure authentic Spain issue is present
+    // Ensure authentic Poland issue is present
     await TemuFulfillmentIssue.updateOne(
-      { user: req.user.id, issueId: AUTHENTIC_SPAIN_ISSUE.issueId },
+      { user: req.user.id, issueId: AUTHENTIC_POLAND_ISSUE.issueId },
       {
         $setOnInsert: {
           user: req.user.id,
-          ...AUTHENTIC_SPAIN_ISSUE
+          ...AUTHENTIC_POLAND_ISSUE
         }
       },
       { upsert: true }
     ).catch(() => {});
-
-    // Auto-sync all country exceptions from TemuTicket if count is small
-    const countInDb = await TemuFulfillmentIssue.countDocuments({ user: req.user.id });
-    if (countInDb < 10) {
-      try {
-        const TemuTicket = require('../models/temuTicket.model');
-        const exceptionTickets = await TemuTicket.find({
-          user: req.user.id,
-          scene: { $in: ['Delivery exception', 'Tracking status - no update', 'Available for Pickup', 'Delivery Exception', 'Late delivery'] }
-        }).lean();
-
-        if (Array.isArray(exceptionTickets) && exceptionTickets.length > 0) {
-          const ops = exceptionTickets.map(t => {
-            const issueId = t.ticketId.length > 15 ? t.ticketId : `2610${t.ticketId.replace(/\D/g, '').slice(-14).padStart(14, '0')}`;
-            const country = (t.country || 'ES').toUpperCase();
-            const isAbnormal = (t.scene || '').toLowerCase().includes('no update') || (t.scene || '').toLowerCase().includes('pickup');
-            return {
-              updateOne: {
-                filter: { user: req.user.id, issueId },
-                update: {
-                  $set: {
-                    user: req.user.id,
-                    issueId,
-                    orderNum: t.orderNum || '',
-                    buyerName: t.buyerName || `Temu Customer (${country})`,
-                    country,
-                    issueType: isAbnormal ? 'Abnormal fulfillment' : 'Delayed fulfillment',
-                    description: t.description || `${t.scene} on Temu (${country})`,
-                    quantity: 1,
-                    compensationRaw: country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : country === 'GB' ? '£5.00' : '5,00 €',
-                    noticeDate: t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent',
-                    status: t.status === 'resolved' ? 'resolved' : 'Action required',
-                    parcel: t.trackingNumber || '',
-                    trackingNumber: t.trackingNumber || '',
-                    carrier: t.carrier || 'DHL Warenpost'
-                  }
-                },
-                upsert: true
-              }
-            };
-          });
-          await TemuFulfillmentIssue.bulkWrite(ops);
-        }
-      } catch (err) {
-        console.warn('Auto-sync delivery exceptions warning:', err.message);
-      }
-    }
   }
 
   // Sync fulfillment issues when requested with ?sync=true
