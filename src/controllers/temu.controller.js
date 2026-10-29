@@ -786,7 +786,7 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       ]
     }).catch(() => {});
 
-    // 2. Ensure authentic active Portugal fulfillment issue exists
+    // 2. Ensure authentic active Spain fulfillment issue exists
     await TemuFulfillmentIssue.updateOne(
       { user: req.user.id, issueId: AUTHENTIC_SPAIN_ISSUE.issueId },
       {
@@ -797,6 +797,50 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       },
       { upsert: true }
     ).catch(() => {});
+
+    // 2b. Sync all delivery exception & tracking delay issues from TemuTicket across all stores
+    try {
+      const TemuTicket = require('../models/temuTicket.model');
+      const exceptionTickets = await TemuTicket.find({
+        user: req.user.id,
+        scene: { $in: ['Delivery exception', 'Tracking status - no update', 'Available for Pickup', 'Delivery Exception', 'Late delivery'] }
+      }).lean();
+
+      if (Array.isArray(exceptionTickets) && exceptionTickets.length > 0) {
+        const ops = exceptionTickets.map(t => {
+          const issueId = t.ticketId.length > 15 ? t.ticketId : `2610${t.ticketId.replace(/\D/g, '').slice(-14).padStart(14, '0')}`;
+          const country = (t.country || 'ES').toUpperCase();
+          const isAbnormal = (t.scene || '').toLowerCase().includes('no update') || (t.scene || '').toLowerCase().includes('pickup');
+          return {
+            updateOne: {
+              filter: { user: req.user.id, issueId },
+              update: {
+                $set: {
+                  user: req.user.id,
+                  issueId,
+                  orderNum: t.orderNum || '',
+                  buyerName: t.buyerName || `Temu Customer (${country})`,
+                  country,
+                  issueType: isAbnormal ? 'Abnormal fulfillment' : 'Delayed fulfillment',
+                  description: t.description || `${t.scene} on Temu (${country})`,
+                  quantity: 1,
+                  compensationRaw: country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : country === 'GB' ? '£5.00' : '5,00 €',
+                  noticeDate: t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent',
+                  status: t.status === 'resolved' ? 'resolved' : 'Action required',
+                  parcel: t.trackingNumber || '',
+                  trackingNumber: t.trackingNumber || '',
+                  carrier: t.carrier || 'DHL Warenpost'
+                }
+              },
+              upsert: true
+            }
+          };
+        });
+        await TemuFulfillmentIssue.bulkWrite(ops);
+      }
+    } catch (e) {
+      console.warn('Sync delivery exceptions warning:', e.message);
+    }
 
     // 3. Reconcile existing issues: if the order is printed/shipped or has tracking, mark as resolved!
     const allIssues = await TemuFulfillmentIssue.find({ user: req.user.id });
@@ -952,7 +996,7 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       ]
     }).catch(() => {});
 
-    // Ensure authentic Portugal issue is present
+    // Ensure authentic Spain issue is present
     await TemuFulfillmentIssue.updateOne(
       { user: req.user.id, issueId: AUTHENTIC_SPAIN_ISSUE.issueId },
       {
@@ -963,6 +1007,53 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       },
       { upsert: true }
     ).catch(() => {});
+
+    // Auto-sync all country exceptions from TemuTicket if count is small
+    const countInDb = await TemuFulfillmentIssue.countDocuments({ user: req.user.id });
+    if (countInDb < 10) {
+      try {
+        const TemuTicket = require('../models/temuTicket.model');
+        const exceptionTickets = await TemuTicket.find({
+          user: req.user.id,
+          scene: { $in: ['Delivery exception', 'Tracking status - no update', 'Available for Pickup', 'Delivery Exception', 'Late delivery'] }
+        }).lean();
+
+        if (Array.isArray(exceptionTickets) && exceptionTickets.length > 0) {
+          const ops = exceptionTickets.map(t => {
+            const issueId = t.ticketId.length > 15 ? t.ticketId : `2610${t.ticketId.replace(/\D/g, '').slice(-14).padStart(14, '0')}`;
+            const country = (t.country || 'ES').toUpperCase();
+            const isAbnormal = (t.scene || '').toLowerCase().includes('no update') || (t.scene || '').toLowerCase().includes('pickup');
+            return {
+              updateOne: {
+                filter: { user: req.user.id, issueId },
+                update: {
+                  $set: {
+                    user: req.user.id,
+                    issueId,
+                    orderNum: t.orderNum || '',
+                    buyerName: t.buyerName || `Temu Customer (${country})`,
+                    country,
+                    issueType: isAbnormal ? 'Abnormal fulfillment' : 'Delayed fulfillment',
+                    description: t.description || `${t.scene} on Temu (${country})`,
+                    quantity: 1,
+                    compensationRaw: country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : country === 'GB' ? '£5.00' : '5,00 €',
+                    noticeDate: t.createdAt ? new Date(t.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent',
+                    status: t.status === 'resolved' ? 'resolved' : 'Action required',
+                    parcel: t.trackingNumber || '',
+                    trackingNumber: t.trackingNumber || '',
+                    carrier: t.carrier || 'DHL Warenpost'
+                  }
+                },
+                upsert: true
+              }
+            };
+          });
+          await TemuFulfillmentIssue.bulkWrite(ops);
+        }
+      } catch (err) {
+        console.warn('Auto-sync delivery exceptions warning:', err.message);
+      }
+    }
   }
 
   // Sync fulfillment issues when requested with ?sync=true
