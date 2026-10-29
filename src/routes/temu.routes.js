@@ -35,6 +35,7 @@ router.get('/fulfillment-issues', auth, temuController.getUserTemuFulfillmentIss
 router.post('/fulfillment-issues/bot/run', auth, temuController.runFulfillmentBot);
 router.post('/fulfillment-issues/:id/resolve', auth, temuController.resolveTemuFulfillmentIssue);
 router.post('/fulfillment-issues/:id/fetch-tracking', auth, temuController.fetchFulfillmentIssueTracking);
+router.post('/fulfillment-issues/:id/generate-appeal', auth, temuController.generateFulfillmentAppeal);
 
 // Puppeteer Return Bot Routes
 router.post('/returns/bot/run', auth, temuController.runTemuReturnBot);

@@ -270,9 +270,180 @@ MERCHANT POLICY & INSTRUCTIONS:
   return null;
 };
 
+
+/**
+ * Localized randomized human fallback for fulfillment issue appeals to Temu
+ */
+const generateRandomHumanFulfillmentAppeal = ({
+  orderNum,
+  trackingNo,
+  carrier = 'DHL Warenpost',
+  orderDateVal,
+  statusDateVal,
+  country = 'DE'
+}) => {
+  const safeTrk = trackingNo ? String(trackingNo).trim() : '[TRACKING_NUMBER]';
+  const orderDate = orderDateVal || '08.10.2026';
+  const statusDate = statusDateVal || '11.10.2026';
+
+  const salutations = [
+    'Dear Temu Support Team,',
+    'Dear Temu Appeals Team,',
+    'Hello Temu Fulfillment Operations,',
+    'Dear Temu Team,',
+    'Dear Temu Dispute Resolution Team,'
+  ];
+
+  const intros = [
+    `We are writing to appeal the delayed fulfillment penalty applied to order ${orderNum || ''}.`,
+    `Please find our official appeal and logistics documentation for order ${orderNum || ''}.`,
+    `We respectfully submit this appeal regarding the fulfillment delay penalty for order ${orderNum || ''}.`,
+    `This is our formal appeal concerning the late delivery claim on order ${orderNum || ''}.`
+  ];
+
+  const handoverExplanations = [
+    `As documented in the carrier scan history, our warehouse packed, labeled, and handed over this parcel to ${carrier} on ${statusDate} strictly within the designated dispatch deadline.`,
+    `Our shipping records confirm that this order was fulfilled and transferred to ${carrier} on ${statusDate} in full compliance with store dispatch guidelines.`,
+    `We fulfilled this order without delay, handing it over to logistics carrier ${carrier} on ${statusDate} well within the allocated timeframe.`,
+    `The package was properly verified, prepared, and dispatched with ${carrier} on ${statusDate} in timely accordance with Temu shipping standards.`
+  ];
+
+  const borderExplanations = [
+    `The subsequent transit delay to ${country} is due to international border clearance, customs inspections, and cross-border logistics transfers, which are entirely beyond our merchant control.`,
+    `Any delay encountered during delivery is solely attributable to border clearance and international postal inspection checkpoints along the transit route.`,
+    `Carrier tracking confirms active transit progress; the extended delivery timeline was caused by customs clearance and border controls at regional entry hubs.`,
+    `The shipment is proceeding in the carrier network, and the delay was caused by cross-border customs clearance and logistics congestion, not seller delay.`
+  ];
+
+  const closingRequests = [
+    `We respectfully ask Temu to review the carrier tracking proof, waive the fulfillment delay penalty, and reject the customer's compensation fee.`,
+    `Therefore, we kindly request the Temu team to approve our appeal, cancel the late delivery fine, and dismiss this penalty claim.`,
+    `We appreciate your fair evaluation of our on-time dispatch and request full exemption from the delayed fulfillment penalty.`,
+    `We thank you for reviewing the logistics trail and request the removal of this fulfillment delay penalty.`
+  ];
+
+  const signoffs = [
+    'Regards,\nEDER TEAM',
+    'Best regards,\nEDER TEAM',
+    'Sincerely,\nEDER TEAM',
+    'With regards,\nEDER TEAM'
+  ];
+
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  return `${pick(salutations)}
+
+${pick(intros)}
+
+Tracking #: ${safeTrk}
+Order Date: ${orderDate}
+Order Status: ${statusDate}
+
+${pick(handoverExplanations)} ${pick(borderExplanations)}
+
+${pick(closingRequests)}
+
+${pick(signoffs)}`;
+};
+
+/**
+ * Generate a dynamic, unique, human appeal statement addressed TO TEMU SUPPORT
+ * for fulfillment issues (late delivery penalty waiver defense).
+ */
+const generateHumanFulfillmentAppeal = async ({
+  orderNum,
+  trackingNo,
+  carrier,
+  orderDateVal,
+  statusDateVal,
+  country,
+  apiKey,
+  model = 'gemini-3.5-flash-lite'
+}) => {
+  const key = getActiveApiKey(apiKey);
+  const safeTrk = trackingNo ? String(trackingNo).trim() : '003404348888888888';
+  const orderRef = orderNum || 'PO-108-04156283710070091';
+  const carrierName = carrier || 'DHL Warenpost';
+  const destCountry = country || 'DE';
+  const orderDate = orderDateVal || '18.10.2026';
+  const statusDate = statusDateVal || '19.10.2026';
+
+  if (key) {
+    const prompt = `You are an experienced European e-commerce merchant operations specialist submitting an official fulfillment appeal TO TEMU SELLER SUPPORT (not to the customer).
+Temu has penalized or flagged this order for late delivery / fulfillment delay, and the customer requested a compensation fee / refund.
+
+ORDER DETAILS:
+- Order ID: ${orderRef}
+- Tracking #: ${safeTrk}
+- Carrier: ${carrierName}
+- Order Date: ${orderDate}
+- Order Status / Handover Date: ${statusDate} (Shipped in time)
+- Destination: ${destCountry}
+
+INSTRUCTIONS:
+1. Address the appeal TO TEMU SUPPORT (e.g. 'Dear Temu Support Team,' or 'Dear Temu Team,').
+2. Clearly display the reference facts:
+   Tracking #: ${safeTrk}
+   Order Date: ${orderDate}
+   Order Status: ${statusDate}
+3. Explain that the parcel was packed and handed over to the carrier strictly on time on ${statusDate} within the designated dispatch window.
+4. Explain clearly that any delivery delay in transit is solely due to border clearance, customs processing, or international logistics checkpoints beyond seller control.
+5. Respectfully request Temu to waive the fulfillment delay penalty, reject the buyer compensation penalty, and remove the late delivery fine.
+6. Sign off strictly as:
+   Regards,
+   EDER TEAM
+7. Write naturally like an authentic human logistics manager. Vary your wording so each appeal is distinct and avoids sounding like a boilerplate bot.
+8. Output ONLY the appeal text without markdown ticks or commentary.`;
+
+    const candidateModels = [model, 'gemini-3.5-flash-lite', 'gemini-3.8-flash', 'gemini-3.5-flash'];
+    const uniqueModels = [...new Set(candidateModels)];
+
+    for (const targetModel of uniqueModels) {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${targetModel}:generateContent?key=${key}`;
+      try {
+        const res = await httpFetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { temperature: 0.88, maxOutputTokens: 380 }
+          }),
+          timeout: 10000
+        });
+
+        if (!res.ok) continue;
+        const data = await res.json();
+        let text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (text) {
+          text = text.replace(/^```[a-zA-Z]*\n?/, '').replace(/\n?```$/, '').trim();
+          if (text.startsWith('"') && text.endsWith('"')) {
+            text = text.substring(1, text.length - 1).trim();
+          }
+          return { text, model: targetModel, aiGenerated: true };
+        }
+      } catch (e) {}
+    }
+  }
+
+  // Fallback to randomized dynamic human template
+  return {
+    text: generateRandomHumanFulfillmentAppeal({
+      orderNum: orderRef,
+      trackingNo: safeTrk,
+      carrier: carrierName,
+      orderDateVal: orderDate,
+      statusDateVal: statusDate,
+      country: destCountry
+    }),
+    aiGenerated: false
+  };
+};
+
 module.exports = {
   testGeminiConnection,
   generateHumanReturnReply,
   generateHumanTicketReply,
+  generateHumanFulfillmentAppeal,
+  generateRandomHumanFulfillmentAppeal,
   DEFAULT_MODEL
 };

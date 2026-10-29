@@ -1156,19 +1156,64 @@ const generateFulfillmentRejectionNote = (countryCode, trackingNo, carrier = 'DH
   }
   if (!formattedStatusDate) formattedStatusDate = '11.10.2026';
 
-  return `Dear Customer,
+  const salutations = [
+    'Dear Temu Support Team,',
+    'Dear Temu Appeals Team,',
+    'Hello Temu Fulfillment Operations,',
+    'Dear Temu Team,',
+    'Dear Temu Dispute Resolution Team,'
+  ];
+
+  const intros = [
+    `We are writing to appeal the delayed fulfillment penalty applied to order ${orderSn || ''}.`,
+    `Please find our official appeal and logistics documentation for order ${orderSn || ''}.`,
+    `We respectfully submit this appeal regarding the fulfillment delay penalty for order ${orderSn || ''}.`,
+    `This is our formal appeal concerning the late delivery claim on order ${orderSn || ''}.`
+  ];
+
+  const handoverExplanations = [
+    `As documented in the carrier scan history, our warehouse packed, labeled, and handed over this parcel to ${carrier} on ${formattedStatusDate} strictly within the designated dispatch deadline.`,
+    `Our shipping records confirm that this order was fulfilled and transferred to ${carrier} on ${formattedStatusDate} in full compliance with store dispatch guidelines.`,
+    `We fulfilled this order without delay, handing it over to logistics carrier ${carrier} on ${formattedStatusDate} well within the allocated timeframe.`,
+    `The package was properly verified, prepared, and dispatched with ${carrier} on ${formattedStatusDate} in timely accordance with Temu shipping standards.`
+  ];
+
+  const borderExplanations = [
+    `The subsequent transit delay to ${countryCode || 'DE'} is due to international border clearance, customs inspections, and cross-border logistics transfers, which are entirely beyond our merchant control.`,
+    `Any delay encountered during delivery is solely attributable to border clearance and international postal inspection checkpoints along the transit route.`,
+    `Carrier tracking confirms active transit progress; the extended delivery timeline was caused by customs clearance and border controls at regional entry hubs.`,
+    `The shipment is proceeding in the carrier network, and the delay was caused by cross-border customs clearance and logistics congestion, not seller delay.`
+  ];
+
+  const closingRequests = [
+    `We respectfully ask Temu to review the carrier tracking proof, waive the fulfillment delay penalty, and reject the customer's compensation fee.`,
+    `Therefore, we kindly request the Temu team to approve our appeal, cancel the late delivery fine, and dismiss this penalty claim.`,
+    `We appreciate your fair evaluation of our on-time dispatch and request full exemption from the delayed fulfillment penalty.`,
+    `We thank you for reviewing the logistics trail and request the removal of this fulfillment delay penalty.`
+  ];
+
+  const signoffs = [
+    'Regards,\nEDER TEAM',
+    'Best regards,\nEDER TEAM',
+    'Sincerely,\nEDER TEAM',
+    'With regards,\nEDER TEAM'
+  ];
+
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
+  return `${pick(salutations)}
+
+${pick(intros)}
 
 Tracking #: ${safeTrk}
-
 Order Date: ${formattedOrderDate}
 Order Status: ${formattedStatusDate}
 
-Here are order details order might be delayed due to clearance etc on border.
+${pick(handoverExplanations)} ${pick(borderExplanations)}
 
-We appreciate your understanding and patience.
+${pick(closingRequests)}
 
-Regards,
-EDER TEAM`;
+${pick(signoffs)}`;
 };
 
 exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
@@ -1322,14 +1367,33 @@ exports.runFulfillmentBot = catchAsync(async (req, res, next) => {
     }
 
     const countryCode = (issue.country || 'DE').toUpperCase();
-    const defenseNote = generateFulfillmentRejectionNote(
-      countryCode,
-      tracking,
-      carrier,
-      orderNum,
-      orderDateVal,
-      statusDateVal
-    );
+    let defenseNote = '';
+    try {
+      const geminiService = require('../services/gemini.service');
+      const aiAppeal = await geminiService.generateHumanFulfillmentAppeal({
+        orderNum,
+        trackingNo: tracking,
+        carrier,
+        orderDateVal: formatEuropeanDate(orderDateVal) || '08.10.2026',
+        statusDateVal: formatEuropeanDate(statusDateVal) || '11.10.2026',
+        country: countryCode,
+        apiKey: user.geminiApiKey || process.env.GEMINI_API_KEY
+      });
+      if (aiAppeal && aiAppeal.text) {
+        defenseNote = aiAppeal.text;
+      }
+    } catch (_) {}
+
+    if (!defenseNote) {
+      defenseNote = generateFulfillmentRejectionNote(
+        countryCode,
+        tracking,
+        carrier,
+        orderNum,
+        orderDateVal,
+        statusDateVal
+      );
+    }
 
     const dateFormatted = new Date().toLocaleString('en-US', {
       month: 'short',
@@ -1925,6 +1989,69 @@ exports.fetchFulfillmentIssueTracking = catchAsync(async (req, res, next) => {
         country: order?.country || issue.country || 'DE'
       },
       defenseReply
+    }
+  });
+});
+
+/**
+ * On-demand generation of fresh, unique human fulfillment appeal addressed to Temu
+ */
+exports.generateFulfillmentAppeal = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const mongoose = require('mongoose');
+  const geminiService = require('../services/gemini.service');
+
+  const issue = await TemuFulfillmentIssue.findOne({
+    user: req.user.id,
+    $or: [
+      { _id: mongoose.isValidObjectId(id) ? id : null },
+      { issueId: id },
+      { orderNum: id }
+    ]
+  });
+
+  const orderNum = issue?.orderNum || id || '';
+  const order = await TemuOrder.findOne({
+    user: req.user.id,
+    $or: [
+      { orderNum: orderNum },
+      { orderNum: orderNum.replace(/^PO-/i, '') },
+      { orderNum: `PO-${orderNum.replace(/^PO-/i, '')}` }
+    ]
+  }).lean();
+
+  const tracking = req.body?.tracking || issue?.trackingNumber || issue?.parcel || order?.tracking || '003404348888888888';
+  const carrier = req.body?.carrier || issue?.carrier || order?.shippingMethod || 'DHL Warenpost';
+  const orderDate = req.body?.orderDate || formatEuropeanDate(order?.orderDate || order?.createdAt || issue?.createdAt) || '08.10.2026';
+  const statusDate = req.body?.statusDate || formatEuropeanDate(order?.shippedAt || (order?.createdAt ? new Date(new Date(order.createdAt).getTime() + 3*86400000) : null)) || '11.10.2026';
+  const country = issue?.country || order?.country || 'DE';
+
+  let appealText = '';
+  try {
+    const aiResult = await geminiService.generateHumanFulfillmentAppeal({
+      orderNum,
+      trackingNo: tracking,
+      carrier,
+      orderDateVal: orderDate,
+      statusDateVal: statusDate,
+      country,
+      apiKey: req.user?.geminiApiKey || process.env.GEMINI_API_KEY
+    });
+    if (aiResult && aiResult.text) appealText = aiResult.text;
+  } catch (_) {}
+
+  if (!appealText) {
+    appealText = generateFulfillmentRejectionNote(country, tracking, carrier, orderNum, orderDate, statusDate);
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      appealText,
+      tracking,
+      carrier,
+      orderDate,
+      statusDate
     }
   });
 });
