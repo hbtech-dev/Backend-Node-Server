@@ -159,7 +159,29 @@ const resolveTicketDetails = (rawReason, comment, afterSalesType, matchedOrder, 
 /**
  * Get all Temu tickets (Information Tickets & Customer Queries)
  */
+// Fast in-memory cache for tickets
+const ticketsCache = new Map();
+const TICKETS_CACHE_TTL_MS = 60000;
+
+const invalidateTicketsCache = (userId) => {
+  if (!userId) {
+    ticketsCache.clear();
+    return;
+  }
+  const prefix = String(userId);
+  for (const k of ticketsCache.keys()) {
+    if (k.startsWith(prefix)) ticketsCache.delete(k);
+  }
+};
+exports.invalidateTicketsCache = invalidateTicketsCache;
+
 exports.getTickets = catchAsync(async (req, res, next) => {
+  const cacheKey = `${req.user.id}:${req.query.status || 'all'}:${req.query.country || 'all'}`;
+  const cached = ticketsCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < TICKETS_CACHE_TTL_MS) && req.query.force !== 'true') {
+    return res.status(200).json(cached.payload);
+  }
+
   let user = req.user;
   if (mongoose.connection.readyState === 1) {
     user = (await User.findById(req.user.id)) || req.user;
@@ -270,14 +292,16 @@ exports.getTickets = catchAsync(async (req, res, next) => {
 
   const pendingCount = tickets.filter(t => t.status === 'pending' || (t.subStatus === 'Wait Merchant Reply' && !t.merchantResponse?.responseText)).length;
 
-  res.status(200).json({
+  const responsePayload = {
     status: 'success',
     data: {
       pendingCount,
       totalCount: tickets.length,
       tickets
     }
-  });
+  };
+  ticketsCache.set(cacheKey, { payload: responsePayload, timestamp: Date.now() });
+  return res.status(200).json(responsePayload);
 });
 
 const TICKET_PAGE_SIZE = 50;
@@ -502,6 +526,7 @@ exports.syncTicketsForUser = syncTicketsForUser;
 /**
  * Sync tickets directly from Temu Open Platform API across all connected regional stores
  */
+invalidateTicketsCache(req.user?.id || user?._id);
 exports.syncTickets = catchAsync(async (req, res, next) => {
   let user = req.user;
   if (mongoose.connection.readyState === 1) {
@@ -638,6 +663,7 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
     if (!ticket.uploadFiles.includes(savedImageUrl)) ticket.uploadFiles.unshift(savedImageUrl);
   }
 
+  invalidateTicketsCache(req.user?.id || user?._id);
   // Update ticket in DB
   ticket.status = 'closed';
   ticket.subStatus = 'Completed';

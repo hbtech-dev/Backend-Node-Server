@@ -565,6 +565,37 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
   });
 });
 
+// Fast in-memory caching for Fulfillment Issues & Returns
+const fulfillmentCache = new Map();
+const FULFILLMENT_CACHE_TTL_MS = 60000;
+
+const returnsCache = new Map();
+const RETURNS_CACHE_TTL_MS = 60000;
+
+const invalidateFulfillmentCache = (userId) => {
+  if (!userId) {
+    fulfillmentCache.clear();
+    return;
+  }
+  const prefix = String(userId);
+  for (const k of fulfillmentCache.keys()) {
+    if (k.startsWith(prefix)) fulfillmentCache.delete(k);
+  }
+};
+exports.invalidateFulfillmentCache = invalidateFulfillmentCache;
+
+const invalidateReturnsCache = (userId) => {
+  if (!userId) {
+    returnsCache.clear();
+    return;
+  }
+  const prefix = String(userId);
+  for (const k of returnsCache.keys()) {
+    if (k.startsWith(prefix)) returnsCache.delete(k);
+  }
+};
+exports.invalidateReturnsCache = invalidateReturnsCache;
+
 exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   let user = req.user;
@@ -612,15 +643,18 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
     returnsList = await TemuReturn.find(filter).sort({ createdAt: -1 }).lean();
   }
 
-  res.status(200).json({
+  const returnsPayload = {
     status: 'success',
     data: { returns: returnsList }
-  });
+  };
+  returnsCache.set(cacheKey, { payload: returnsPayload, timestamp: Date.now() });
+  return res.status(200).json(returnsPayload);
 });
 
 /**
  * Resolve Temu Return Request & Send Back Response to Temu
  */
+invalidateReturnsCache(req.user?.id);
 exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { action, notes, responseText, tracking, carrier, evidenceCardUrl, screenshotUrl } = req.body;
@@ -781,6 +815,7 @@ const AUTHENTIC_TEMU_ISSUES = [
  * Reconciles cancellations, marks fulfilled/printed orders as resolved,
  * removes obsolete legacy mock data, and pulls live cancellations.
  */
+invalidateFulfillmentCache(req.user?.id);
 exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   let user = req.user;
@@ -879,6 +914,12 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 });
 
 exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
+  const cacheKey = `${req.user.id}:${req.query.status || 'all'}:${req.query.country || 'all'}`;
+  const cached = fulfillmentCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < FULFILLMENT_CACHE_TTL_MS) && req.query.sync !== 'true' && req.query.force !== 'true') {
+    return res.status(200).json(cached.payload);
+  }
+
   const mongoose = require('mongoose');
   let user = req.user;
 
@@ -1009,10 +1050,12 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     });
   }
 
-  res.status(200).json({
+  const issuesPayload = {
     status: 'success',
     data: { issues: issuesList }
-  });
+  };
+  fulfillmentCache.set(cacheKey, { payload: issuesPayload, timestamp: Date.now() });
+  return res.status(200).json(issuesPayload);
 });
 
 /**
@@ -1126,6 +1169,7 @@ Regards,
 EDER TEAM`;
 };
 
+invalidateFulfillmentCache(req.user?.id);
 exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
   const { id } = req.params;
   const { action, notes, responseText, tracking, carrier, denialReason, evidenceCardUrl, screenshotUrl } = req.body;
