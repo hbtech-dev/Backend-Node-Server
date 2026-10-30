@@ -75,3 +75,4 @@ inventoryItemSchema.index({ user: 1, rfidTag: 1 });
 inventoryItemSchema.index({ user: 1, createdAt: -1 });
 
 module.exports = mongoose.model('InventoryItem', inventoryItemSchema);
+

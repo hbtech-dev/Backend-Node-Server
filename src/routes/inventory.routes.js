@@ -16,3 +16,4 @@ router.patch('/:id/stock', inventoryController.adjustStock);
 router.delete('/:id', inventoryController.deleteInventoryItem);
 
 module.exports = router;
+

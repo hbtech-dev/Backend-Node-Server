@@ -389,3 +389,4 @@ exports.bulkImportInventory = catchAsync(async (req, res, next) => {
     }
   });
 });
+
