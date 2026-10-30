@@ -9,23 +9,25 @@ const temuReturnSchema = new mongoose.Schema(
     },
     returnId: {
       type: String,
-      required: true
+      required: true,
+      index: true
     },
     orderNum: {
       type: String,
-      required: true
+      required: true,
+      index: true
     },
     buyerName: {
       type: String,
-      required: true
+      default: "Temu Customer"
     },
     country: {
       type: String,
-      default: 'DE'
+      default: "DE"
     },
     reason: {
       type: String,
-      default: 'Item not as described / size issue'
+      default: ""
     },
     buyerComment: { type: String, default: "" },
     refundAmount: {
@@ -50,6 +52,10 @@ const temuReturnSchema = new mongoose.Schema(
     mediaUrls: { type: [String], default: [] },
     afterSaleHistory: { type: Array, default: [] },
     resolutionNotes: {
+      type: String,
+      default: ''
+    },
+    evidenceCardUrl: {
       type: String,
       default: ''
     },

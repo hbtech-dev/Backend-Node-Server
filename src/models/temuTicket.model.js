@@ -93,7 +93,8 @@ const temuTicketSchema = new mongoose.Schema({
         date: { type: Date },
         dateString: { type: String },
         type: { type: String },
-        content: { type: String }
+        content: { type: String },
+        uploadFiles: { type: [String], default: [] }
       }
     ],
     default: []
@@ -106,7 +107,8 @@ const temuTicketSchema = new mongoose.Schema({
   merchantResponse: {
     responseText: { type: String, default: '' },
     respondedAt: { type: Date },
-    trackingInfo: { type: String, default: '' }
+    trackingInfo: { type: String, default: '' },
+    evidenceCardUrl: { type: String, default: '' }
   },
   source: {
     type: String,

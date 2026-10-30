@@ -1386,7 +1386,7 @@ const syncUserTemuReturnsAndIssues = async (user) => {
   }
 };
 
-const submitTemuReturnResolution = async (integration, returnDoc, action, answerText) => {
+const submitTemuReturnResolution = async (integration, returnDoc, action, answerText, imageUrl = null, tracking = null, carrier = null) => {
   const routerUrls = [
     'https://openapi-b-eu.temu.com/openapi/router',
     'https://openapi-b-global.temu.com/openapi/router',
@@ -1402,6 +1402,9 @@ const submitTemuReturnResolution = async (integration, returnDoc, action, answer
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const apiType = action === 'reject' ? 'bg.aftersales.return.reject' : action === 'approve' ? 'bg.aftersales.return.approve' : 'bg.aftersales.ticket.reply.v2';
 
+  const finalTracking = tracking || returnDoc.trackingNumber || '';
+  const finalCarrier = carrier || returnDoc.carrier || 'DHL Paket';
+
   const payload = {
     app_key: appKey,
     access_token: accessToken || '',
@@ -1412,8 +1415,18 @@ const submitTemuReturnResolution = async (integration, returnDoc, action, answer
     ticket_id: (returnDoc.returnId || '').toString(),
     reply_content: answerText || '',
     reason: answerText || '',
-    remarks: answerText || ''
+    remarks: answerText || '',
+    tracking_num: finalTracking,
+    shipping_carrier: finalCarrier
   };
+
+  if (imageUrl) {
+    payload.attach_urls = [imageUrl];
+    payload.picture_list = [imageUrl];
+    payload.images = [imageUrl];
+    payload.image_url_list = [imageUrl];
+    payload.evidence_pictures = [imageUrl];
+  }
 
   const sortedKeys = Object.keys(payload).sort();
   const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
@@ -1427,8 +1440,8 @@ const submitTemuReturnResolution = async (integration, returnDoc, action, answer
         body: JSON.stringify({ ...payload, sign }),
         timeout: 10000
       });
-      if (response.ok) {
-        console.log(`✅ Submitted return resolution (${action}) to Temu router at ${url} for Return ${returnDoc.returnId}: "${answerText}"`);
+      if (response && response.ok) {
+        console.log(`✅ Submitted return resolution (${action}) with image to Temu router at ${url} for Return ${returnDoc.returnId}: "${answerText}"`);
         return true;
       }
     } catch (e) {

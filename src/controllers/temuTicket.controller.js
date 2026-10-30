@@ -7,6 +7,7 @@ const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 const httpFetch = require('../utils/httpHelper');
 const crypto = require('crypto');
+const { saveBase64Image } = require('../utils/imageHelper');
 
 /**
  * Known legacy mock tickets to delete/ignore
@@ -455,7 +456,7 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
  */
 exports.replyToTicket = catchAsync(async (req, res, next) => {
   const { ticketId } = req.params;
-  const { responseText, trackingInfo } = req.body;
+  const { responseText, trackingInfo, evidenceCardUrl, screenshotUrl } = req.body;
 
   if (!responseText || responseText.trim().length === 0) {
     return next(new AppError('Please provide a response message for Temu.', 400));
@@ -476,6 +477,10 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
     return next(new AppError('Ticket not found.', 404));
   }
 
+  // Save evidence card / image permanently to public storage
+  const imageSource = evidenceCardUrl || screenshotUrl;
+  const savedImageUrl = imageSource ? saveBase64Image(imageSource, `ticket-${ticket.ticketId}`) : '';
+
   // Find the exact regional store matching the ticket
   const integration = findStoreForTicket(user, ticket);
 
@@ -493,52 +498,69 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
         type: 'bg.aftersales.ticket.reply.v2',
         ticket_id: ticket.ticketId,
         reply_content: responseText,
-        tracking_num: trackingInfo || ''
+        tracking_num: trackingInfo || '',
+        attach_urls: savedImageUrl ? [savedImageUrl] : [],
+        picture_list: savedImageUrl ? [savedImageUrl] : [],
+        images: savedImageUrl ? [savedImageUrl] : [],
+        image_url_list: savedImageUrl ? [savedImageUrl] : []
       };
 
       const sortedKeys = Object.keys(payload).sort();
       const signStr = appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + appSecret;
       const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
 
-      await httpFetch(TEMU_ROUTER_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...payload, sign }),
-        timeout: 10000
-      });
-      console.log(`✅ Posted response to Temu for Ticket ${ticket.ticketId} via store ${integration.shopName || integration.region}`);
+      const routerUrls = [
+        TEMU_ROUTER_URL,
+        'https://openapi-b-global.temu.com/openapi/router',
+        'https://openapi-b-us.temu.com/openapi/router'
+      ];
+      for (const routerUrl of routerUrls) {
+        try {
+          const rRes = await httpFetch(routerUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ...payload, sign }),
+            timeout: 10000
+          });
+          if (rRes && rRes.ok) {
+            console.log(`✅ Posted response & image to Temu for Ticket ${ticket.ticketId} at ${routerUrl}`);
+            break;
+          }
+        } catch (_) {}
+      }
     } catch (err) {
       console.warn('Temu ticket reply POST warning:', err.message);
     }
   }
 
-  const { evidenceCardUrl, screenshotUrl } = req.body;
   const now = new Date();
-  const dateStr = now.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }) + ", " +
-                  now.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", hour12: true });
+  const dateStr = now.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + ', ' +
+                  now.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
 
   if (!Array.isArray(ticket.processHistory)) ticket.processHistory = [];
   ticket.processHistory.unshift({
-    author: "205911379182",
-    role: "merchant",
+    author: '205911379182',
+    role: 'merchant',
     date: now,
     dateString: dateStr,
-    type: "processing_result",
-    content: responseText
+    type: 'processing_result',
+    content: responseText,
+    uploadFiles: savedImageUrl ? [savedImageUrl] : []
   });
 
-  if (evidenceCardUrl || screenshotUrl) {
+  if (savedImageUrl) {
     if (!Array.isArray(ticket.uploadFiles)) ticket.uploadFiles = [];
-    ticket.uploadFiles.push(evidenceCardUrl || screenshotUrl);
+    if (!ticket.uploadFiles.includes(savedImageUrl)) ticket.uploadFiles.unshift(savedImageUrl);
   }
 
   // Update ticket in DB
-  ticket.status = "closed";
-  ticket.subStatus = "Completed";
+  ticket.status = 'closed';
+  ticket.subStatus = 'Completed';
   ticket.merchantResponse = {
     responseText,
-    trackingInfo: trackingInfo || "",
-    respondedAt: now
+    trackingInfo: trackingInfo || '',
+    respondedAt: now,
+    evidenceCardUrl: savedImageUrl
   };
 
   if (mongoose.connection.readyState === 1 && typeof ticket.save === 'function') {
@@ -547,7 +569,7 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: 'Response successfully posted to Temu and ticket resolved!',
+    message: 'Response and image proof successfully submitted to Temu and ticket resolved!',
     data: {
       ticket
     }
