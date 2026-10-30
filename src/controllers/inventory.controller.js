@@ -390,3 +390,313 @@ exports.bulkImportInventory = catchAsync(async (req, res, next) => {
   });
 });
 
+
+/**
+ * Bulk Scan RFID Tags (e.g. Feibot Handheld Trigger Sweep)
+ * Supports modes: 'identify' (lookup), 'receive' (auto stock-in), 'audit' (location check)
+ */
+exports.bulkScanRfid = catchAsync(async (req, res, next) => {
+  const { tags, mode = 'identify', location, deviceId = 'Feibot-H200' } = req.body;
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return next(new AppError('Please provide an array of RFID tags.', 400));
+  }
+
+  // Extract clean tag strings and count occurrences
+  const tagCounts = {};
+  for (const raw of tags) {
+    const tag = (typeof raw === 'object' && raw.epc ? raw.epc : String(raw)).trim();
+    if (tag) {
+      tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+    }
+  }
+
+  const uniqueTags = Object.keys(tagCounts);
+  if (uniqueTags.length === 0) {
+    return next(new AppError('No valid RFID tags found in scan payload.', 400));
+  }
+
+  // Find all matched products in MongoDB for this user
+  const matchedProducts = await InventoryItem.find({
+    user: req.user.id,
+    rfidTag: { $in: uniqueTags }
+  });
+
+  const matchedTagSet = new Set(matchedProducts.map(p => p.rfidTag));
+  const unknownTags = uniqueTags.filter(t => !matchedTagSet.has(t));
+
+  const locationMismatches = [];
+  const processedItems = [];
+
+  for (const product of matchedProducts) {
+    const detectedUnits = tagCounts[product.rfidTag] || 1;
+    const isLocationMismatch = Boolean(location && product.location && location.trim().toLowerCase() !== product.location.trim().toLowerCase());
+
+    if (isLocationMismatch) {
+      locationMismatches.push({
+        productName: product.productName,
+        sku: product.sku,
+        rfidTag: product.rfidTag,
+        expectedLocation: product.location,
+        scannedLocation: location
+      });
+    }
+
+    if (mode === 'receive') {
+      product.quantity = (product.quantity || 0) + detectedUnits;
+      product.status = computeStatus(product.quantity, product.minStockThreshold);
+    }
+
+    product.lastScannedAt = new Date();
+    if (!Array.isArray(product.scanHistory)) product.scanHistory = [];
+    product.scanHistory.unshift({
+      scannedAt: new Date(),
+      action: mode === 'receive' ? 'received' : mode === 'audit' ? 'audit' : 'scan',
+      location: location || product.location || '',
+      deviceId,
+      delta: mode === 'receive' ? detectedUnits : 0,
+      notes: `Bulk scanned via ${deviceId} (${detectedUnits} tag hits)`
+    });
+
+    if (product.scanHistory.length > 50) product.scanHistory = product.scanHistory.slice(0, 50);
+    await product.save();
+
+    processedItems.push({
+      _id: product._id,
+      productName: product.productName,
+      sku: product.sku,
+      rfidTag: product.rfidTag,
+      category: product.category,
+      location: product.location,
+      unitPrice: product.unitPrice,
+      quantity: product.quantity,
+      status: product.status,
+      detectedUnits,
+      isLocationMismatch
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      totalTagsScanned: tags.length,
+      uniqueTagsScanned: uniqueTags.length,
+      matchedProductsCount: matchedProducts.length,
+      matchedItems: processedItems,
+      unknownTags,
+      locationMismatches,
+      mode,
+      scannedAt: new Date().toISOString()
+    }
+  });
+});
+
+/**
+ * Order Pick & Pack Verification via RFID
+ * Verifies if the scanned RFID items match a specific Temu or eBay order
+ */
+exports.verifyOrderPick = catchAsync(async (req, res, next) => {
+  const { orderId, tags } = req.body;
+  if (!orderId) {
+    return next(new AppError('Order ID is required for verification.', 400));
+  }
+  if (!Array.isArray(tags) || tags.length === 0) {
+    return next(new AppError('Please provide scanned RFID tags.', 400));
+  }
+
+  // Find order in Temu or eBay models
+  const TemuOrder = require('../models/temuOrder.model');
+  const cleanId = String(orderId).trim();
+  let order = await TemuOrder.findOne({
+    user: req.user.id,
+    $or: [{ orderNum: cleanId }, { temuOrderId: cleanId }, { _id: mongoose.isValidObjectId(cleanId) ? cleanId : null }]
+  });
+
+  if (!order) {
+    const EbayOrder = require('../models/ebayOrder.model');
+    order = await EbayOrder.findOne({
+      user: req.user.id,
+      $or: [{ orderId: cleanId }, { orderNum: cleanId }, { _id: mongoose.isValidObjectId(cleanId) ? cleanId : null }]
+    });
+  }
+
+  // Count detected tags
+  const tagCounts = {};
+  for (const raw of tags) {
+    const tag = (typeof raw === 'object' && raw.epc ? raw.epc : String(raw)).trim();
+    if (tag) tagCounts[tag] = (tagCounts[tag] || 0) + 1;
+  }
+  const uniqueTags = Object.keys(tagCounts);
+
+  // Look up inventory items for these tags
+  const scannedItems = await InventoryItem.find({
+    user: req.user.id,
+    rfidTag: { $in: uniqueTags }
+  });
+
+  // Extract expected items from order
+  const expectedList = [];
+  if (order) {
+    if (Array.isArray(order.items) && order.items.length > 0) {
+      for (const itm of order.items) {
+        expectedList.push({
+          sku: (itm.sku || '').trim().toLowerCase(),
+          name: (itm.articleName || itm.title || '').trim().toLowerCase(),
+          quantity: itm.quantity || 1
+        });
+      }
+    } else {
+      expectedList.push({
+        sku: (order.sku || '').trim().toLowerCase(),
+        name: (order.articleName || order.title || order.name || '').trim().toLowerCase(),
+        quantity: order.quantity || 1
+      });
+    }
+  }
+
+  // Compare scanned vs expected
+  const verifiedItems = [];
+  const unexpectedItems = [];
+  const missingItems = [];
+
+  for (const item of scannedItems) {
+    const count = tagCounts[item.rfidTag] || 1;
+    const matchExpected = expectedList.find(exp => 
+      (exp.sku && exp.sku === (item.sku || '').toLowerCase()) ||
+      (exp.name && ((item.productName || '').toLowerCase().includes(exp.name) || exp.name.includes((item.productName || '').toLowerCase())))
+    );
+
+    if (matchExpected) {
+      verifiedItems.push({
+        productName: item.productName,
+        sku: item.sku,
+        rfidTag: item.rfidTag,
+        scannedCount: count,
+        requiredCount: matchExpected.quantity,
+        status: count >= matchExpected.quantity ? 'COMPLETE' : 'PARTIAL'
+      });
+    } else {
+      unexpectedItems.push({
+        productName: item.productName,
+        sku: item.sku,
+        rfidTag: item.rfidTag,
+        scannedCount: count,
+        reason: 'Item is not part of this order!'
+      });
+    }
+  }
+
+  for (const exp of expectedList) {
+    const found = verifiedItems.find(v => 
+      (exp.sku && (v.sku || '').toLowerCase() === exp.sku) ||
+      (exp.name && (v.productName || '').toLowerCase().includes(exp.name))
+    );
+    if (!found) {
+      missingItems.push({
+        sku: exp.sku,
+        name: exp.name,
+        requiredQuantity: exp.quantity
+      });
+    } else if (found.scannedCount < exp.quantity) {
+      missingItems.push({
+        sku: exp.sku,
+        name: exp.name,
+        requiredQuantity: exp.quantity - found.scannedCount
+      });
+    }
+  }
+
+  const isVerified = order ? (missingItems.length === 0 && unexpectedItems.length === 0) : true;
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      orderId,
+      orderFound: Boolean(order),
+      isVerified,
+      recipientName: order?.recipientName || order?.name || '',
+      country: order?.country || '',
+      verifiedItems,
+      unexpectedItems,
+      missingItems,
+      totalTagsScanned: tags.length
+    }
+  });
+});
+
+/**
+ * Reconcile Shelf Audit (Stocktake & Loss Detection)
+ * Updates system stock to match physically counted RFID tags
+ */
+exports.reconcileAudit = catchAsync(async (req, res, next) => {
+  const { location, items: auditItems } = req.body;
+  if (!Array.isArray(auditItems) || auditItems.length === 0) {
+    return next(new AppError('No audit items provided for reconciliation.', 400));
+  }
+
+  const updatedRecords = [];
+  for (const item of auditItems) {
+    if (!item.itemId) continue;
+    const inv = await InventoryItem.findOne({ _id: item.itemId, user: req.user.id });
+    if (!inv) continue;
+
+    const previousQty = inv.quantity || 0;
+    const physicalQty = Math.max(0, parseInt(item.physicalCount, 10) || 0);
+    const delta = physicalQty - previousQty;
+
+    inv.quantity = physicalQty;
+    inv.status = computeStatus(inv.quantity, inv.minStockThreshold);
+    inv.lastScannedAt = new Date();
+
+    if (!Array.isArray(inv.scanHistory)) inv.scanHistory = [];
+    inv.scanHistory.unshift({
+      scannedAt: new Date(),
+      action: 'audit',
+      location: location || inv.location || '',
+      delta,
+      notes: `Physical audit reconciliation: adjusted from ${previousQty} to ${physicalQty} (${delta >= 0 ? '+' : ''}${delta})`
+    });
+
+    if (inv.scanHistory.length > 50) inv.scanHistory = inv.scanHistory.slice(0, 50);
+    await inv.save();
+
+    updatedRecords.push({
+      _id: inv._id,
+      productName: inv.productName,
+      previousQuantity: previousQty,
+      newQuantity: physicalQty,
+      discrepancy: delta
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: `Successfully reconciled ${updatedRecords.length} items from audit!`,
+    data: {
+      reconciledCount: updatedRecords.length,
+      items: updatedRecords
+    }
+  });
+});
+
+/**
+ * Get product trace history & lifecycle logs
+ */
+exports.getItemHistory = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const item = await InventoryItem.findOne({ _id: id, user: req.user.id }).lean();
+  if (!item) {
+    return next(new AppError('Inventory item not found.', 404));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      productName: item.productName,
+      sku: item.sku,
+      rfidTag: item.rfidTag,
+      location: item.location,
+      lastScannedAt: item.lastScannedAt,
+      scanHistory: item.scanHistory || []
+    }
+  });
+});

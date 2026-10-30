@@ -63,7 +63,17 @@ const inventoryItemSchema = new mongoose.Schema(
     lastScannedAt: {
       type: Date,
       default: null
-    }
+    },
+    scanHistory: [
+      {
+        scannedAt: { type: Date, default: Date.now },
+        action: { type: String, default: 'scan' },
+        location: { type: String, default: '' },
+        deviceId: { type: String, default: '' },
+        delta: { type: Number, default: 0 },
+        notes: { type: String, default: '' }
+      }
+    ]
   },
   {
     timestamps: true
