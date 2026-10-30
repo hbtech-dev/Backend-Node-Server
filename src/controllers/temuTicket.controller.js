@@ -189,6 +189,12 @@ exports.getTickets = catchAsync(async (req, res, next) => {
     if (req.query.status) {
       if (req.query.status === "closed" || req.query.status === "resolved") {
         filter.status = { $in: ["closed", "resolved"] };
+        filter.subStatus = { $ne: "Wait Merchant Reply" };
+      } else if (req.query.status === "pending") {
+        filter.$or = [
+          { status: "pending" },
+          { subStatus: "Wait Merchant Reply" }
+        ];
       } else {
         filter.status = req.query.status;
       }
@@ -262,7 +268,7 @@ exports.getTickets = catchAsync(async (req, res, next) => {
     }
   }
 
-  const pendingCount = tickets.filter(t => t.status === 'pending').length;
+  const pendingCount = tickets.filter(t => t.status === 'pending' || (t.subStatus === 'Wait Merchant Reply' && !t.merchantResponse?.responseText)).length;
 
   res.status(200).json({
     status: 'success',
@@ -391,9 +397,11 @@ const syncTicketsForUser = async (user) => {
   const seenIds = new Set();
   const seenByShop = new Map();
   for (const { item, storeCountry, endpoint, label } of fetchedRecords) {
-    // Return disputes belong to TemuReturn model, not Information Ticket
+    // Filter physical return requests (handled in TemuReturn), but keep aftersales queries & inquiries
+    if (Number(item.afterSalesType) === 2 && !endpoint.includes('cancel')) {
+      continue;
+    }
     const rawTicketId = item.parentAfterSalesSn || item.afterSalesSn || item.cancelSn || item.ticketId || item.ticket_id || '';
-    if (item.parentAfterSalesSn || item.afterSalesSn || /-D0[12]$/.test(String(rawTicketId))) continue;
 
     const rawSn = item.parentOrderSn || item.orderSn || item.order_sn || '';
     const cleanSn = String(rawSn).replace(/^PO-/i, '').trim();
@@ -417,8 +425,12 @@ const syncTicketsForUser = async (user) => {
     const details = resolveTicketDetails(rawReason, comment, item.afterSalesType, matchedOrder, returnRecord);
 
     const type = endpoint.includes('cancel') ? 'Cancellation Request' : 'Information Ticket';
-    const isActionable = item.status === 'pending' || item.ticketStatus === 1;
-    const status = isActionable ? 'pending' : 'closed';
+    const statusGroup = Number(item.afterSalesStatusGroup || item.statusGroup || item.parentAfterSalesStatus || 0);
+    const isActionable = statusGroup === 1 ||
+                         item.status === 'pending' ||
+                         item.ticketStatus === 1 ||
+                         item.subStatus === 'Wait Merchant Reply';
+    const status = isActionable ? 'pending' : (existingTicket?.merchantResponse?.responseText ? 'resolved' : 'closed');
 
     const buyerName = matchedOrder?.buyerName || item.buyerName || item.buyer_name || `Temu Customer (${country})`;
 
@@ -471,7 +483,13 @@ const syncTicketsForUser = async (user) => {
   for (const label of fullyReadStores) {
     const seen = seenByShop.get(label) || new Set();
     await TemuTicket.updateMany(
-      { user: user._id, shopName: label, status: 'pending', ticketId: { $nin: Array.from(seen) } },
+      {
+        user: user._id,
+        shopName: label,
+        status: 'pending',
+        subStatus: { $ne: 'Wait Merchant Reply' },
+        ticketId: { $nin: Array.from(seen) }
+      },
       { $set: { status: 'closed', subStatus: 'Completed' } }
     ).catch(() => {});
   }
