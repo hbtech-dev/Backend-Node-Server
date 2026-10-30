@@ -57,7 +57,8 @@ exports.register = catchAsync(async (req, res, next) => {
         fullName: user.fullName,
         companyName: user.companyName,
         balance: user.balance,
-        accountType: user.accountType
+        accountType: user.accountType,
+        subscription: user.subscription
       },
       token,
       refreshToken
@@ -119,7 +120,8 @@ exports.login = catchAsync(async (req, res, next) => {
         fullName: user.fullName,
         companyName: user.companyName,
         balance: user.balance,
-        accountType: user.accountType
+        accountType: user.accountType,
+        subscription: user.subscription
       },
       token,
       refreshToken
