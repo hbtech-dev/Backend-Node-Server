@@ -10,12 +10,14 @@ const notificationRoutes = require('./notification.routes');
 const dhlRoutes = require('./dhl.routes');
 const fedexRoutes = require('./fedex.routes');
 const packetaRoutes = require('./packeta.routes');
+const inventoryRoutes = require('./inventory.routes');
 
 const router = express.Router();
 
 router.use('/auth', authRoutes);
 router.use('/users', userRoutes);
 router.use('/items', itemRoutes);
+router.use('/inventory', inventoryRoutes);
 router.use('/temu/tickets', temuTicketRoutes);
 router.use('/temu', temuRoutes);
 router.use('/ebay', ebayRoutes);
