@@ -518,6 +518,7 @@ const syncTicketsForUser = async (user) => {
     ).catch(() => {});
   }
 
+  invalidateTicketsCache(user?._id || user?.id);
   return { stores: stores.length, fetched: seenIds.size, failedStores };
 };
 
@@ -526,8 +527,8 @@ exports.syncTicketsForUser = syncTicketsForUser;
 /**
  * Sync tickets directly from Temu Open Platform API across all connected regional stores
  */
-invalidateTicketsCache(req.user?.id || user?._id);
 exports.syncTickets = catchAsync(async (req, res, next) => {
+  invalidateTicketsCache(req.user?.id);
   let user = req.user;
   if (mongoose.connection.readyState === 1) {
     user = (await User.findById(req.user.id)) || req.user;

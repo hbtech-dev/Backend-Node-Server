@@ -597,6 +597,11 @@ const invalidateReturnsCache = (userId) => {
 exports.invalidateReturnsCache = invalidateReturnsCache;
 
 exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
+  const cacheKey = `${req.user.id}:${req.query.status || 'all'}:${req.query.country || 'all'}`;
+  const cached = returnsCache.get(cacheKey);
+  if (cached && (Date.now() - cached.timestamp < RETURNS_CACHE_TTL_MS) && req.query.sync !== 'true' && req.query.force !== 'true') {
+    return res.status(200).json(cached.payload);
+  }
   const mongoose = require('mongoose');
   let user = req.user;
 
@@ -654,8 +659,8 @@ exports.getUserTemuReturns = catchAsync(async (req, res, next) => {
 /**
  * Resolve Temu Return Request & Send Back Response to Temu
  */
-invalidateReturnsCache(req.user?.id);
 exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
+  invalidateReturnsCache(req.user?.id);
   const { id } = req.params;
   const { action, notes, responseText, tracking, carrier, evidenceCardUrl, screenshotUrl } = req.body;
   const answerText = responseText || notes || `Processed ${action} via Eder App`;
@@ -815,8 +820,8 @@ const AUTHENTIC_TEMU_ISSUES = [
  * Reconciles cancellations, marks fulfilled/printed orders as resolved,
  * removes obsolete legacy mock data, and pulls live cancellations.
  */
-invalidateFulfillmentCache(req.user?.id);
 exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
+  invalidateFulfillmentCache(req.user?.id);
   const mongoose = require('mongoose');
   let user = req.user;
 
@@ -1169,8 +1174,8 @@ Regards,
 EDER TEAM`;
 };
 
-invalidateFulfillmentCache(req.user?.id);
 exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
+  invalidateFulfillmentCache(req.user?.id);
   const { id } = req.params;
   const { action, notes, responseText, tracking, carrier, denialReason, evidenceCardUrl, screenshotUrl } = req.body;
   const answer = responseText || notes || 'Resolved via ShipStation';
