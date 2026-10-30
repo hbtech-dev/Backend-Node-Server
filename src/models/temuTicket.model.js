@@ -110,6 +110,11 @@ const temuTicketSchema = new mongoose.Schema({
     trackingInfo: { type: String, default: '' },
     evidenceCardUrl: { type: String, default: '' }
   },
+  shopName: {
+    type: String,
+    default: '',
+    index: true
+  },
   source: {
     type: String,
     default: 'Temu'

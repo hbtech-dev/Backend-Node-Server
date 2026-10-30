@@ -85,6 +85,10 @@ const findStoreForTicket = (user, ticket) => {
   if (integrations.length === 0) {
     return (user.temuIntegration && user.temuIntegration.isConnected) ? user.temuIntegration : null;
   }
+  if (ticket.shopName) {
+    const exact = integrations.find(i => (i.shopName || i.shopId || i.mallId || i.appKey) === ticket.shopName);
+    if (exact) return exact;
+  }
   const country = (ticket.country || extractCountryFromOrderNum(ticket.orderNum, '')).toUpperCase();
   if (country) {
     const match = integrations.find(i =>
@@ -270,22 +274,52 @@ exports.getTickets = catchAsync(async (req, res, next) => {
   });
 });
 
-/**
- * Sync tickets directly from Temu Open Platform API across all connected regional stores
- */
-exports.syncTickets = catchAsync(async (req, res, next) => {
-  let user = req.user;
-  if (mongoose.connection.readyState === 1) {
-    user = (await User.findById(req.user.id)) || req.user;
-  }
+const TICKET_PAGE_SIZE = 50;
+const TICKET_MAX_PAGES = 20;
+const TICKET_LOOKBACK_DAYS = 90;
+const TICKET_ENDPOINTS = [
+  'bg.aftersales.parentaftersales.list.get',
+  'bg.aftersales.cancel.list.get'
+];
 
+const storeLabel = (store) => store.shopName || store.shopId || store.mallId || store.appKey;
+
+/**
+ * Fetch ALL pages of one aftersales endpoint for one store.
+ * Returns { ok, items, error } - ok is true only when every page was read successfully,
+ * so callers never treat a partial/failed read as "ticket disappeared from Temu".
+ */
+const fetchAllPages = async (store, endpoint, start, end) => {
+  const items = [];
+  for (let pageNo = 1; pageNo <= TICKET_MAX_PAGES; pageNo++) {
+    const resp = await callTemu(store, endpoint, {
+      pageNo,
+      pageSize: TICKET_PAGE_SIZE,
+      createAtStart: start,
+      createAtEnd: end
+    });
+    if (!resp.ok) {
+      return { ok: false, items, error: `${resp.errorCode} ${resp.errorMsg || ''}`.trim() };
+    }
+    const rawList = (resp.result && (resp.result.data || resp.result.list || resp.result.pageItems)) || [];
+    if (!Array.isArray(rawList) || rawList.length === 0) break;
+    items.push(...rawList);
+    if (rawList.length < TICKET_PAGE_SIZE) break;
+  }
+  return { ok: true, items };
+};
+
+/**
+ * Core ticket sync: pulls Information Tickets / cancellation tickets from EVERY connected
+ * Temu shop, de-duplicates by (user, ticketId) and closes tickets that Temu no longer
+ * reports as pending. Used by the manual Sync button and the 3-hour background job.
+ */
+const syncTicketsForUser = async (user) => {
   const stores = (user.temuIntegrations && user.temuIntegrations.length > 0)
     ? user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret)
     : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
 
-  if (stores.length === 0) {
-    return next(new AppError('Temu account is not connected.', 400));
-  }
+  if (stores.length === 0) return { stores: 0, fetched: 0, failedStores: [] };
 
   // Purge legacy hardcoded mock tickets from DB
   await TemuTicket.deleteMany({
@@ -294,41 +328,34 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
   }).catch(() => {});
 
   const now = Math.floor(Date.now() / 1000);
-  const start = now - 90 * 86400; // 90-day lookback
-  const LOOKBACK_PAGES = 3;
-
-  const endpoints = [
-    'bg.aftersales.parentaftersales.list.get',
-    'bg.aftersales.cancel.list.get'
-  ];
+  const start = now - TICKET_LOOKBACK_DAYS * 86400;
 
   const fetchedRecords = [];
+  const failedStores = [];
+  const fullyReadStores = new Set();
 
-  // Query all connected regional stores concurrently in parallel
-  const storePromises = stores.map(async (store) => {
-    const storeCountry = (store.country || store.region || "DE").toUpperCase();
-    for (const endpoint of endpoints) {
+  // Query all connected shops concurrently
+  await Promise.allSettled(stores.map(async (store) => {
+    const storeCountry = (store.country || store.region || 'DE').toUpperCase();
+    const label = storeLabel(store);
+    let allOk = true;
+    for (const endpoint of TICKET_ENDPOINTS) {
       try {
-        const resp = await callTemu(store, endpoint, {
-          pageNo: 1,
-          pageSize: 50,
-          createAtStart: start,
-          createAtEnd: now
-        });
-
-        if (!resp.ok) continue;
-
-        const rawList = (resp.result && (resp.result.data || resp.result.list || resp.result.pageItems)) || [];
-        if (Array.isArray(rawList)) {
-          for (const item of rawList) {
-            fetchedRecords.push({ item, store, storeCountry, endpoint });
-          }
+        const r = await fetchAllPages(store, endpoint, start, now);
+        for (const item of r.items) fetchedRecords.push({ item, store, storeCountry, endpoint, label });
+        if (!r.ok) {
+          allOk = false;
+          failedStores.push({ shop: label, endpoint, error: r.error });
+          console.warn(`[Temu Tickets] ${label} ${endpoint} failed: ${r.error}`);
         }
-      } catch (e) {}
+      } catch (e) {
+        allOk = false;
+        failedStores.push({ shop: label, endpoint, error: e.message });
+        console.warn(`[Temu Tickets] ${label} ${endpoint} error: ${e.message}`);
+      }
     }
-  });
-
-  await Promise.allSettled(storePromises);
+    if (allOk) fullyReadStores.add(label);
+  }));
 
   // Batch query matched orders and returns from local DB to enrich tickets
   const candidateOrderNums = [];
@@ -360,38 +387,38 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
     returnMap.set(`PO-${clean}`, r);
   }
 
-  // Ingest or update each ticket in DB
-  for (const { item, storeCountry, endpoint } of fetchedRecords) {
+  // Ingest or update each ticket in DB (one record per ticketId, regardless of shop/endpoint)
+  const seenIds = new Set();
+  const seenByShop = new Map();
+  for (const { item, storeCountry, endpoint, label } of fetchedRecords) {
+    // Return disputes belong to TemuReturn model, not Information Ticket
+    const rawTicketId = item.parentAfterSalesSn || item.afterSalesSn || item.cancelSn || item.ticketId || item.ticket_id || '';
+    if (item.parentAfterSalesSn || item.afterSalesSn || /-D0[12]$/.test(String(rawTicketId))) continue;
+
     const rawSn = item.parentOrderSn || item.orderSn || item.order_sn || '';
     const cleanSn = String(rawSn).replace(/^PO-/i, '').trim();
     const orderNum = cleanSn ? `PO-${cleanSn}` : '';
+
+    // Deterministic id: never invent a new id per sync (that created duplicates)
+    const ticketId = String(rawTicketId || (orderNum ? `TK-${orderNum}` : ''));
+    if (!ticketId) continue;
+
+    if (seenIds.has(ticketId)) continue; // duplicate within the same fetch
+    seenIds.add(ticketId);
+    if (!seenByShop.has(label)) seenByShop.set(label, new Set());
+    seenByShop.get(label).add(ticketId);
+
     const matchedOrder = orderMap.get(cleanSn) || orderMap.get(orderNum);
     const returnRecord = returnMap.get(cleanSn) || returnMap.get(orderNum);
-
-    const ticketId = String(
-      item.parentAfterSalesSn ||
-      item.afterSalesSn ||
-      item.cancelSn ||
-      item.ticketId ||
-      item.ticket_id ||
-      (orderNum ? `TK-${orderNum}` : `TK-${Date.now()}`)
-    );
-
     const country = (matchedOrder?.country || extractCountryFromOrderNum(orderNum, storeCountry)).toUpperCase();
 
     const rawReason = item.buyerReasonDesc || item.buyerReason || item.reason || item.afterSalesReason || '';
     const comment = item.buyerComment || item.comment || item.afterSalesDesc || '';
-
     const details = resolveTicketDetails(rawReason, comment, item.afterSalesType, matchedOrder, returnRecord);
 
-    // Return disputes belong to TemuReturn model, not Information Ticket
-    if (item.parentAfterSalesSn || item.afterSalesSn || (ticketId && (ticketId.includes("-D01") || ticketId.includes("-D02")))) {
-      continue;
-    }
-
-    const type = endpoint.includes("cancel") ? "Cancellation Request" : "Information Ticket";
-    const isActionable = item.status === "pending" || item.ticketStatus === 1;
-    const status = isActionable ? "pending" : "closed";
+    const type = endpoint.includes('cancel') ? 'Cancellation Request' : 'Information Ticket';
+    const isActionable = item.status === 'pending' || item.ticketStatus === 1;
+    const status = isActionable ? 'pending' : 'closed';
 
     const buyerName = matchedOrder?.buyerName || item.buyerName || item.buyer_name || `Temu Customer (${country})`;
 
@@ -408,6 +435,7 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
         existingTicket.description = details.description;
         existingTicket.subject = details.subject;
         existingTicket.scene = details.scene;
+        existingTicket.shopName = label;
         if (orderNum) existingTicket.orderNum = orderNum;
         if (details.articleName && details.articleName !== 'Temu Product') existingTicket.articleName = details.articleName;
         if (details.sku && !existingTicket.sku) existingTicket.sku = details.sku;
@@ -430,22 +458,61 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
         deadline,
         status,
         subStatus: isActionable ? 'Wait Merchant Reply' : 'Completed',
+        shopName: label,
         source: 'Temu'
-      }).catch(() => {});
+      }).catch((err) => {
+        if (err && err.code !== 11000) console.warn('[Temu Tickets] create failed:', err.message);
+      });
     }
   }
+
+  // A pending ticket that a fully-read shop no longer reports has been handled on Temu -> close it,
+  // so the app only shows what is really still pending.
+  for (const label of fullyReadStores) {
+    const seen = seenByShop.get(label) || new Set();
+    await TemuTicket.updateMany(
+      { user: user._id, shopName: label, status: 'pending', ticketId: { $nin: Array.from(seen) } },
+      { $set: { status: 'closed', subStatus: 'Completed' } }
+    ).catch(() => {});
+  }
+
+  return { stores: stores.length, fetched: seenIds.size, failedStores };
+};
+
+exports.syncTicketsForUser = syncTicketsForUser;
+
+/**
+ * Sync tickets directly from Temu Open Platform API across all connected regional stores
+ */
+exports.syncTickets = catchAsync(async (req, res, next) => {
+  let user = req.user;
+  if (mongoose.connection.readyState === 1) {
+    user = (await User.findById(req.user.id)) || req.user;
+  }
+
+  const hasStores = (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected && i.appKey && i.appSecret)) ||
+    (user.temuIntegration && user.temuIntegration.isConnected);
+  if (!hasStores) {
+    return next(new AppError('Temu account is not connected.', 400));
+  }
+
+  const summary = await syncTicketsForUser(user);
 
   const allTickets = await TemuTicket.find({
     user: user._id,
     ticketId: { $nin: SEED_TICKET_IDS }
   }).sort({ deadline: 1, createdAt: -1 }).lean();
 
+  const failed = summary.failedStores.length;
   res.status(200).json({
     status: 'success',
-    message: 'Temu Performance & Information Tickets synced successfully across all connected shops!',
+    message: failed
+      ? `Tickets synced from ${summary.stores} shops (${failed} shop request(s) failed - see server log).`
+      : `Temu Information Tickets synced successfully across all ${summary.stores} connected shops!`,
     data: {
       pendingCount: allTickets.filter(t => t.status === 'pending').length,
       totalCount: allTickets.length,
+      failedStores: summary.failedStores,
       tickets: allTickets
     }
   });

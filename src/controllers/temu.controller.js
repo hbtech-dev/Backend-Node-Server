@@ -701,57 +701,9 @@ exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
 /**
  * Get all Temu Fulfillment Issues across all countries
  */
-const DEFAULT_PORTUGAL_ISSUES = [
-  {
-    issueId: '261024001446240219',
-    orderNum: 'PO-PT-261024001446240219',
-    buyerName: 'Temu Customer (ES)',
-    country: 'ES',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 2,
-    compensationRaw: '10,00 €',
-    noticeDate: 'Oct 24, 2026, 11:07 am CEST',
-    status: 'Action required'
-  },
-  {
-    issueId: '261022004550428524',
-    orderNum: 'PO-PT-261022004550428524',
-    buyerName: 'Temu Customer (ES)',
-    country: 'ES',
-    issueType: 'Abnormal fulfillment',
-    parcel: 'PK-0011875833610941232',
-    description: 'No tracking updates for an extended period after shipment',
-    quantity: 1,
-    compensationRaw: '10,00 €',
-    noticeDate: 'Oct 22, 2026, 5:22 pm CEST',
-    status: 'Action required'
-  },
-  {
-    issueId: '261022001482073481',
-    orderNum: 'PO-PT-261022001482073481',
-    buyerName: 'Temu Customer (ES)',
-    country: 'ES',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: '5,00 €',
-    noticeDate: 'Oct 22, 2026, 11:16 am CEST',
-    status: 'Action required'
-  },
-  {
-    issueId: '261022001627463618',
-    orderNum: 'PO-PT-261022001627463618',
-    buyerName: 'Temu Customer (ES)',
-    country: 'ES',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 3,
-    compensationRaw: '15,00 €',
-    noticeDate: 'Oct 22, 2026, 11:14 am CEST',
-    status: 'Action required'
-  }
-];
+
+// IDs of legacy hardcoded sample issues that must never appear (purged from DB)
+const HARDCODED_ISSUE_IDS = ["261024001446240219","261022004550428524","261022001482073481","261022001627463618","261029001429093719","261028001223208830","261024004915141465","261022004222448410","261028001671515286","261028001904297179"];
 
 /**
  * Synchronize Temu Fulfillment Issues
@@ -769,78 +721,6 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
                       (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
 
-  const AUTHENTIC_TEMU_ISSUES = [
-  {
-    issueId: '261029001429093719',
-    orderNum: 'PO-076-261029001429093719',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 5.00€ exempted',
-    noticeDate: 'Oct 29, 2026, 2:03 pm PKT',
-    status: 'Action required'
-  },
-  {
-    issueId: '261028001223208830',
-    orderNum: 'PO-076-261028001223208830',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 5.00€ exempted',
-    noticeDate: 'Oct 28, 2026, 2:04 pm PKT',
-    status: 'Action required'
-  },
-  {
-    issueId: '261024004915141465',
-    orderNum: 'PO-076-261024004915141465',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Abnormal fulfillment',
-    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 13.20€ exempted',
-    parcel: 'PK-1419210750208101099',
-    trackingNumber: 'PK-1419210750208101099',
-    carrier: 'DHL Paket',
-    noticeDate: 'Oct 24, 2026, 5:03 pm PKT',
-    status: 'Pending',
-    resolutionAction: 'appeal',
-    resolutionNotes: 'Order dispatched promptly with tracking PK-1419210750208101099. Package handed over to carrier and in active transit.'
-  },
-  {
-    issueId: '261022004222448410',
-    orderNum: 'PO-076-261022004222448410',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Abnormal fulfillment',
-    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 13.20€ exempted',
-    parcel: 'PK-0011870313479741899',
-    trackingNumber: 'PK-0011870313479741899',
-    carrier: 'DHL Paket',
-    noticeDate: 'Oct 22, 2026, 8:22 pm PKT',
-    status: 'Pending',
-    resolutionAction: 'appeal',
-    resolutionNotes: 'Order dispatched promptly with tracking PK-0011870313479741899. Package handed over to carrier and in active transit.'
-  },
-  {
-    issueId: '261028001671515286',
-    orderNum: 'PO-162-06050210509430832',
-    buyerName: 'Temu Customer (PL)',
-    country: 'PL',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 2,
-    compensationRaw: '40,00 zł',
-    noticeDate: 'Oct 28, 2026, 2:05 pm PKT',
-    status: 'Action required'
-  }
-];
 
   if (mongoose.connection.readyState === 1) {
     // 1. Purge legacy mistakenly created cancellation_request issues and ticket copies
@@ -854,19 +734,8 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       ]
     }).catch(() => {});
 
-    // 2. Ensure all authentic live fulfillment issues from Temu Seller Center exist
-    for (const issueData of AUTHENTIC_TEMU_ISSUES) {
-      await TemuFulfillmentIssue.updateOne(
-        { user: req.user.id, issueId: issueData.issueId },
-        {
-          $setOnInsert: {
-            user: req.user.id,
-            ...issueData
-          }
-        },
-        { upsert: true }
-      ).catch(() => {});
-    }
+    // 2. Remove previously hardcoded (non-Temu) issues so only real data remains
+    await TemuFulfillmentIssue.deleteMany({ issueId: { $in: HARDCODED_ISSUE_IDS } }).catch(() => {});
 
     // 3. Reconcile existing issues with tracking numbers and carriers without auto-closing unresolved delay claims
     const allIssues = await TemuFulfillmentIssue.find({ user: req.user.id });
@@ -935,78 +804,6 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
-  const AUTHENTIC_TEMU_ISSUES = [
-  {
-    issueId: '261029001429093719',
-    orderNum: 'PO-076-261029001429093719',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 5.00€ exempted',
-    noticeDate: 'Oct 29, 2026, 2:03 pm PKT',
-    status: 'Action required'
-  },
-  {
-    issueId: '261028001223208830',
-    orderNum: 'PO-076-261028001223208830',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 5.00€ exempted',
-    noticeDate: 'Oct 28, 2026, 2:04 pm PKT',
-    status: 'Action required'
-  },
-  {
-    issueId: '261024004915141465',
-    orderNum: 'PO-076-261024004915141465',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Abnormal fulfillment',
-    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 13.20€ exempted',
-    parcel: 'PK-1419210750208101099',
-    trackingNumber: 'PK-1419210750208101099',
-    carrier: 'DHL Paket',
-    noticeDate: 'Oct 24, 2026, 5:03 pm PKT',
-    status: 'Pending',
-    resolutionAction: 'appeal',
-    resolutionNotes: 'Order dispatched promptly with tracking PK-1419210750208101099. Package handed over to carrier and in active transit.'
-  },
-  {
-    issueId: '261022004222448410',
-    orderNum: 'PO-076-261022004222448410',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Abnormal fulfillment',
-    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 13.20€ exempted',
-    parcel: 'PK-0011870313479741899',
-    trackingNumber: 'PK-0011870313479741899',
-    carrier: 'DHL Paket',
-    noticeDate: 'Oct 22, 2026, 8:22 pm PKT',
-    status: 'Pending',
-    resolutionAction: 'appeal',
-    resolutionNotes: 'Order dispatched promptly with tracking PK-0011870313479741899. Package handed over to carrier and in active transit.'
-  },
-  {
-    issueId: '261028001671515286',
-    orderNum: 'PO-162-06050210509430832',
-    buyerName: 'Temu Customer (PL)',
-    country: 'PL',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 2,
-    compensationRaw: '40,00 zł',
-    noticeDate: 'Oct 28, 2026, 2:05 pm PKT',
-    status: 'Action required'
-  }
-];
 
   if (mongoose.connection.readyState === 1) {
     // Clean out stray cancellation_request, ISS-PO-, and ticket copies
@@ -1020,19 +817,8 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       ]
     }).catch(() => {});
 
-    // Ensure authentic Temu issues exist in DB
-    for (const issueData of AUTHENTIC_TEMU_ISSUES) {
-      await TemuFulfillmentIssue.updateOne(
-        { user: req.user.id, issueId: issueData.issueId },
-        {
-          $setOnInsert: {
-            user: req.user.id,
-            ...issueData
-          }
-        },
-        { upsert: true }
-      ).catch(() => {});
-    }
+    // Remove previously hardcoded (non-Temu) issues so only real data remains
+    await TemuFulfillmentIssue.deleteMany({ issueId: { $in: HARDCODED_ISSUE_IDS } }).catch(() => {});
   }
 
   // Sync fulfillment issues when requested with ?sync=true
@@ -1089,11 +875,11 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
       const realTracking = issue.parcel || issue.trackingNumber || order?.tracking || order?.dhlShipmentId || '';
       const carrier = issue.carrier || order?.shippingMethod || 'DHL Warenpost';
       const noticeDate = issue.noticeDate || (issue.createdAt ? new Date(issue.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent');
-      const compensationRaw = issue.compensationRaw || (country === 'HU' ? '1 700 Ft' : country === 'PL' ? '25,00 zł' : country === 'CZ' ? '125,00 Kč' : '5,00 €');
+      const compensationRaw = issue.compensationRaw || '';
 
-      const orderDateFormatted = formatEuropeanDate(order?.orderDate || order?.createdAt || issue.createdAt) || '08.10.2026';
-      const statusDateFormatted = formatEuropeanDate(order?.shippedAt || (order?.createdAt ? new Date(new Date(order.createdAt).getTime() + 3*86400000) : null)) || '11.10.2026';
-      const purchaseDateTemu = order?.createdAt ? formatTemuTimestamp(order.createdAt) : (issue.noticeDate ? `${issue.noticeDate} PKT(UTC+5)` : 'Oct 18, 2026, 9:31 am PKT(UTC+5)');
+      const orderDateFormatted = formatEuropeanDate(order?.orderDate || order?.createdAt || issue.createdAt) || '';
+      const statusDateFormatted = formatEuropeanDate(order?.shippedAt || (order?.createdAt ? new Date(new Date(order.createdAt).getTime() + 3*86400000) : null)) || '';
+      const purchaseDateTemu = order?.createdAt ? formatTemuTimestamp(order.createdAt) : (issue.noticeDate ? `${issue.noticeDate} PKT(UTC+5)` : '');
 
       const suggestedReply = generateFulfillmentRejectionNote(
         country,

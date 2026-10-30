@@ -13,6 +13,7 @@ const TemuFulfillmentIssue = require('../models/temuFulfillmentIssue.model');
 const Notification = require('../models/notification.model');
 
 let syncInterval = null;
+let ticketSyncInterval = null;
 
 const httpFetch = require('../utils/httpHelper');
 
@@ -1004,9 +1005,37 @@ exports.startTemuBackgroundSync = () => {
 
   runSync();
   syncInterval = setInterval(runSync, 20000);
+
+  // Information tickets: pull new tickets from every connected shop every 3 hours
+  const TICKET_SYNC_INTERVAL_MS = 3 * 60 * 60 * 1000;
+  const runTicketSync = async () => {
+    try {
+      const mongoose = require('mongoose');
+      if (mongoose.connection.readyState !== 1) return;
+      const { syncTicketsForUser } = require('../controllers/temuTicket.controller');
+      const users = await User.find({
+        $or: [
+          { 'temuIntegration.isConnected': true },
+          { 'temuIntegrations.isConnected': true }
+        ]
+      });
+      for (const u of users) {
+        await syncTicketsForUser(u).catch(err => console.warn('Temu ticket auto-sync warning:', err.message));
+      }
+      console.log('[Temu Tickets] 3-hour auto-sync finished for ' + users.length + ' user(s).');
+    } catch (err) {
+      console.error('Temu ticket auto-sync error:', err.message);
+    }
+  };
+  setTimeout(runTicketSync, 15000);
+  ticketSyncInterval = setInterval(runTicketSync, TICKET_SYNC_INTERVAL_MS);
 };
 
 exports.stopTemuBackgroundSync = () => {
+  if (ticketSyncInterval) {
+    clearInterval(ticketSyncInterval);
+    ticketSyncInterval = null;
+  }
   if (syncInterval) {
     clearInterval(syncInterval);
     syncInterval = null;
