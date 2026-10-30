@@ -795,6 +795,40 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     status: 'Action required'
   },
   {
+    issueId: '261024004915141465',
+    orderNum: 'PO-076-261024004915141465',
+    buyerName: 'Temu Customer (EU)',
+    country: 'DE',
+    issueType: 'Abnormal fulfillment',
+    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
+    quantity: 1,
+    compensationRaw: 'Compensation 13.20€ exempted',
+    parcel: 'PK-1419210750208101099',
+    trackingNumber: 'PK-1419210750208101099',
+    carrier: 'DHL Paket',
+    noticeDate: 'Oct 24, 2026, 5:03 pm PKT',
+    status: 'Pending',
+    resolutionAction: 'appeal',
+    resolutionNotes: 'Order dispatched promptly with tracking PK-1419210750208101099. Package handed over to carrier and in active transit.'
+  },
+  {
+    issueId: '261022004222448410',
+    orderNum: 'PO-076-261022004222448410',
+    buyerName: 'Temu Customer (EU)',
+    country: 'DE',
+    issueType: 'Abnormal fulfillment',
+    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
+    quantity: 1,
+    compensationRaw: 'Compensation 13.20€ exempted',
+    parcel: 'PK-0011870313479741899',
+    trackingNumber: 'PK-0011870313479741899',
+    carrier: 'DHL Paket',
+    noticeDate: 'Oct 22, 2026, 8:22 pm PKT',
+    status: 'Pending',
+    resolutionAction: 'appeal',
+    resolutionNotes: 'Order dispatched promptly with tracking PK-0011870313479741899. Package handed over to carrier and in active transit.'
+  },
+  {
     issueId: '261028001671515286',
     orderNum: 'PO-162-06050210509430832',
     buyerName: 'Temu Customer (PL)',
@@ -925,6 +959,40 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     compensationRaw: 'Compensation 5.00€ exempted',
     noticeDate: 'Oct 28, 2026, 2:04 pm PKT',
     status: 'Action required'
+  },
+  {
+    issueId: '261024004915141465',
+    orderNum: 'PO-076-261024004915141465',
+    buyerName: 'Temu Customer (EU)',
+    country: 'DE',
+    issueType: 'Abnormal fulfillment',
+    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
+    quantity: 1,
+    compensationRaw: 'Compensation 13.20€ exempted',
+    parcel: 'PK-1419210750208101099',
+    trackingNumber: 'PK-1419210750208101099',
+    carrier: 'DHL Paket',
+    noticeDate: 'Oct 24, 2026, 5:03 pm PKT',
+    status: 'Pending',
+    resolutionAction: 'appeal',
+    resolutionNotes: 'Order dispatched promptly with tracking PK-1419210750208101099. Package handed over to carrier and in active transit.'
+  },
+  {
+    issueId: '261022004222448410',
+    orderNum: 'PO-076-261022004222448410',
+    buyerName: 'Temu Customer (EU)',
+    country: 'DE',
+    issueType: 'Abnormal fulfillment',
+    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
+    quantity: 1,
+    compensationRaw: 'Compensation 13.20€ exempted',
+    parcel: 'PK-0011870313479741899',
+    trackingNumber: 'PK-0011870313479741899',
+    carrier: 'DHL Paket',
+    noticeDate: 'Oct 22, 2026, 8:22 pm PKT',
+    status: 'Pending',
+    resolutionAction: 'appeal',
+    resolutionNotes: 'Order dispatched promptly with tracking PK-0011870313479741899. Package handed over to carrier and in active transit.'
   },
   {
     issueId: '261028001671515286',
@@ -1201,7 +1269,7 @@ exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
     });
 
     if (issueDoc) {
-      issueDoc.status = 'resolved';
+      issueDoc.status = action === 'abandon' ? 'resolved' : 'Pending';
       issueDoc.resolutionAction = action || 'appeal';
       issueDoc.resolutionNotes = answer;
       if (denialReason) issueDoc.denialReason = denialReason;
