@@ -10,49 +10,65 @@ const DEFAULT_INVENTORY_ITEMS = [
   {
     productName: 'Apple Cider Vinegar Gummies 120ct',
     sku: 'SKU-ACV-120',
+    barcode: '603900753096928',
     quantity: 145,
-    rfidTag: 'RFID-E280-1160-5928',
+    rfidTag: '603900753096928',
     category: 'Health & Beauty',
     location: 'Shelf A-04',
     unitPrice: 16.99,
     minStockThreshold: 15,
     status: 'in_stock',
-    notes: 'Temu bestseller, fast-moving item'
+    batchNumber: 'LOT-2026-10',
+    expiryDate: '2027-12-31',
+    manufacturingDate: '2026-10-01',
+    notes: 'Bestseller item with scannable barcode label'
   },
   {
     productName: 'Wireless Bluetooth Optical Mouse M350',
     sku: 'SKU-WBM-350',
+    barcode: '603900753096929',
     quantity: 68,
-    rfidTag: 'RFID-E280-4491-8821',
+    rfidTag: '603900753096929',
     category: 'Electronics',
     location: 'Shelf B-12',
     unitPrice: 12.50,
     minStockThreshold: 10,
     status: 'in_stock',
+    batchNumber: 'LOT-2026-08',
+    expiryDate: '',
+    manufacturingDate: '2026-08-15',
     notes: 'Includes AA battery, EU CE compliant'
   },
   {
     productName: 'Thermal Shipping Label Rolls (100x150mm)',
     sku: 'SKU-THL-500',
+    barcode: '603900753096930',
     quantity: 42,
-    rfidTag: 'RFID-E280-7712-3004',
+    rfidTag: '603900753096930',
     category: 'Packaging',
     location: 'Shelf C-01',
     unitPrice: 8.90,
     minStockThreshold: 10,
     status: 'in_stock',
+    batchNumber: 'LOT-2026-09',
+    expiryDate: '',
+    manufacturingDate: '2026-09-01',
     notes: 'Standard DHL Warenpost & Packeta size'
   },
   {
     productName: 'Ultra-Fast USB-C PD 65W Fast Charger',
     sku: 'SKU-CHG-65W',
+    barcode: '603900753096931',
     quantity: 4,
-    rfidTag: 'RFID-E280-9930-1049',
+    rfidTag: '603900753096931',
     category: 'Electronics',
     location: 'Shelf B-08',
     unitPrice: 22.00,
     minStockThreshold: 5,
     status: 'low_stock',
+    batchNumber: 'LOT-2026-07',
+    expiryDate: '',
+    manufacturingDate: '2026-07-20',
     notes: 'Reorder required soon'
   }
 ];
@@ -140,12 +156,16 @@ exports.createInventoryItem = catchAsync(async (req, res, next) => {
   const {
     productName,
     sku,
+    barcode,
     quantity,
     rfidTag,
     category,
     location,
     unitPrice,
     minStockThreshold,
+    batchNumber,
+    expiryDate,
+    manufacturingDate,
     notes
   } = req.body;
 
@@ -157,28 +177,26 @@ exports.createInventoryItem = catchAsync(async (req, res, next) => {
   const minThreshold = parseInt(minStockThreshold, 10) || 5;
   const status = computeStatus(qty, minThreshold);
 
-  // If RFID tag is given, ensure it doesn't already belong to another product of this user
-  const cleanRfid = (rfidTag || '').trim();
-  if (cleanRfid) {
-    const existing = await InventoryItem.findOne({ user: req.user.id, rfidTag: cleanRfid });
-    if (existing) {
-      return next(new AppError(`RFID tag "${cleanRfid}" is already assigned to "${existing.productName}".`, 400));
-    }
-  }
+  const cleanBarcode = (barcode || rfidTag || '').trim();
+  const cleanRfid = (rfidTag || cleanBarcode).trim();
 
   const item = await InventoryItem.create({
     user: req.user.id,
     productName: productName.trim(),
     sku: (sku || '').trim(),
+    barcode: cleanBarcode,
     quantity: qty,
     rfidTag: cleanRfid,
     category: (category || 'General').trim(),
-    location: (location || 'Shelf A-1').trim(),
+    location: (location || 'Shelf A-04').trim(),
     unitPrice: Math.max(0, parseFloat(unitPrice) || 0),
     minStockThreshold: minThreshold,
+    batchNumber: (batchNumber || '').trim(),
+    expiryDate: (expiryDate || '').trim(),
+    manufacturingDate: (manufacturingDate || '').trim(),
     status,
     notes: (notes || '').trim(),
-    lastScannedAt: cleanRfid ? new Date() : null
+    lastScannedAt: cleanBarcode ? new Date() : null
   });
 
   res.status(201).json({
@@ -202,12 +220,16 @@ exports.updateInventoryItem = catchAsync(async (req, res, next) => {
   const {
     productName,
     sku,
+    barcode,
     quantity,
     rfidTag,
     category,
     location,
     unitPrice,
     minStockThreshold,
+    batchNumber,
+    expiryDate,
+    manufacturingDate,
     notes
   } = req.body;
 
@@ -218,23 +240,22 @@ exports.updateInventoryItem = catchAsync(async (req, res, next) => {
   if (unitPrice !== undefined) item.unitPrice = Math.max(0, parseFloat(unitPrice) || 0);
   if (minStockThreshold !== undefined) item.minStockThreshold = parseInt(minStockThreshold, 10) || 5;
   if (notes !== undefined) item.notes = notes.trim();
+  if (batchNumber !== undefined) item.batchNumber = batchNumber.trim();
+  if (expiryDate !== undefined) item.expiryDate = expiryDate.trim();
+  if (manufacturingDate !== undefined) item.manufacturingDate = manufacturingDate.trim();
 
   if (quantity !== undefined) {
     item.quantity = Math.max(0, parseInt(quantity, 10) || 0);
   }
 
+  if (barcode !== undefined) {
+    item.barcode = barcode.trim();
+    if (!item.rfidTag) item.rfidTag = item.barcode;
+  }
+
   if (rfidTag !== undefined) {
-    const cleanRfid = rfidTag.trim();
-    if (cleanRfid && cleanRfid !== item.rfidTag) {
-      const existing = await InventoryItem.findOne({ user: req.user.id, rfidTag: cleanRfid, _id: { $ne: id } });
-      if (existing) {
-        return next(new AppError(`RFID tag "${cleanRfid}" is already assigned to "${existing.productName}".`, 400));
-      }
-      item.rfidTag = cleanRfid;
-      item.lastScannedAt = new Date();
-    } else if (!cleanRfid) {
-      item.rfidTag = '';
-    }
+    item.rfidTag = rfidTag.trim();
+    if (!item.barcode) item.barcode = item.rfidTag;
   }
 
   item.status = computeStatus(item.quantity, item.minStockThreshold);
@@ -279,12 +300,11 @@ exports.adjustStock = catchAsync(async (req, res, next) => {
  * Lookup or scan RFID device tag
  */
 exports.scanRfidTag = catchAsync(async (req, res, next) => {
-  const { rfidTag, targetItemId } = req.body;
-  if (!rfidTag || !rfidTag.trim()) {
-    return next(new AppError('RFID tag is required.', 400));
+  const { rfidTag, barcode, targetItemId } = req.body;
+  const cleanTag = (barcode || rfidTag || '').trim();
+  if (!cleanTag) {
+    return next(new AppError('Barcode or tag is required.', 400));
   }
-
-  const cleanTag = rfidTag.trim();
 
   // If pairing to an item
   if (targetItemId) {
@@ -307,8 +327,15 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Lookup existing item by RFID tag
-  const matched = await InventoryItem.findOne({ user: req.user.id, rfidTag: cleanTag });
+  // Lookup existing item by Barcode, RFID tag, or SKU
+  const matched = await InventoryItem.findOne({
+    user: req.user.id,
+    $or: [
+      { barcode: cleanTag },
+      { rfidTag: cleanTag },
+      { sku: cleanTag }
+    ]
+  });
   if (matched) {
     matched.lastScannedAt = new Date();
     await matched.save();
@@ -415,10 +442,14 @@ exports.bulkScanRfid = catchAsync(async (req, res, next) => {
     return next(new AppError('No valid RFID tags found in scan payload.', 400));
   }
 
-  // Find all matched products in MongoDB for this user
+  // Find all matched products in MongoDB for this user by barcode, rfidTag, or sku
   const matchedProducts = await InventoryItem.find({
     user: req.user.id,
-    rfidTag: { $in: uniqueTags }
+    $or: [
+      { barcode: { $in: uniqueTags } },
+      { rfidTag: { $in: uniqueTags } },
+      { sku: { $in: uniqueTags } }
+    ]
   });
 
   const matchedTagSet = new Set(matchedProducts.map(p => p.rfidTag));

@@ -25,6 +25,27 @@ const inventoryItemSchema = new mongoose.Schema(
       default: 0,
       min: [0, 'Quantity cannot be negative']
     },
+    barcode: {
+      type: String,
+      trim: true,
+      default: '',
+      index: true
+    },
+    batchNumber: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    expiryDate: {
+      type: String,
+      trim: true,
+      default: ''
+    },
+    manufacturingDate: {
+      type: String,
+      trim: true,
+      default: ''
+    },
     rfidTag: {
       type: String,
       trim: true,
@@ -81,6 +102,7 @@ const inventoryItemSchema = new mongoose.Schema(
 );
 
 inventoryItemSchema.index({ user: 1, productName: 1 });
+inventoryItemSchema.index({ user: 1, barcode: 1 });
 inventoryItemSchema.index({ user: 1, rfidTag: 1 });
 inventoryItemSchema.index({ user: 1, createdAt: -1 });
 

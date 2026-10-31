@@ -9,6 +9,7 @@ router.use(auth);
 
 router.get('/', inventoryController.getAllInventory);
 router.post('/', inventoryController.createInventoryItem);
+router.post('/scan-barcode', inventoryController.scanRfidTag);
 router.post('/scan-rfid', inventoryController.scanRfidTag);
 router.post('/bulk-scan', inventoryController.bulkScanRfid);
 router.post('/verify-order', inventoryController.verifyOrderPick);
