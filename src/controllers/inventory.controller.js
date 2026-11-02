@@ -904,7 +904,9 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
  */
 exports.getScanLogs = catchAsync(async (req, res, next) => {
   const { limit = 50, page = 1, deviceType, inventoryItemId } = req.query;
-  const filter = { user: req.user.id };
+  const userId = req.user._id || req.user.id;
+  const userObjId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+  const filter = { user: { $in: [userObjId, String(userId)] } };
 
   if (deviceType && deviceType !== 'all') {
     filter.deviceType = deviceType;
@@ -925,7 +927,7 @@ exports.getScanLogs = catchAsync(async (req, res, next) => {
 
   // Aggregate device breakdown
   const deviceCounts = await ProductScanLog.aggregate([
-    { $match: { user: req.user._id || req.user.id } },
+    { $match: { user: { $in: [userObjId, String(userId)] } } },
     { $group: { _id: '$deviceModel', count: { $sum: 1 } } },
     { $sort: { count: -1 } }
   ]);
@@ -947,21 +949,24 @@ exports.getScanLogs = catchAsync(async (req, res, next) => {
  */
 exports.getScanStats = catchAsync(async (req, res, next) => {
   const userId = req.user._id || req.user.id;
-  const totalScans = await ProductScanLog.countDocuments({ user: userId });
+  const userObjId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(String(userId)) : userId;
+  const matchUser = { user: { $in: [userObjId, String(userId)] } };
+
+  const totalScans = await ProductScanLog.countDocuments(matchUser);
   
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const scansToday = await ProductScanLog.countDocuments({
-    user: userId,
+    ...matchUser,
     scannedAt: { $gte: oneDayAgo }
   });
 
   const byDevice = await ProductScanLog.aggregate([
-    { $match: { user: userId } },
+    { $match: matchUser },
     { $group: { _id: '$deviceType', count: { $sum: 1 } } }
   ]);
 
   const topProducts = await ProductScanLog.aggregate([
-    { $match: { user: userId } },
+    { $match: matchUser },
     { $group: { _id: '$productName', count: { $sum: 1 }, barcode: { $first: '$barcode' } } },
     { $sort: { count: -1 } },
     { $limit: 5 }
