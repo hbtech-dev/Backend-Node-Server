@@ -475,6 +475,7 @@ const mapTemuOrderToModel = (rawItem, userId) => {
 const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, orderSnList = []) => {
   const addrMap = new Map();
   if (!orderSnList || orderSnList.length === 0) return addrMap;
+  if (lastIpWhitelistBlockedAt && (Date.now() - lastIpWhitelistBlockedAt < IP_WHITELIST_COOLDOWN_MS)) return addrMap;
 
   for (const rawOrderSn of orderSnList) {
     if (!rawOrderSn) continue;
