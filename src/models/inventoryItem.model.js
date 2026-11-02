@@ -85,6 +85,10 @@ const inventoryItemSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
+    totalScanCount: {
+      type: Number,
+      default: 0
+    },
     scanHistory: [
       {
         scannedAt: { type: Date, default: Date.now },

@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const InventoryItem = require('../models/inventoryItem.model');
+const ProductScanLog = require('../models/productScanLog.model');
 const catchAsync = require('../utils/catchAsync');
 const AppError = require('../utils/appError');
 
@@ -76,6 +77,63 @@ const DEFAULT_INVENTORY_ITEMS = [
 /**
  * Compute stock status helper
  */
+
+/**
+ * Device telemetry parser for QR & Barcode scan logs
+ */
+const parseDeviceInfo = (req) => {
+  const ua = req.headers['user-agent'] || '';
+  const forwarded = req.headers['x-forwarded-for'];
+  const ip = (forwarded ? forwarded.split(',')[0].trim() : req.socket?.remoteAddress) || '';
+
+  let deviceType = 'Desktop';
+  let deviceModel = 'PC / Browser';
+  let os = 'Unknown OS';
+  let browser = 'Browser';
+
+  if (/iPhone/i.test(ua)) {
+    deviceType = 'Mobile';
+    deviceModel = 'Apple iPhone';
+    os = 'iOS';
+  } else if (/iPad/i.test(ua)) {
+    deviceType = 'Tablet';
+    deviceModel = 'Apple iPad';
+    os = 'iPadOS';
+  } else if (/Android/i.test(ua)) {
+    deviceType = 'Mobile';
+    deviceModel = 'Android Phone';
+    os = 'Android';
+  } else if (/Macintosh|Mac OS/i.test(ua)) {
+    deviceType = 'Desktop';
+    deviceModel = 'Mac';
+    os = 'macOS';
+  } else if (/Windows/i.test(ua)) {
+    deviceType = 'Desktop';
+    deviceModel = 'Windows PC';
+    os = 'Windows';
+  } else if (/Linux/i.test(ua)) {
+    deviceType = 'Desktop';
+    deviceModel = 'Linux Device';
+    os = 'Linux';
+  }
+
+  if (/CriOS/i.test(ua)) {
+    browser = 'Chrome iOS';
+  } else if (/Chrome/i.test(ua) && !/Edge|Edg/i.test(ua)) {
+    browser = 'Google Chrome';
+  } else if (/FxiOS/i.test(ua)) {
+    browser = 'Firefox iOS';
+  } else if (/Firefox/i.test(ua)) {
+    browser = 'Mozilla Firefox';
+  } else if (/Safari/i.test(ua) && !/Chrome/i.test(ua)) {
+    browser = 'Apple Safari';
+  } else if (/Edge|Edg/i.test(ua)) {
+    browser = 'Microsoft Edge';
+  }
+
+  return { deviceType, deviceModel, os, browser, ip, userAgent: ua };
+};
+
 const computeStatus = (quantity, minThreshold = 5) => {
   const q = Number(quantity) || 0;
   if (q <= 0) return 'out_of_stock';
@@ -329,8 +387,36 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     ]
   });
   if (matched) {
+    const devInfo = parseDeviceInfo(req);
+    matched.totalScanCount = (matched.totalScanCount || 0) + 1;
     matched.lastScannedAt = new Date();
-    await matched.save();
+    if (!Array.isArray(matched.scanHistory)) matched.scanHistory = [];
+    matched.scanHistory.unshift({
+      scannedAt: new Date(),
+      action: 'scanner_gun',
+      location: matched.location || 'Shelf A-04',
+      deviceId: 'Warehouse 2D Scanner Gun',
+      notes: `Scanned by warehouse operator via scanner wedge`
+    });
+    if (matched.scanHistory.length > 50) matched.scanHistory = matched.scanHistory.slice(0, 50);
+    await matched.save().catch(() => {});
+
+    ProductScanLog.create({
+      user: req.user.id,
+      inventoryItem: matched._id,
+      productName: matched.productName,
+      sku: matched.sku,
+      barcode: matched.barcode || cleanTag,
+      deviceType: 'Scanner Gun',
+      deviceModel: 'Warehouse 2D Scanner Gun',
+      os: devInfo.os,
+      browser: devInfo.browser,
+      ip: devInfo.ip,
+      userAgent: devInfo.userAgent,
+      scanMethod: 'scanner_gun',
+      location: matched.location,
+      scannedAt: new Date()
+    }).catch(() => {});
     return res.status(200).json({
       status: 'success',
       found: true,
@@ -741,7 +827,7 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
       { sku: code },
       { rfidTag: code }
     ]
-  }).select('productName sku barcode quantity unitPrice category location batchNumber manufacturingDate expiryDate status notes updatedAt').lean();
+  });
 
   if (!item) {
     return res.status(404).json({
@@ -750,8 +836,144 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
     });
   }
 
+  // Parse device telemetry (iPhone, Android, PC, Browser, IP, Time)
+  const devInfo = parseDeviceInfo(req);
+
+  // Update item metrics
+  item.totalScanCount = (item.totalScanCount || 0) + 1;
+  item.lastScannedAt = new Date();
+
+  if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
+  item.scanHistory.unshift({
+    scannedAt: new Date(),
+    action: 'qr_scan',
+    location: item.location || 'Warehouse',
+    deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
+    notes: `Scanned via camera from IP ${devInfo.ip || 'Unknown'}`
+  });
+  if (item.scanHistory.length > 50) {
+    item.scanHistory = item.scanHistory.slice(0, 50);
+  }
+  await item.save().catch(() => {});
+
+  // Create persistent scan log in MongoDB
+  ProductScanLog.create({
+    user: item.user,
+    inventoryItem: item._id,
+    productName: item.productName,
+    sku: item.sku,
+    barcode: item.barcode || code,
+    deviceType: devInfo.deviceType,
+    deviceModel: devInfo.deviceModel,
+    os: devInfo.os,
+    browser: devInfo.browser,
+    ip: devInfo.ip,
+    userAgent: devInfo.userAgent,
+    scanMethod: 'camera_qr',
+    location: item.location || 'Shelf A-04',
+    scannedAt: new Date()
+  }).catch(err => console.warn('ProductScanLog creation warning:', err.message));
+
   res.status(200).json({
     status: 'success',
-    data: { item }
+    data: {
+      item: {
+        _id: item._id,
+        productName: item.productName,
+        sku: item.sku,
+        barcode: item.barcode,
+        quantity: item.quantity,
+        unitPrice: item.unitPrice,
+        category: item.category,
+        location: item.location,
+        batchNumber: item.batchNumber,
+        manufacturingDate: item.manufacturingDate,
+        expiryDate: item.expiryDate,
+        status: item.status,
+        notes: item.notes,
+        totalScanCount: item.totalScanCount,
+        lastScannedAt: item.lastScannedAt,
+        scanHistory: item.scanHistory
+      }
+    }
+  });
+});
+
+/**
+ * Get all recent scan logs for current user (with device, time, IP, product)
+ */
+exports.getScanLogs = catchAsync(async (req, res, next) => {
+  const { limit = 50, page = 1, deviceType, inventoryItemId } = req.query;
+  const filter = { user: req.user.id };
+
+  if (deviceType && deviceType !== 'all') {
+    filter.deviceType = deviceType;
+  }
+  if (inventoryItemId) {
+    filter.inventoryItem = inventoryItemId;
+  }
+
+  const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);
+  const [logs, total] = await Promise.all([
+    ProductScanLog.find(filter)
+      .sort({ scannedAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit, 10))
+      .lean(),
+    ProductScanLog.countDocuments(filter)
+  ]);
+
+  // Aggregate device breakdown
+  const deviceCounts = await ProductScanLog.aggregate([
+    { $match: { user: req.user._id || req.user.id } },
+    { $group: { _id: '$deviceModel', count: { $sum: 1 } } },
+    { $sort: { count: -1 } }
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      logs,
+      total,
+      deviceCounts,
+      page: parseInt(page, 10),
+      totalPages: Math.ceil(total / parseInt(limit, 10))
+    }
+  });
+});
+
+/**
+ * Get overall scan stats & analytics
+ */
+exports.getScanStats = catchAsync(async (req, res, next) => {
+  const userId = req.user._id || req.user.id;
+  const totalScans = await ProductScanLog.countDocuments({ user: userId });
+  
+  const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const scansToday = await ProductScanLog.countDocuments({
+    user: userId,
+    scannedAt: { $gte: oneDayAgo }
+  });
+
+  const byDevice = await ProductScanLog.aggregate([
+    { $match: { user: userId } },
+    { $group: { _id: '$deviceType', count: { $sum: 1 } } }
+  ]);
+
+  const topProducts = await ProductScanLog.aggregate([
+    { $match: { user: userId } },
+    { $group: { _id: '$productName', count: { $sum: 1 }, barcode: { $first: '$barcode' } } },
+    { $sort: { count: -1 } },
+    { $limit: 5 }
+  ]);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      totalScans,
+      scansToday,
+      byDevice,
+      topProducts
+    }
   });
 });

@@ -11,6 +11,8 @@ router.get('/public/:code', inventoryController.getPublicItemByCode);
 router.use(auth);
 
 router.get('/', inventoryController.getAllInventory);
+router.get('/scan-logs', inventoryController.getScanLogs);
+router.get('/scan-logs/stats', inventoryController.getScanStats);
 router.post('/', inventoryController.createInventoryItem);
 router.post('/scan-barcode', inventoryController.scanRfidTag);
 router.post('/scan-rfid', inventoryController.scanRfidTag);
