@@ -79,3 +79,4 @@ productScanLogSchema.index({ inventoryItem: 1, scannedAt: -1 });
 productScanLogSchema.index({ user: 1, deviceType: 1 });
 
 module.exports = mongoose.model('ProductScanLog', productScanLogSchema);
+
