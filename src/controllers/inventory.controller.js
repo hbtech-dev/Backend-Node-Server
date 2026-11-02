@@ -94,16 +94,7 @@ exports.getAllInventory = catchAsync(async (req, res, next) => {
     });
   }
 
-  // Seed default inventory items if user has 0 items
-  const count = await InventoryItem.countDocuments({ user: req.user.id });
-  if (count === 0) {
-    for (const item of DEFAULT_INVENTORY_ITEMS) {
-      await InventoryItem.create({
-        user: req.user.id,
-        ...item
-      }).catch(() => {});
-    }
-  }
+  // Strictly DB-driven: returns exactly what is stored in MongoDB for this user
 
   const { search, category, status } = req.query;
   const filter = { user: req.user.id };
@@ -121,6 +112,7 @@ exports.getAllInventory = catchAsync(async (req, res, next) => {
     filter.$or = [
       { productName: { $regex: q, $options: 'i' } },
       { sku: { $regex: q, $options: 'i' } },
+      { barcode: { $regex: q, $options: 'i' } },
       { rfidTag: { $regex: q, $options: 'i' } },
       { location: { $regex: q, $options: 'i' } }
     ];
@@ -729,5 +721,37 @@ exports.getItemHistory = catchAsync(async (req, res, next) => {
       lastScannedAt: item.lastScannedAt,
       scanHistory: item.scanHistory || []
     }
+  });
+});
+
+
+/**
+ * Public endpoint to query product details by barcode, SKU, or QR code identifier
+ * Scannable by anyone with a smartphone anywhere in the world
+ */
+exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
+  const code = String(req.params.code || '').trim();
+  if (!code) {
+    return next(new AppError('Product code or barcode is required.', 400));
+  }
+
+  const item = await InventoryItem.findOne({
+    $or: [
+      { barcode: code },
+      { sku: code },
+      { rfidTag: code }
+    ]
+  }).select('productName sku barcode quantity unitPrice category location batchNumber manufacturingDate expiryDate status notes updatedAt').lean();
+
+  if (!item) {
+    return res.status(404).json({
+      status: 'fail',
+      message: 'No registered product found matching code: ' + code
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { item }
   });
 });

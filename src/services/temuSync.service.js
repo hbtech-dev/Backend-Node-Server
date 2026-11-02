@@ -14,6 +14,9 @@ const Notification = require('../models/notification.model');
 
 let syncInterval = null;
 let ticketSyncInterval = null;
+let isSyncRunning = false;
+let lastIpWhitelistBlockedAt = 0;
+const IP_WHITELIST_COOLDOWN_MS = 10 * 60 * 1000;
 
 const httpFetch = require('../utils/httpHelper');
 
@@ -25,6 +28,10 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
   // Your Temu app (EDER) is registered on the EU platform.
   // Global and US endpoints return errorCode 4000000 ("application information query is abnormal")
   // because the app only exists on EU. Only query EU to avoid noise errors.
+  if (lastIpWhitelistBlockedAt && (Date.now() - lastIpWhitelistBlockedAt < IP_WHITELIST_COOLDOWN_MS)) {
+    return [];
+  }
+
   const routerUrls = [
     'https://openapi-b-eu.temu.com/openapi/router'
   ];
@@ -104,6 +111,9 @@ const callTemuRouterAllRegions = async (appKey, appSecret, accessToken, type, pa
  * Returns the raw result object, or null on failure.
  */
 const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = {}) => {
+  if (lastIpWhitelistBlockedAt && (Date.now() - lastIpWhitelistBlockedAt < IP_WHITELIST_COOLDOWN_MS)) {
+    return null;
+  }
   const url = 'https://openapi-b-eu.temu.com/openapi/router';
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const payload = {
@@ -127,6 +137,10 @@ const callTemuRouterRaw = async (appKey, appSecret, accessToken, type, params = 
     });
     if (!res.ok) return null;
     const data = await res.json();
+    if (data.errorCode === 5000003 || String(data.errorMsg).includes('NOT_IN_IP_WHITE_LIST')) {
+      lastIpWhitelistBlockedAt = Date.now();
+      return null;
+    }
     if (data.errorCode === 3000034 || data.errorCode === 3000035) {
       return null;
     }
@@ -573,6 +587,7 @@ const syncUserTemuOrders = async (user) => {
   }
 
   if (integrations.length === 0) return;
+  if (lastIpWhitelistBlockedAt && (Date.now() - lastIpWhitelistBlockedAt < IP_WHITELIST_COOLDOWN_MS)) return;
 
   console.log(`📡 Starting Temu sync for user ${user._id} across ${integrations.length} store integration(s)...`);
 
@@ -982,9 +997,12 @@ const syncUserTemuOrders = async (user) => {
 
 exports.startTemuBackgroundSync = () => {
   if (syncInterval) return;
-  console.log('⚡ Temu Background Sync Service started (polling every 20s)...');
+  console.log('⚡ Temu Background Sync Service started (with concurrency lock & cooldown)...');
 
   const runSync = async () => {
+    if (isSyncRunning) return;
+    if (lastIpWhitelistBlockedAt && (Date.now() - lastIpWhitelistBlockedAt < IP_WHITELIST_COOLDOWN_MS)) return;
+    isSyncRunning = true;
     try {
       const mongoose = require('mongoose');
       if (mongoose.connection.readyState !== 1) return;
@@ -1000,11 +1018,13 @@ exports.startTemuBackgroundSync = () => {
       }
     } catch (err) {
       console.error('Temu background sync iteration error:', err.message);
+    } finally {
+      isSyncRunning = false;
     }
   };
 
   runSync();
-  syncInterval = setInterval(runSync, 20000);
+  syncInterval = setInterval(runSync, 180000);
 
   // Information tickets: pull new tickets from every connected shop every 3 hours
   const TICKET_SYNC_INTERVAL_MS = 3 * 60 * 60 * 1000;
