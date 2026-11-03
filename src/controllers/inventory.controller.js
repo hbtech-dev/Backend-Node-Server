@@ -399,7 +399,7 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
       notes: `Scanned by warehouse operator via scanner wedge`
     });
     if (matched.scanHistory.length > 50) matched.scanHistory = matched.scanHistory.slice(0, 50);
-    await matched.save().catch(() => {});
+    await matched.save().catch(() => { });
 
     ProductScanLog.create({
       user: req.user.id,
@@ -416,7 +416,7 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
       scanMethod: 'scanner_gun',
       location: matched.location,
       scannedAt: new Date()
-    }).catch(() => {});
+    }).catch(() => { });
     return res.status(200).json({
       status: 'success',
       found: true,
@@ -669,7 +669,7 @@ exports.verifyOrderPick = catchAsync(async (req, res, next) => {
 
   for (const item of scannedItems) {
     const count = tagCounts[item.rfidTag] || 1;
-    const matchExpected = expectedList.find(exp => 
+    const matchExpected = expectedList.find(exp =>
       (exp.sku && exp.sku === (item.sku || '').toLowerCase()) ||
       (exp.name && ((item.productName || '').toLowerCase().includes(exp.name) || exp.name.includes((item.productName || '').toLowerCase())))
     );
@@ -695,7 +695,7 @@ exports.verifyOrderPick = catchAsync(async (req, res, next) => {
   }
 
   for (const exp of expectedList) {
-    const found = verifiedItems.find(v => 
+    const found = verifiedItems.find(v =>
       (exp.sku && (v.sku || '').toLowerCase() === exp.sku) ||
       (exp.name && (v.productName || '').toLowerCase().includes(exp.name))
     );
@@ -816,97 +816,97 @@ exports.getItemHistory = catchAsync(async (req, res, next) => {
  * Scannable by anyone with a smartphone anywhere in the world
  */
 exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
-  const rawCode = String(req.params.code || '').trim();
-  if (!rawCode) {
-    return next(new AppError('Product code or barcode is required.', 400));
-  }
-
-  // Support serialized unit codes like 603900753096928-042 or query param ?unit=42
-  const baseCode = rawCode.includes('-') ? rawCode.split('-')[0].trim() : rawCode;
-  const unitNum = rawCode.includes('-')
-    ? parseInt(rawCode.split('-')[1], 10)
-    : (req.query.unit ? parseInt(req.query.unit, 10) : null);
-
-  const item = await InventoryItem.findOne({
-    $or: [
-      { barcode: rawCode },
-      { barcode: baseCode },
-      { sku: rawCode },
-      { sku: baseCode },
-      { rfidTag: rawCode },
-      { rfidTag: baseCode }
-    ]
-  });
-
-  if (!item) {
-    return res.status(404).json({
-      status: 'fail',
-      message: 'No registered product found matching code: ' + rawCode
-    });
-  }
-
-  // Parse device telemetry (iPhone, Android, PC, Browser, IP, Time)
-  const devInfo = parseDeviceInfo(req);
-
-  // Update item metrics
-  item.totalScanCount = (item.totalScanCount || 0) + 1;
-  item.lastScannedAt = new Date();
-
-  if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
-  item.scanHistory.unshift({
-    scannedAt: new Date(),
-    action: unitNum ? `qr_scan_unit_${unitNum}` : 'qr_scan',
-    location: item.location || 'Warehouse',
-    deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
-    notes: unitNum
-      ? `Scanned Unit #${unitNum} via camera from IP ${devInfo.ip || 'Unknown'}`
-      : `Scanned via camera from IP ${devInfo.ip || 'Unknown'}`
-  });
-  if (item.scanHistory.length > 50) {
-    item.scanHistory = item.scanHistory.slice(0, 50);
-  }
-  await item.save().catch(() => {});
-
-  // Create persistent scan log in MongoDB
-  ProductScanLog.create({
-    user: item.user,
-    inventoryItem: item._id,
-    productName: item.productName,
-    sku: item.sku,
-    barcode: rawCode,
-    deviceType: devInfo.deviceType,
-    deviceModel: devInfo.deviceModel,
-    os: devInfo.os,
-    browser: devInfo.browser,
-    ip: devInfo.ip,
-    userAgent: devInfo.userAgent,
-    scanMethod: 'camera_qr',
-    location: item.location || 'Shelf A-04',
-    scannedAt: new Date()
-  }).catch(err => console.warn('ProductScanLog creation warning:', err.message));
-
-  res.status(200).json({
-    status: 'success',
-    data: {
-      item: {
-        _id: item._id,
-        productName: item.productName,
-        barcode: item.barcode,
-        scannedCode: rawCode,
-        scannedUnitNumber: unitNum,
-        totalQuantity: item.quantity,
-        labelTemplate: item.labelTemplate,
-        quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        status: item.status,
-        notes: item.notes,
-        totalScanCount: item.totalScanCount,
-        lastScannedAt: item.lastScannedAt,
-        scanHistory: item.scanHistory
-      }
+    const rawCode = String(req.params.code || '').trim();
+    if (!rawCode) {
+      return next(new AppError('Product code or barcode is required.', 400));
     }
+
+    // Support serialized unit codes like 603900753096928-042 or query param ?unit=42
+    const baseCode = rawCode.includes('-') ? rawCode.split('-')[0].trim() : rawCode;
+    const unitNum = rawCode.includes('-')
+      ? parseInt(rawCode.split('-')[1], 10)
+      : (req.query.unit ? parseInt(req.query.unit, 10) : null);
+
+    const item = await InventoryItem.findOne({
+      $or: [
+      { barcode: rawCode },
+        { barcode: baseCode },
+        { sku: rawCode },
+        { sku: baseCode },
+        { rfidTag: rawCode },
+        { rfidTag: baseCode }
+      ]
+    });
+
+    if (!item) {
+      return res.status(404).json({
+        status: 'fail',
+      message: 'No registered product found matching code: ' + rawCode
+      });
+    }
+
+    // Parse device telemetry (iPhone, Android, PC, Browser, IP, Time)
+    const devInfo = parseDeviceInfo(req);
+
+    // Update item metrics
+    item.totalScanCount = (item.totalScanCount || 0) + 1;
+    item.lastScannedAt = new Date();
+
+    if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
+    item.scanHistory.unshift({
+      scannedAt: new Date(),
+      action: unitNum ? `qr_scan_unit_${unitNum}` : 'qr_scan',
+      location: item.location || 'Warehouse',
+      deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
+    notes: unitNum
+        ? `Scanned Unit #${unitNum} via camera from IP ${devInfo.ip || 'Unknown'}`
+        : `Scanned via camera from IP ${devInfo.ip || 'Unknown'}`
+    });
+    if (item.scanHistory.length > 50) {
+      item.scanHistory = item.scanHistory.slice(0, 50);
+    }
+    await item.save().catch(() => { });
+
+    // Create persistent scan log in MongoDB
+    ProductScanLog.create({
+      user: item.user,
+      inventoryItem: item._id,
+      productName: item.productName,
+      sku: item.sku,
+      barcode: rawCode,
+      deviceType: devInfo.deviceType,
+      deviceModel: devInfo.deviceModel,
+      os: devInfo.os,
+      browser: devInfo.browser,
+      ip: devInfo.ip,
+      userAgent: devInfo.userAgent,
+      scanMethod: 'camera_qr',
+      location: item.location || 'Shelf A-04',
+      scannedAt: new Date()
+    }).catch(err => console.warn('ProductScanLog creation warning:', err.message));
+
+    res.status(200).json({
+      status: 'success',
+      data: {
+        item: {
+          _id: item._id,
+          productName: item.productName,
+          barcode: item.barcode,
+          scannedCode: rawCode,
+          scannedUnitNumber: unitNum,
+          totalQuantity: item.quantity,
+          labelTemplate: item.labelTemplate,
+          quantity: item.quantity,
+          unitPrice: item.unitPrice,
+          status: item.status,
+          notes: item.notes,
+          totalScanCount: item.totalScanCount,
+          lastScannedAt: item.lastScannedAt,
+          scanHistory: item.scanHistory
+        }
+      }
+    });
   });
-});
 
 /**
  * Get all recent scan logs for current user (with device, time, IP, product)
@@ -962,7 +962,7 @@ exports.getScanStats = catchAsync(async (req, res, next) => {
   const matchUser = { user: { $in: [userObjId, String(userId)] } };
 
   const totalScans = await ProductScanLog.countDocuments(matchUser);
-  
+
   const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
   const scansToday = await ProductScanLog.countDocuments({
     ...matchUser,
