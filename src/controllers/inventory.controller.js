@@ -816,23 +816,32 @@ exports.getItemHistory = catchAsync(async (req, res, next) => {
  * Scannable by anyone with a smartphone anywhere in the world
  */
 exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
-  const code = String(req.params.code || '').trim();
-  if (!code) {
+  const rawCode = String(req.params.code || '').trim();
+  if (!rawCode) {
     return next(new AppError('Product code or barcode is required.', 400));
   }
 
+  // Support serialized unit codes like 603900753096928-042 or query param ?unit=42
+  const baseCode = rawCode.includes('-') ? rawCode.split('-')[0].trim() : rawCode;
+  const unitNum = rawCode.includes('-')
+    ? parseInt(rawCode.split('-')[1], 10)
+    : (req.query.unit ? parseInt(req.query.unit, 10) : null);
+
   const item = await InventoryItem.findOne({
     $or: [
-      { barcode: code },
-      { sku: code },
-      { rfidTag: code }
+      { barcode: rawCode },
+      { barcode: baseCode },
+      { sku: rawCode },
+      { sku: baseCode },
+      { rfidTag: rawCode },
+      { rfidTag: baseCode }
     ]
   });
 
   if (!item) {
     return res.status(404).json({
       status: 'fail',
-      message: 'No registered product found matching code: ' + code
+      message: 'No registered product found matching code: ' + rawCode
     });
   }
 
@@ -846,10 +855,12 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
   if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
   item.scanHistory.unshift({
     scannedAt: new Date(),
-    action: 'qr_scan',
+    action: unitNum ? `qr_scan_unit_${unitNum}` : 'qr_scan',
     location: item.location || 'Warehouse',
     deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
-    notes: `Scanned via camera from IP ${devInfo.ip || 'Unknown'}`
+    notes: unitNum
+      ? `Scanned Unit #${unitNum} via camera from IP ${devInfo.ip || 'Unknown'}`
+      : `Scanned via camera from IP ${devInfo.ip || 'Unknown'}`
   });
   if (item.scanHistory.length > 50) {
     item.scanHistory = item.scanHistory.slice(0, 50);
@@ -862,7 +873,7 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
     inventoryItem: item._id,
     productName: item.productName,
     sku: item.sku,
-    barcode: item.barcode || code,
+    barcode: rawCode,
     deviceType: devInfo.deviceType,
     deviceModel: devInfo.deviceModel,
     os: devInfo.os,
@@ -880,15 +891,13 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
       item: {
         _id: item._id,
         productName: item.productName,
-        sku: item.sku,
         barcode: item.barcode,
+        scannedCode: rawCode,
+        scannedUnitNumber: unitNum,
+        totalQuantity: item.quantity,
+        labelTemplate: item.labelTemplate,
         quantity: item.quantity,
         unitPrice: item.unitPrice,
-        category: item.category,
-        location: item.location,
-        batchNumber: item.batchNumber,
-        manufacturingDate: item.manufacturingDate,
-        expiryDate: item.expiryDate,
         status: item.status,
         notes: item.notes,
         totalScanCount: item.totalScanCount,

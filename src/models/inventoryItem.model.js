@@ -81,6 +81,19 @@ const inventoryItemSchema = new mongoose.Schema(
       trim: true,
       default: ''
     },
+    labelTemplate: {
+      designUrl: { type: String, default: '' },
+      fileName: { type: String, default: '' },
+      fileType: { type: String, default: 'image' },
+      placement: {
+        x: { type: Number, default: 77 },
+        y: { type: Number, default: 71 },
+        width: { type: Number, default: 19 },
+        height: { type: Number, default: 24 },
+        hasWhiteBg: { type: Boolean, default: true },
+        includeLabelNumber: { type: Boolean, default: true }
+      }
+    },
     lastScannedAt: {
       type: Date,
       default: null
