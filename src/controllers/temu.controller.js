@@ -1331,6 +1331,9 @@ exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
               'https://openapi-b-us.temu.com/openapi/router'
             ];
 
+            let temuIssueSuccess = false;
+            let lastTemuIssueError = null;
+
             for (const rUrl of routerUrls) {
               try {
                 const apiRes = await httpFetch(rUrl, {
@@ -1340,10 +1343,19 @@ exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
                   timeout: 10000
                 });
                 if (apiRes && apiRes.ok) {
-                  console.log(`✅ Submitted fulfillment appeal and image proof to Temu router at ${rUrl} for issue ${issueDoc.issueId}`);
-                  break;
+                  const data = await apiRes.json().catch(() => ({}));
+                  const isSuccess = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
+                  if (isSuccess) {
+                    console.log(`✅ Submitted fulfillment appeal and image proof to Temu router at ${rUrl} for issue ${issueDoc.issueId}`);
+                    temuIssueSuccess = true;
+                    break;
+                  } else {
+                    lastTemuIssueError = `${data.errorMsg || data.error_msg || 'Unknown error'} (code: ${data.errorCode || data.error_code})`;
+                    console.warn(`⚠️ Temu rejected fulfillment issue appeal at ${rUrl}: ${lastTemuIssueError}`);
+                  }
                 }
               } catch (subErr) {
+                lastTemuIssueError = subErr.message;
                 console.warn(`Temu fulfillment router submission warning at ${rUrl}:`, subErr.message);
               }
             }
@@ -1357,7 +1369,7 @@ exports.resolveTemuFulfillmentIssue = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: 'Fulfillment issue appeal and image proof successfully submitted to Temu!',
+    message: 'Fulfillment issue appeal and image proof recorded in system!',
     data: { issue: issueDoc }
   });
 });

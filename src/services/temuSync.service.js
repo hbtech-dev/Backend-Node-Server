@@ -1499,8 +1499,14 @@ const submitTemuReturnResolution = async (integration, returnDoc, action, answer
         timeout: 10000
       });
       if (response && response.ok) {
-        console.log(`✅ Submitted return resolution (${action}) with image to Temu router at ${url} for Return ${returnDoc.returnId}: "${answerText}"`);
-        return true;
+        const data = await response.json().catch(() => ({}));
+        const isSuccess = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
+        if (isSuccess) {
+          console.log(`✅ Submitted return resolution (${action}) with image to Temu router at ${url} for Return ${returnDoc.returnId}: "${answerText}"`);
+          return true;
+        } else {
+          console.warn(`⚠️ Temu rejected return resolution (${action}) at ${url}: ${data.errorMsg || data.error_msg || 'Failed'} (code: ${data.errorCode || data.error_code})`);
+        }
       }
     } catch (e) {
       console.warn(`Temu return submission error at ${url}:`, e.message);

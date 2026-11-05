@@ -625,6 +625,9 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
         'https://openapi-b-global.temu.com/openapi/router',
         'https://openapi-b-us.temu.com/openapi/router'
       ];
+      let temuPostedSuccessfully = false;
+      let lastTemuError = null;
+
       for (const routerUrl of routerUrls) {
         try {
           const rRes = await httpFetch(routerUrl, {
@@ -634,10 +637,20 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
             timeout: 10000
           });
           if (rRes && rRes.ok) {
-            console.log(`✅ Posted response & image to Temu for Ticket ${ticket.ticketId} at ${routerUrl}`);
-            break;
+            const data = await rRes.json().catch(() => ({}));
+            const isSuccess = data.success === true || data.errorCode === 1000000 || data.errorCode === 0;
+            if (isSuccess) {
+              console.log(`✅ Posted response & image to Temu for Ticket ${ticket.ticketId} at ${routerUrl}`);
+              temuPostedSuccessfully = true;
+              break;
+            } else {
+              lastTemuError = `${data.errorMsg || data.error_msg || 'Unknown error'} (code: ${data.errorCode || data.error_code})`;
+              console.warn(`⚠️ Temu API error posting ticket ${ticket.ticketId} at ${routerUrl}: ${lastTemuError}`);
+            }
           }
-        } catch (_) {}
+        } catch (fetchErr) {
+          lastTemuError = fetchErr.message;
+        }
       }
     } catch (err) {
       console.warn('Temu ticket reply POST warning:', err.message);
@@ -681,7 +694,11 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: 'Response and image proof successfully submitted to Temu and ticket resolved!',
+    message: temuPostedSuccessfully
+      ? 'Response and image proof successfully submitted to Temu and ticket resolved!'
+      : `Response recorded in system. Temu API status: ${lastTemuError || 'Awaiting Temu API permission approval.'}`,
+    temuSyncSuccess: temuPostedSuccessfully,
+    temuError: lastTemuError,
     data: {
       ticket
     }
