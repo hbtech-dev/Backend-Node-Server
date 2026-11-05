@@ -459,14 +459,14 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   const userId = req.user._id || req.user.id;
 
   let filter = { user: userId };
-  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
   if (req.query.status === 'activity') {
     filter.status = 'created_label';
     filter.$or = [
-      { shippedAt: { $lte: threeDaysAgo } },
-      { shippedAt: null, updatedAt: { $lte: threeDaysAgo } },
-      { shippedAt: null, createdAt: { $lte: threeDaysAgo } }
+      { shippedAt: { $lte: twoDaysAgo } },
+      { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+      { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
     ];
   } else if (req.query.status) {
     filter.status = req.query.status;
@@ -480,9 +480,9 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
       user: userId,
       status: 'created_label',
       $or: [
-        { shippedAt: { $lte: threeDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: threeDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: threeDaysAgo } }
+        { shippedAt: { $lte: twoDaysAgo } },
+        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
       ]
     });
 

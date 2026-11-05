@@ -480,12 +480,12 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
   if (mongoose.connection.readyState === 1) {
     const userId = user._id || req.user.id;
     const filter = { user: userId };
-    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
     if (req.query.status === 'activity') {
-      // Activity: Orders where shipping label was generated > 3 days ago, but still NOT dispatched
+      // Activity: Orders where shipping label was generated > 2 days ago, but still NOT dispatched
       filter.status = 'created_label';
-      const days = req.query.days !== undefined ? parseInt(req.query.days, 10) : 3;
+      const days = req.query.days !== undefined ? parseInt(req.query.days, 10) : 2;
       if (days > 0) {
         const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
         filter.$or = [
@@ -568,9 +568,9 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       user: userId,
       status: 'created_label',
       $or: [
-        { shippedAt: { $lte: threeDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: threeDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: threeDaysAgo } }
+        { shippedAt: { $lte: twoDaysAgo } },
+        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
       ]
     });
 
