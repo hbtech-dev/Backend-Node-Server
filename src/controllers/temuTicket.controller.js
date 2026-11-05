@@ -595,6 +595,8 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
 
   // Find the exact regional store matching the ticket
   const integration = findStoreForTicket(user, ticket);
+  let temuPostedSuccessfully = false;
+  let lastTemuError = null;
 
   if (integration && integration.isConnected) {
     try {
@@ -626,8 +628,6 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
         'https://openapi-b-global.temu.com/openapi/router',
         'https://openapi-b-us.temu.com/openapi/router'
       ];
-      let temuPostedSuccessfully = false;
-      let lastTemuError = null;
 
       for (const routerUrl of routerUrls) {
         try {
