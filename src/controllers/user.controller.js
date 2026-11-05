@@ -1,6 +1,8 @@
 const User = require('../models/user.model');
 const Invoice = require('../models/invoice.model');
 const Notification = require('../models/notification.model');
+const TemuOrder = require('../models/temuOrder.model');
+const EbayOrder = require('../models/ebayOrder.model');
 const stripeService = require('../services/stripe.service');
 const emailService = require('../services/email.service');
 const AppError = require('../utils/appError');
@@ -407,6 +409,58 @@ exports.getAdminOverview = catchAsync(async (req, res, next) => {
 
   const companiesSummary = Object.values(companyMap).sort((a, b) => b.totalBalance - a.totalBalance);
 
+  // System-wide order, label, unshipped, and activity metrics
+  const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
+
+  const [
+    temuOpen,
+    temuLabels,
+    temuActivity,
+    temuTotal,
+    ebayOpen,
+    ebayLabels,
+    ebayTotal,
+    dhlCount,
+    packetaCount
+  ] = await Promise.all([
+    TemuOrder.countDocuments({ status: 'open' }),
+    TemuOrder.countDocuments({ status: { $in: ['created_label', 'printed'] } }),
+    TemuOrder.countDocuments({
+      status: 'created_label',
+      $or: [
+        { shippedAt: { $lte: twoDaysAgo } },
+        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+      ]
+    }),
+    TemuOrder.countDocuments({}),
+    EbayOrder.countDocuments({ status: 'open' }),
+    EbayOrder.countDocuments({ status: { $in: ['created_label', 'printed'] } }),
+    EbayOrder.countDocuments({}),
+    TemuOrder.countDocuments({
+      status: { $in: ['created_label', 'printed'] },
+      $or: [
+        { temuCourierName: { $regex: 'dhl', $options: 'i' } },
+        { shippingMethod: { $regex: 'dhl', $options: 'i' } },
+        { dhlShipmentId: { $exists: true, $ne: '' } }
+      ]
+    }),
+    TemuOrder.countDocuments({
+      status: { $in: ['created_label', 'printed'] },
+      $or: [
+        { temuCourierName: { $regex: 'packeta', $options: 'i' } },
+        { shippingMethod: { $regex: 'packeta', $options: 'i' } },
+        { tracking: { $regex: '^Z', $options: 'i' } },
+        { packetaPacketId: { $exists: true, $ne: '' } }
+      ]
+    })
+  ]);
+
+  const totalOrders = temuTotal + ebayTotal;
+  const totalUnshipped = temuOpen + ebayOpen;
+  const totalLabelsCreated = temuLabels + ebayLabels;
+  const totalActivity = temuActivity;
+
   res.status(200).json({
     status: 'success',
     data: {
@@ -416,7 +470,20 @@ exports.getAdminOverview = catchAsync(async (req, res, next) => {
       inactiveUsersCount,
       totalCompanies: companiesSummary.length,
       companiesSummary,
-      recentUsers: users.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8)
+      recentUsers: users.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8),
+      // System-wide order fulfillment metrics
+      totalOrders,
+      totalUnshipped,
+      totalLabelsCreated,
+      totalActivity,
+      shippingStats: {
+        temu: { open: temuOpen, labels: temuLabels, activity: temuActivity, total: temuTotal },
+        ebay: { open: ebayOpen, labels: ebayLabels, total: ebayTotal },
+        carriers: {
+          dhl: dhlCount + ebayLabels,
+          packeta: packetaCount
+        }
+      }
     }
   });
 });
