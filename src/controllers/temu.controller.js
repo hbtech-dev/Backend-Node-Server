@@ -483,16 +483,33 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
     if (req.query.status === 'activity') {
-      // Activity: Orders where shipping label was generated > 2 days ago, but still NOT dispatched
-      filter.status = 'created_label';
+      // Activity: Orders where shipping label was generated > 2 days ago (either in created_label or printed with tracking & shippedAt > 2 days ago)
       const days = req.query.days !== undefined ? parseInt(req.query.days, 10) : 2;
-      if (days > 0) {
-        const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
-        filter.$or = [
-          { shippedAt: { $lte: cutoffDate } },
-          { shippedAt: null, updatedAt: { $lte: cutoffDate } },
-          { shippedAt: null, createdAt: { $lte: cutoffDate } }
-        ];
+      const cutoffDate = new Date(Date.now() - (days > 0 ? days : 2) * 24 * 60 * 60 * 1000);
+
+      const activityCondition = {
+        $or: [
+          {
+            status: 'created_label',
+            $or: [
+              { shippedAt: { $lte: cutoffDate } },
+              { shippedAt: null, updatedAt: { $lte: cutoffDate } },
+              { shippedAt: null, createdAt: { $lte: cutoffDate } }
+            ]
+          },
+          {
+            status: 'printed',
+            tracking: { $exists: true, $ne: '' },
+            shippedAt: { $ne: null, $lte: cutoffDate }
+          }
+        ]
+      };
+
+      if (filter.$or) {
+        filter.$and = [{ $or: filter.$or }, activityCondition];
+        delete filter.$or;
+      } else {
+        filter.$or = activityCondition.$or;
       }
     } else if (req.query.status) {
       filter.status = req.query.status;
@@ -566,11 +583,20 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
     const activityCountPromise = TemuOrder.countDocuments({
       user: userId,
-      status: 'created_label',
       $or: [
-        { shippedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+        {
+          status: 'created_label',
+          $or: [
+            { shippedAt: { $lte: twoDaysAgo } },
+            { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+          ]
+        },
+        {
+          status: 'printed',
+          tracking: { $exists: true, $ne: '' },
+          shippedAt: { $ne: null, $lte: twoDaysAgo }
+        }
       ]
     });
 

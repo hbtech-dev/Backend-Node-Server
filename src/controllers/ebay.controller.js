@@ -462,11 +462,20 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
   if (req.query.status === 'activity') {
-    filter.status = 'created_label';
     filter.$or = [
-      { shippedAt: { $lte: twoDaysAgo } },
-      { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-      { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+      {
+        status: 'created_label',
+        $or: [
+          { shippedAt: { $lte: twoDaysAgo } },
+          { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+          { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+        ]
+      },
+      {
+        status: 'printed',
+        tracking: { $exists: true, $ne: '' },
+        shippedAt: { $ne: null, $lte: twoDaysAgo }
+      }
     ];
   } else if (req.query.status) {
     filter.status = req.query.status;
@@ -478,11 +487,20 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   if (mongoose.connection.readyState === 1) {
     const activityCountPromise = EbayOrder.countDocuments({
       user: userId,
-      status: 'created_label',
       $or: [
-        { shippedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+        {
+          status: 'created_label',
+          $or: [
+            { shippedAt: { $lte: twoDaysAgo } },
+            { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+          ]
+        },
+        {
+          status: 'printed',
+          tracking: { $exists: true, $ne: '' },
+          shippedAt: { $ne: null, $lte: twoDaysAgo }
+        }
       ]
     });
 
