@@ -15,6 +15,24 @@ const errorHandler = (err, req, res, next) => {
       stack: err.stack
     });
   } else {
+    // Treat known client-side errors as operational
+    if (err.name === 'CastError') {
+      err.statusCode = 400;
+      err.status = 'fail';
+      err.message = `Invalid ${err.path}: ${err.value}`;
+      err.isOperational = true;
+    }
+    if (err.name === 'ValidationError') {
+      err.statusCode = 400;
+      err.status = 'fail';
+      err.isOperational = true;
+    }
+    if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
+      err.statusCode = 401;
+      err.status = 'fail';
+      err.isOperational = true;
+    }
+
     if (err.isOperational) {
       res.status(err.statusCode).json({
         status: err.status,

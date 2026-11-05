@@ -737,7 +737,9 @@ exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
 
   const mongoose = require('mongoose');
   if (mongoose.connection.readyState === 1) {
-    const returnDoc = await TemuReturn.findOne({ _id: id, user: req.user.id }) || await TemuReturn.findOne({ returnId: id, user: req.user.id });
+    const isObjectId = mongoose.isValidObjectId(id);
+    const returnDoc = (isObjectId ? await TemuReturn.findOne({ _id: id, user: req.user.id }) : null) ||
+                      await TemuReturn.findOne({ returnId: id, user: req.user.id });
     if (returnDoc) {
       if (action === 'approve') returnDoc.status = 'approved';
       else if (action === 'reject') returnDoc.status = 'rejected';

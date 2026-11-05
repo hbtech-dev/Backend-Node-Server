@@ -580,8 +580,9 @@ exports.replyToTicket = catchAsync(async (req, res, next) => {
 
   let ticket = null;
   if (mongoose.connection.readyState === 1) {
-    ticket = await TemuTicket.findOne({ _id: ticketId, user: req.user.id }) ||
-             await TemuTicket.findOne({ ticketId, user: req.user.id });
+    const isObjectId = mongoose.isValidObjectId(ticketId);
+    ticket = (isObjectId ? await TemuTicket.findOne({ _id: ticketId, user: req.user.id }) : null) ||
+             await TemuTicket.findOne({ ticketId: String(ticketId), user: req.user.id });
   }
 
   if (!ticket) {
@@ -873,9 +874,13 @@ exports.autoReplyTicketWithAi = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
+  const isObjectId = mongoose.isValidObjectId(ticketId);
   const ticket = await TemuTicket.findOne({
     user: user._id,
-    $or: [{ _id: ticketId }, { ticketId }]
+    $or: [
+      ...(isObjectId ? [{ _id: ticketId }] : []),
+      { ticketId: String(ticketId) }
+    ]
   });
 
   if (!ticket) {
@@ -947,9 +952,13 @@ exports.draftTicketAiResponse = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
+  const isObjectId = mongoose.isValidObjectId(ticketId);
   const ticket = await TemuTicket.findOne({
     user: user._id,
-    $or: [{ _id: ticketId }, { ticketId }]
+    $or: [
+      ...(isObjectId ? [{ _id: ticketId }] : []),
+      { ticketId: String(ticketId) }
+    ]
   });
 
   if (!ticket) {
