@@ -365,7 +365,11 @@ exports.updateCountryCarrierRules = catchAsync(async (req, res, next) => {
  * Get agency overview: aggregate balance across all accounts, user counts, companies summary
  */
 exports.getAdminOverview = catchAsync(async (req, res, next) => {
-  const users = await User.find({}, 'email username fullName companyName balance role allowedPages isActive createdAt subscription');
+  // Exclude agency master admin from managed users aggregate
+  const users = await User.find(
+    { role: { $ne: 'admin' }, email: { $ne: 'admin@ederapp.de' } },
+    'email username fullName companyName balance role allowedPages isActive createdAt subscription'
+  );
 
   let totalSystemBalance = 0;
   let activeUsersCount = 0;
@@ -423,7 +427,14 @@ exports.getAdminOverview = catchAsync(async (req, res, next) => {
 exports.getAdminUsers = catchAsync(async (req, res, next) => {
   const { q, company, role, status } = req.query;
 
-  const query = {};
+  // Never return the master admin in the client/operator user directory
+  const query = {
+    role: { $ne: 'admin' },
+    email: { $ne: 'admin@ederapp.de' }
+  };
+  if (req.user && req.user.id) {
+    query._id = { $ne: req.user.id };
+  }
 
   if (q && q.trim()) {
     const regex = new RegExp(q.trim(), 'i');
