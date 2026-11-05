@@ -481,3 +481,47 @@ exports.revertToOpen = catchAsync(async (req, res, next) => {
   });
 });
 
+/**
+ * Download / View DHL Official PDF Label
+ */
+exports.getLabelPdf = catchAsync(async (req, res, next) => {
+  const { tracking } = req.params;
+  if (!tracking) {
+    return next(new AppError('Tracking number or shipment ID is required', 400));
+  }
+
+  const cleanTrk = tracking.trim();
+  const temuOrder = await TemuOrder.findOne({
+    $or: [
+      { tracking: cleanTrk },
+      { dhlShipmentId: cleanTrk },
+      { orderNum: cleanTrk }
+    ]
+  }).lean();
+
+  const ebayOrder = !temuOrder ? await EbayOrder.findOne({
+    $or: [
+      { tracking: cleanTrk },
+      { dhlShipmentId: cleanTrk },
+      { orderNum: cleanTrk }
+    ]
+  }).lean() : null;
+
+  const order = temuOrder || ebayOrder;
+  if (order && order.dhlLabelUrl && typeof order.dhlLabelUrl === 'string' && order.dhlLabelUrl.startsWith('data:application/pdf')) {
+    const parts = order.dhlLabelUrl.split(',');
+    const b64 = parts[1] || parts[0];
+    const pdfBuf = Buffer.from(b64, 'base64');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="dhl_label_${cleanTrk}.pdf"`);
+    return res.send(pdfBuf);
+  }
+
+  if (order && order.dhlLabelUrl && typeof order.dhlLabelUrl === 'string' && order.dhlLabelUrl.startsWith('http') && !order.dhlLabelUrl.includes('shipstation.dhl.com')) {
+    return res.redirect(order.dhlLabelUrl);
+  }
+
+  return next(new AppError(`DHL PDF label not found for tracking: ${cleanTrk}`, 404));
+});
+
+
