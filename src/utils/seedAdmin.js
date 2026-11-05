@@ -50,14 +50,12 @@ async function seedAdmin() {
       console.log('✅ Default Agency Admin refreshed & role verified.');
     }
 
-    // Also ensure edergmbh01@gmail.com has admin role as secondary owner
-    const ederUser = await User.findOne({ email: 'edergmbh01@gmail.com' });
-    if (ederUser) {
-      ederUser.role = 'admin';
-      ederUser.allowedPages = allPages;
-      await ederUser.save();
-      console.log('✅ edergmbh01@gmail.com also promoted to admin.');
-    }
+    // Ensure all other users are strictly regular 'user' role
+    await User.updateMany(
+      { email: { $ne: defaultAdminEmail } },
+      { $set: { role: 'user' } }
+    );
+    console.log('✅ Verified: only admin@ederapp.de has admin role. All others set to user.');
 
     console.log('\n--- ADMIN CREDENTIALS ---');
     console.log('Email:    admin@ederapp.de');
