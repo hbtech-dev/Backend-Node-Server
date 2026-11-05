@@ -509,29 +509,33 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
         const pm = detail.parentOrderMap || {};
         const ol = (detail.orderList || [])[0] || {};
 
-        // If Temu detail confirms this order is already shipped (status 4) or completed (status 5), mark it printed immediately
+        // If Temu detail confirms this order is already shipped (status 4) or completed (status 5), mark it printed (unless awaiting warehouse dispatch in created_label)
         const orderCurrentStatus = pm.parentOrderStatus ?? detail.parentOrderStatus;
         if (orderCurrentStatus === 4 || orderCurrentStatus === 5) {
           const detailTracking = (
             pm.trackingNo || pm.tracking_no || pm.waybillNo || pm.waybill_no || pm.expressNo || pm.express_no ||
             detail.trackingNo || detail.tracking_no || ol.trackingNo || ol.tracking_no || ''
           );
-          const $set = { status: 'printed', manuallyRevertedToOpen: false };
+          const $set = { manuallyRevertedToOpen: false };
           if (detailTracking) {
             $set.tracking = detailTracking;
             $set.qrCodeData = `https://shipstation.dhl.com/track/${detailTracking}`;
           }
-          TemuOrder.updateOne(
-            {
-              $or: [
-                { orderNum: rawOrderSn },
-                { orderNum: fullSn },
-                { orderNum: cleanSn },
-                { temuOrderId: cleanSn }
-              ]
-            },
-            { $set }
-          ).catch(err => console.warn('Error auto-marking shipped order:', err.message));
+          const query = {
+            $or: [
+              { orderNum: rawOrderSn },
+              { orderNum: fullSn },
+              { orderNum: cleanSn },
+              { temuOrderId: cleanSn }
+            ]
+          };
+          if (orderCurrentStatus === 4) {
+            query.status = { $ne: 'created_label' };
+            $set.status = 'printed';
+          } else {
+            $set.status = 'printed';
+          }
+          TemuOrder.updateOne(query, { $set }).catch(err => console.warn('Error auto-marking shipped order:', err.message));
         }
 
         const isDirectAddressObject = Boolean(
@@ -701,24 +705,28 @@ const syncUserTemuOrders = async (user) => {
         const cleanSn = orderSn.replace(/^PO-/i, '');
 
         if (status === 4 || status === 5) {
-          const $set = { status: 'printed', manuallyRevertedToOpen: false };
+          const $set = { manuallyRevertedToOpen: false };
           if (trackingNo) {
             $set.tracking = trackingNo;
             $set.qrCodeData = `https://shipstation.dhl.com/track/${trackingNo}`;
           }
-          await TemuOrder.updateOne(
-            {
-              user: user._id,
-              $or: [
-                { orderNum: orderSn },
-                { orderNum: fullSn },
-                { orderNum: cleanSn },
-                { temuOrderId: cleanSn },
-                { temuOrderId: fullSn }
-              ]
-            },
-            { $set }
-          );
+          const query = {
+            user: user._id,
+            $or: [
+              { orderNum: orderSn },
+              { orderNum: fullSn },
+              { orderNum: cleanSn },
+              { temuOrderId: cleanSn },
+              { temuOrderId: fullSn }
+            ]
+          };
+          if (status === 4) {
+            query.status = { $ne: 'created_label' };
+            $set.status = 'printed';
+          } else {
+            $set.status = 'printed';
+          }
+          await TemuOrder.updateOne(query, { $set });
         } else if (status === 3) {
           await TemuOrder.updateOne(
             {
