@@ -474,15 +474,57 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
   );
 
   let orders = [];
-  const counts = { open: 0, created_label: 0, printed: 0, canceled: 0, total: 0 };
+  const counts = { open: 0, created_label: 0, printed: 0, canceled: 0, activity: 0, total: 0 };
   let pagination = null;
 
   if (mongoose.connection.readyState === 1) {
     const userId = user._id || req.user.id;
     const filter = { user: userId };
+    const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
 
-    if (req.query.status) {
+    if (req.query.status === 'activity') {
+      // Activity: Orders where shipping label was generated > 3 days ago, but still NOT dispatched
+      filter.status = 'created_label';
+      const days = req.query.days !== undefined ? parseInt(req.query.days, 10) : 3;
+      if (days > 0) {
+        const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+        filter.$or = [
+          { shippedAt: { $lte: cutoffDate } },
+          { shippedAt: null, updatedAt: { $lte: cutoffDate } },
+          { shippedAt: null, createdAt: { $lte: cutoffDate } }
+        ];
+      }
+    } else if (req.query.status) {
       filter.status = req.query.status;
+    }
+
+    if (req.query.carrier && req.query.carrier !== 'all') {
+      const c = req.query.carrier.toLowerCase();
+      if (c === 'packeta') {
+        const packetaCond = [
+          { temuCourierName: { $regex: 'packeta', $options: 'i' } },
+          { shippingMethod: { $regex: 'packeta', $options: 'i' } },
+          { tracking: { $regex: '^Z', $options: 'i' } }
+        ];
+        if (filter.$or) {
+          filter.$and = [ { $or: filter.$or }, { $or: packetaCond } ];
+          delete filter.$or;
+        } else {
+          filter.$or = packetaCond;
+        }
+      } else if (c === 'dhl') {
+        const dhlCond = [
+          { temuCourierName: { $regex: 'dhl', $options: 'i' } },
+          { shippingMethod: { $regex: 'dhl', $options: 'i' } },
+          { dhlShipmentId: { $exists: true, $ne: '' } }
+        ];
+        if (filter.$or) {
+          filter.$and = [ { $or: filter.$or }, { $or: dhlCond } ];
+          delete filter.$or;
+        } else {
+          filter.$or = dhlCond;
+        }
+      }
     }
 
     if (req.query.country && req.query.country !== 'all') {
@@ -491,11 +533,17 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
 
     if (req.query.search && req.query.search.trim()) {
       const s = req.query.search.trim();
-      filter.$or = [
+      const searchCond = [
         { orderNum: { $regex: s, $options: 'i' } },
         { name: { $regex: s, $options: 'i' } },
         { tracking: { $regex: s, $options: 'i' } }
       ];
+      if (filter.$or) {
+        filter.$and = [ ...(filter.$and || []), { $or: filter.$or }, { $or: searchCond } ];
+        delete filter.$or;
+      } else {
+        filter.$or = searchCond;
+      }
     }
 
     const page = parseInt(req.query.page, 10);
@@ -504,31 +552,42 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     let sortObj = { createdAt: -1 };
     if (filter.status === 'printed') {
       sortObj = { shippedAt: -1, updatedAt: -1, createdAt: -1 };
+    } else if (req.query.status === 'activity') {
+      sortObj = { shippedAt: 1, updatedAt: 1, createdAt: 1 };
     }
 
     let query = TemuOrder.find(filter).sort(sortObj).lean();
 
-    // Run status counts aggregation and order retrieval in parallel
+    // Run status counts aggregation and activity overdue count in parallel
     const countsPromise = TemuOrder.aggregate([
       { $match: { user: userId } },
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
+
+    const activityCountPromise = TemuOrder.countDocuments({
+      user: userId,
+      status: 'created_label',
+      $or: [
+        { shippedAt: { $lte: threeDaysAgo } },
+        { shippedAt: null, updatedAt: { $lte: threeDaysAgo } },
+        { shippedAt: null, createdAt: { $lte: threeDaysAgo } }
+      ]
+    });
 
     let ordersPromise;
     let countFilteredPromise = null;
 
     if (page && limit && limit > 0) {
       const skip = (page - 1) * limit;
-      if ((req.query.country && req.query.country !== 'all') || req.query.search) {
-        countFilteredPromise = TemuOrder.countDocuments(filter);
-      }
+      countFilteredPromise = TemuOrder.countDocuments(filter);
       ordersPromise = query.skip(skip).limit(limit);
     } else {
       ordersPromise = query;
     }
 
-    const [countsAgg, fetchedOrders, totalFiltered] = await Promise.all([
+    const [countsAgg, activityCount, fetchedOrders, totalFiltered] = await Promise.all([
       countsPromise,
+      activityCountPromise,
       ordersPromise,
       countFilteredPromise ? countFilteredPromise : Promise.resolve(null)
     ]);
@@ -539,6 +598,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       }
       counts.total += c.count;
     });
+    counts.activity = activityCount || 0;
 
     orders = fetchedOrders;
 

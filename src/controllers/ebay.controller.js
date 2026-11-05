@@ -459,20 +459,40 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   const userId = req.user._id || req.user.id;
 
   let filter = { user: userId };
-  if (req.query.status) {
+  const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+
+  if (req.query.status === 'activity') {
+    filter.status = 'created_label';
+    filter.$or = [
+      { shippedAt: { $lte: threeDaysAgo } },
+      { shippedAt: null, updatedAt: { $lte: threeDaysAgo } },
+      { shippedAt: null, createdAt: { $lte: threeDaysAgo } }
+    ];
+  } else if (req.query.status) {
     filter.status = req.query.status;
   }
 
   let orders = [];
-  let counts = { open: 0, created_label: 0, printed: 0, canceled: 0 };
+  let counts = { open: 0, created_label: 0, printed: 0, canceled: 0, activity: 0 };
 
   if (mongoose.connection.readyState === 1) {
-    const [foundOrders, countsAgg] = await Promise.all([
+    const activityCountPromise = EbayOrder.countDocuments({
+      user: userId,
+      status: 'created_label',
+      $or: [
+        { shippedAt: { $lte: threeDaysAgo } },
+        { shippedAt: null, updatedAt: { $lte: threeDaysAgo } },
+        { shippedAt: null, createdAt: { $lte: threeDaysAgo } }
+      ]
+    });
+
+    const [foundOrders, countsAgg, activityCount] = await Promise.all([
       EbayOrder.find(filter).sort({ createdAt: -1 }).lean(),
       EbayOrder.aggregate([
         { $match: { user: userId } },
         { $group: { _id: "$status", count: { $sum: 1 } } }
-      ])
+      ]),
+      activityCountPromise
     ]);
     orders = foundOrders;
     countsAgg.forEach(c => {
@@ -480,6 +500,7 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
         counts[c._id] = c.count;
       }
     });
+    counts.activity = activityCount || 0;
   }
 
   res.status(200).json({
