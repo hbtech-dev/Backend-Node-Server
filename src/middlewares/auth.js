@@ -65,4 +65,13 @@ const auth = catchAsync(async (req, res, next) => {
   next();
 });
 
+const requireAdmin = (req, res, next) => {
+  if (!req.user || req.user.role !== 'admin') {
+    return next(new AppError('Access denied: Administrator rights required.', 403));
+  }
+  next();
+};
+
+auth.requireAdmin = requireAdmin;
+
 module.exports = auth;

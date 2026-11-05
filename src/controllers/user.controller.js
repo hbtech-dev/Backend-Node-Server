@@ -354,3 +354,421 @@ exports.updateCountryCarrierRules = catchAsync(async (req, res, next) => {
     }
   });
 });
+
+/**
+ * ============================================================================
+ * AGENCY ADMIN CONTROLLER METHODS (Single Agency Admin for All Accounts)
+ * ============================================================================
+ */
+
+/**
+ * Get agency overview: aggregate balance across all accounts, user counts, companies summary
+ */
+exports.getAdminOverview = catchAsync(async (req, res, next) => {
+  const users = await User.find({}, 'email username fullName companyName balance role allowedPages isActive createdAt subscription');
+
+  let totalSystemBalance = 0;
+  let activeUsersCount = 0;
+  let inactiveUsersCount = 0;
+  const companyMap = {};
+
+  users.forEach(u => {
+    const bal = Number(u.balance) || 0;
+    totalSystemBalance += bal;
+    if (u.isActive !== false) {
+      activeUsersCount++;
+    } else {
+      inactiveUsersCount++;
+    }
+
+    const compName = (u.companyName && u.companyName.trim()) ? u.companyName.trim() : 'Unassigned / Independent';
+    if (!companyMap[compName]) {
+      companyMap[compName] = {
+        name: compName,
+        totalBalance: 0,
+        userCount: 0,
+        users: []
+      };
+    }
+    companyMap[compName].totalBalance += bal;
+    companyMap[compName].userCount += 1;
+    companyMap[compName].users.push({
+      id: u._id,
+      email: u.email,
+      fullName: u.fullName || u.username,
+      balance: bal,
+      role: u.role
+    });
+  });
+
+  const companiesSummary = Object.values(companyMap).sort((a, b) => b.totalBalance - a.totalBalance);
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      totalSystemBalance: Number(totalSystemBalance.toFixed(2)),
+      totalUsers: users.length,
+      activeUsersCount,
+      inactiveUsersCount,
+      totalCompanies: companiesSummary.length,
+      companiesSummary,
+      recentUsers: users.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)).slice(0, 8)
+    }
+  });
+});
+
+/**
+ * Get all users with search, filtering by company, role, or active status
+ */
+exports.getAdminUsers = catchAsync(async (req, res, next) => {
+  const { q, company, role, status } = req.query;
+
+  const query = {};
+
+  if (q && q.trim()) {
+    const regex = new RegExp(q.trim(), 'i');
+    query.$or = [
+      { email: regex },
+      { username: regex },
+      { fullName: regex },
+      { companyName: regex }
+    ];
+  }
+
+  if (company && company !== 'all') {
+    if (company === '__unassigned__') {
+      query.$or = [{ companyName: '' }, { companyName: { $exists: false } }, { companyName: null }];
+    } else {
+      query.companyName = company;
+    }
+  }
+
+  if (role && role !== 'all') {
+    query.role = role;
+  }
+
+  if (status === 'active') {
+    query.isActive = true;
+  } else if (status === 'inactive') {
+    query.isActive = false;
+  }
+
+  const users = await User.find(query)
+    .sort({ createdAt: -1 })
+    .select('-password');
+
+  res.status(200).json({
+    status: 'success',
+    results: users.length,
+    data: {
+      users
+    }
+  });
+});
+
+/**
+ * Generate a new user under any account/company with specific permissions and balance
+ */
+exports.adminCreateUser = catchAsync(async (req, res, next) => {
+  const {
+    email,
+    password,
+    username,
+    fullName,
+    companyName,
+    balance,
+    role,
+    allowedPages,
+    accountType,
+    streetName,
+    houseNumber,
+    postcode,
+    cityName,
+    telephone
+  } = req.body;
+
+  if (!email || !email.includes('@')) {
+    return next(new AppError('Please provide a valid email address.', 400));
+  }
+
+  if (!password || password.length < 6) {
+    return next(new AppError('Password must be at least 6 characters long.', 400));
+  }
+
+  const cleanEmail = email.trim().toLowerCase();
+
+  const existing = await User.findOne({ email: cleanEmail });
+  if (existing) {
+    return next(new AppError('A user with this email address already exists.', 400));
+  }
+
+  let finalUsername = username ? username.trim() : cleanEmail.split('@')[0] + Math.floor(100 + Math.random() * 900);
+  const existingUsername = await User.findOne({ username: finalUsername });
+  if (existingUsername) {
+    finalUsername = `${finalUsername}_${Math.floor(10 + Math.random() * 90)}`;
+  }
+
+  const defaultPages = [
+    'stats', 'activity', 'open', 'labels', 'printed',
+    'canceled', 'issues', 'trash', 'routing', 'inventory',
+    'credit', 'invoices', 'settings'
+  ];
+
+  const newUser = await User.create({
+    email: cleanEmail,
+    password,
+    username: finalUsername,
+    fullName: fullName ? fullName.trim() : finalUsername,
+    companyName: companyName ? companyName.trim() : 'EDER Partner',
+    balance: balance !== undefined ? Math.max(0, Number(balance) || 0) : 0,
+    role: role === 'admin' ? 'admin' : 'user',
+    allowedPages: Array.isArray(allowedPages) && allowedPages.length > 0 ? allowedPages : defaultPages,
+    accountType: accountType || 'standard',
+    parentAccount: req.user?._id || null,
+    isActive: true,
+    streetName: streetName || '',
+    houseNumber: houseNumber || '',
+    postcode: postcode || '',
+    cityName: cityName || '',
+    telephone: telephone || ''
+  });
+
+  // If initial balance > 0, generate an invoice receipt
+  if (newUser.balance > 0) {
+    await Invoice.create({
+      number: `INV-INIT-${Math.floor(1000 + Math.random() * 9000)}`,
+      user: newUser._id,
+      amount: newUser.balance,
+      description: 'Initial Account Wallet Balance (Assigned by Agency Admin)',
+      paymentMethod: 'Agency Admin Allocation',
+      status: 'paid',
+      date: new Date()
+    }).catch(err => console.warn('Invoice creation warning on admin user create:', err.message));
+  }
+
+  res.status(201).json({
+    status: 'success',
+    message: 'User created successfully under account.',
+    data: {
+      user: {
+        id: newUser._id,
+        email: newUser.email,
+        username: newUser.username,
+        fullName: newUser.fullName,
+        companyName: newUser.companyName,
+        balance: newUser.balance,
+        role: newUser.role,
+        allowedPages: newUser.allowedPages,
+        accountType: newUser.accountType,
+        isActive: newUser.isActive,
+        createdAt: newUser.createdAt
+      }
+    }
+  });
+});
+
+/**
+ * Adjust/balance money for any user (topup, deduct, or set balance)
+ */
+exports.adminAdjustBalance = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { action, amount, note } = req.body;
+
+  const numAmount = parseFloat(amount);
+  if (isNaN(numAmount) || numAmount < 0) {
+    return next(new AppError('Please provide a valid non-negative amount.', 400));
+  }
+
+  const user = await User.findById(id);
+  if (!user) {
+    return next(new AppError('User not found.', 404));
+  }
+
+  const prevBalance = Number(user.balance) || 0;
+  let newBalance = prevBalance;
+
+  if (action === 'topup' || action === 'credit') {
+    newBalance = prevBalance + numAmount;
+  } else if (action === 'deduct' || action === 'debit') {
+    newBalance = Math.max(0, prevBalance - numAmount);
+  } else if (action === 'set') {
+    newBalance = numAmount;
+  } else {
+    return next(new AppError('Invalid balance action. Must be "topup", "deduct", or "set".', 400));
+  }
+
+  user.balance = Number(newBalance.toFixed(2));
+  await user.save();
+
+  const diff = Number((newBalance - prevBalance).toFixed(2));
+
+  // Create an invoice record for audit trail
+  const invoiceNumber = `ADJ-2026-${Math.floor(1000 + Math.random() * 9000)}`;
+  await Invoice.create({
+    number: invoiceNumber,
+    user: user._id,
+    amount: Math.abs(diff),
+    description: `Admin Balance Adjustment (${action.toUpperCase()}): ${note || 'Manual agency balance correction'} (Old: €${prevBalance.toFixed(2)} → New: €${newBalance.toFixed(2)})`,
+    paymentMethod: 'Agency Admin Adjustment',
+    status: 'paid',
+    date: new Date()
+  }).catch(err => console.warn('Invoice log warning on balance adjust:', err.message));
+
+  // Send in-app notification to user
+  await Notification.create({
+    title: `Wallet Balance ${diff >= 0 ? 'Credited' : 'Adjusted'} by Admin`,
+    message: `Your balance was changed by €${diff.toFixed(2)}. Current balance: €${newBalance.toFixed(2)}. Note: ${note || 'Agency Admin Adjustment'}`,
+    type: diff >= 0 ? 'success' : 'info',
+    user: user._id
+  }).catch(err => console.warn('Notification warning on balance adjust:', err.message));
+
+  res.status(200).json({
+    status: 'success',
+    message: `Balance updated successfully to €${newBalance.toFixed(2)}`,
+    data: {
+      user: {
+        id: user._id,
+        email: user.email,
+        fullName: user.fullName,
+        companyName: user.companyName,
+        balance: user.balance
+      },
+      prevBalance,
+      newBalance,
+      diff
+    }
+  });
+});
+
+/**
+ * Update user permissions (allowedPages, role, companyName, accountType)
+ */
+exports.adminUpdatePermissions = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { allowedPages, role, companyName, fullName, accountType } = req.body;
+
+  const user = await User.findById(id);
+  if (!user) {
+    return next(new AppError('User not found.', 404));
+  }
+
+  if (Array.isArray(allowedPages)) {
+    user.allowedPages = allowedPages;
+  }
+
+  if (role && ['user', 'admin'].includes(role)) {
+    user.role = role;
+  }
+
+  if (companyName !== undefined) {
+    user.companyName = companyName.trim();
+  }
+
+  if (fullName !== undefined) {
+    user.fullName = fullName.trim();
+  }
+
+  if (accountType && ['standard', 'premium', 'trial'].includes(accountType)) {
+    user.accountType = accountType;
+  }
+
+  await user.save();
+
+  res.status(200).json({
+    status: 'success',
+    message: 'User permissions and profile updated successfully.',
+    data: {
+      user: {
+        id: user._id,
+        email: user.email,
+        username: user.username,
+        fullName: user.fullName,
+        companyName: user.companyName,
+        balance: user.balance,
+        role: user.role,
+        allowedPages: user.allowedPages,
+        accountType: user.accountType,
+        isActive: user.isActive
+      }
+    }
+  });
+});
+
+/**
+ * Toggle user active/deactivated status
+ */
+exports.adminToggleStatus = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const user = await User.findById(id);
+  if (!user) {
+    return next(new AppError('User not found.', 404));
+  }
+
+  if (String(user._id) === String(req.user._id)) {
+    return next(new AppError('You cannot deactivate your own admin account.', 400));
+  }
+
+  if (req.body.isActive !== undefined) {
+    user.isActive = Boolean(req.body.isActive);
+  } else {
+    user.isActive = !user.isActive;
+  }
+
+  await user.save();
+
+  res.status(200).json({
+    status: 'success',
+    message: `User account has been ${user.isActive ? 'activated' : 'deactivated'}.`,
+    data: {
+      id: user._id,
+      email: user.email,
+      isActive: user.isActive
+    }
+  });
+});
+
+/**
+ * Admin directly resets user password
+ */
+exports.adminResetPassword = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+  const { newPassword } = req.body;
+
+  if (!newPassword || newPassword.length < 6) {
+    return next(new AppError('New password must be at least 6 characters.', 400));
+  }
+
+  const user = await User.findById(id);
+  if (!user) {
+    return next(new AppError('User not found.', 404));
+  }
+
+  user.password = newPassword;
+  await user.save();
+
+  res.status(200).json({
+    status: 'success',
+    message: `Password successfully updated for ${user.email}.`
+  });
+});
+
+/**
+ * Admin deletes a user
+ */
+exports.adminDeleteUser = catchAsync(async (req, res, next) => {
+  const { id } = req.params;
+
+  if (String(id) === String(req.user._id)) {
+    return next(new AppError('You cannot delete your own admin account.', 400));
+  }
+
+  const user = await User.findByIdAndDelete(id);
+  if (!user) {
+    return next(new AppError('User not found.', 404));
+  }
+
+  res.status(200).json({
+    status: 'success',
+    message: `User ${user.email} was deleted successfully.`
+  });
+});

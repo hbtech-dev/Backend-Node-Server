@@ -19,7 +19,18 @@ exports.register = catchAsync(async (req, res, next) => {
     return res.status(201).json({
       status: 'success',
       data: {
-        user: { id: mockId, email, username: username || 'user', fullName: fullName || 'User', balance: 0, accountType: 'standard' },
+        user: {
+          id: mockId,
+          email,
+          username: username || 'user',
+          fullName: fullName || 'User',
+          balance: 0,
+          accountType: 'standard',
+          role: 'user',
+          allowedPages: ['stats', 'activity', 'open', 'labels', 'printed', 'canceled', 'issues', 'trash', 'routing', 'inventory', 'credit', 'invoices', 'settings'],
+          parentAccount: null,
+          agencyName: ''
+        },
         token,
         refreshToken
       }
@@ -58,7 +69,16 @@ exports.register = catchAsync(async (req, res, next) => {
         companyName: user.companyName,
         balance: user.balance,
         accountType: user.accountType,
-        subscription: user.subscription
+        subscription: user.subscription,
+        role: user.role || 'user',
+        allowedPages: user.allowedPages || [
+          'stats', 'activity', 'open', 'labels', 'printed',
+          'canceled', 'issues', 'trash', 'routing', 'inventory',
+          'credit', 'invoices', 'settings'
+        ],
+        parentAccount: user.parentAccount,
+        agencyName: user.agencyName,
+        isActive: user.isActive
       },
       token,
       refreshToken
@@ -91,7 +111,18 @@ exports.login = catchAsync(async (req, res, next) => {
     return res.status(200).json({
       status: 'success',
       data: {
-        user: { id: mockId, email: cleanEmail || 'test@example.com', username: 'testuser', fullName: 'Test User', balance: 0, accountType: 'standard' },
+        user: {
+          id: mockId,
+          email: cleanEmail || 'test@example.com',
+          username: 'testuser',
+          fullName: 'Test User',
+          balance: 0,
+          accountType: 'standard',
+          role: cleanEmail.includes('admin') ? 'admin' : 'user',
+          allowedPages: ['stats', 'activity', 'open', 'labels', 'printed', 'canceled', 'issues', 'trash', 'routing', 'inventory', 'credit', 'invoices', 'settings'],
+          parentAccount: null,
+          agencyName: ''
+        },
         token,
         refreshToken
       }
@@ -121,7 +152,16 @@ exports.login = catchAsync(async (req, res, next) => {
         companyName: user.companyName,
         balance: user.balance,
         accountType: user.accountType,
-        subscription: user.subscription
+        subscription: user.subscription,
+        role: user.role || 'user',
+        allowedPages: user.allowedPages || [
+          'stats', 'activity', 'open', 'labels', 'printed',
+          'canceled', 'issues', 'trash', 'routing', 'inventory',
+          'credit', 'invoices', 'settings'
+        ],
+        parentAccount: user.parentAccount,
+        agencyName: user.agencyName,
+        isActive: user.isActive
       },
       token,
       refreshToken

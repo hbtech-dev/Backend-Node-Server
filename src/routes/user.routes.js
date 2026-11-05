@@ -52,6 +52,18 @@ router.post(
   userController.selectPlan
 );
 
+// -------------------------------------------------------------
+// Agency Admin Routes (Protected by auth.requireAdmin)
+// -------------------------------------------------------------
+router.get('/admin/overview', auth.requireAdmin, userController.getAdminOverview);
+router.get('/admin/users', auth.requireAdmin, userController.getAdminUsers);
+router.post('/admin/create-user', auth.requireAdmin, userController.adminCreateUser);
+router.patch('/admin/:id/balance', auth.requireAdmin, userController.adminAdjustBalance);
+router.patch('/admin/:id/permissions', auth.requireAdmin, userController.adminUpdatePermissions);
+router.patch('/admin/:id/status', auth.requireAdmin, userController.adminToggleStatus);
+router.patch('/admin/:id/reset-password', auth.requireAdmin, userController.adminResetPassword);
+router.delete('/admin/:id', auth.requireAdmin, userController.adminDeleteUser);
+
 router.get('/', userController.getAllUsers);
 
 router.get('/:id', userController.getUserById);

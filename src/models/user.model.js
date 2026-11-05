@@ -114,6 +114,33 @@ const userSchema = new mongoose.Schema(
       enum: ['user', 'admin'],
       default: 'user'
     },
+    allowedPages: {
+      type: [String],
+      default: [
+        'stats',
+        'activity',
+        'open',
+        'labels',
+        'printed',
+        'canceled',
+        'issues',
+        'trash',
+        'routing',
+        'inventory',
+        'credit',
+        'invoices',
+        'settings'
+      ]
+    },
+    parentAccount: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      default: null
+    },
+    agencyName: {
+      type: String,
+      default: ''
+    },
     temuIntegration: {
       isConnected: { type: Boolean, default: false },
       appKey: { type: String, default: '' },
