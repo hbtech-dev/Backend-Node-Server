@@ -483,22 +483,34 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
     const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
     if (req.query.status === 'activity') {
-      // Activity: Orders where shipping label was generated > 2 days ago, but still NOT dispatched
-      filter.status = 'created_label';
+      // Activity: Orders where shipping label was generated > 2 days ago, but still NOT physically dispatched
+      filter.status = { $in: ['created_label', 'printed'] };
+      filter.isDispatched = { $ne: true };
       const days = req.query.days !== undefined ? parseInt(req.query.days, 10) : 2;
       const cutoffDate = new Date(Date.now() - (days > 0 ? days : 2) * 24 * 60 * 60 * 1000);
+      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
-      const overdueCondition = [
-        { shippedAt: { $lte: cutoffDate } },
-        { shippedAt: null, updatedAt: { $lte: cutoffDate } },
-        { shippedAt: null, createdAt: { $lte: cutoffDate } }
+      const activityConditions = [
+        {
+          $or: [
+            { tracking: { $nin: ['', null] } },
+            { dhlShipmentId: { $nin: ['', null] } },
+            { packetaBarcode: { $nin: ['', null] } },
+            { status: 'created_label' }
+          ]
+        },
+        {
+          $or: [
+            { shippedAt: { $lte: cutoffDate, $gte: thirtyDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: cutoffDate, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+          ]
+        }
       ];
 
-      if (filter.$or) {
-        filter.$and = [{ $or: filter.$or }, { $or: overdueCondition }];
-        delete filter.$or;
+      if (filter.$and) {
+        filter.$and.push(...activityConditions);
       } else {
-        filter.$or = overdueCondition;
+        filter.$and = activityConditions;
       }
     } else if (req.query.status) {
       filter.status = req.query.status;
@@ -562,7 +574,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       sortObj = { shippedAt: 1, updatedAt: 1, createdAt: 1 };
     }
 
-    let query = TemuOrder.find(filter).sort(sortObj).lean();
+    let query = TemuOrder.find(filter).sort(sortObj).select('-dhlLabelUrl -packetaLabelUrl').lean();
 
     // Run status counts aggregation and activity overdue count in parallel
     const countsPromise = TemuOrder.aggregate([
@@ -570,13 +582,24 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
     const activityCountPromise = TemuOrder.countDocuments({
       user: userId,
-      status: 'created_label',
+      status: { $in: ['created_label', 'printed'] },
+      isDispatched: { $ne: true },
       $or: [
-        { shippedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+        { tracking: { $nin: ['', null] } },
+        { dhlShipmentId: { $nin: ['', null] } },
+        { packetaBarcode: { $nin: ['', null] } },
+        { status: 'created_label' }
+      ],
+      $and: [
+        {
+          $or: [
+            { shippedAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+          ]
+        }
       ]
     });
 

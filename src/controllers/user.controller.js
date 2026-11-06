@@ -426,11 +426,21 @@ exports.getAdminOverview = catchAsync(async (req, res, next) => {
     TemuOrder.countDocuments({ status: 'open' }),
     TemuOrder.countDocuments({ status: { $in: ['created_label', 'printed'] } }),
     TemuOrder.countDocuments({
-      status: 'created_label',
+      status: { $in: ['created_label', 'printed'] },
+      isDispatched: { $ne: true },
       $or: [
-        { shippedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+        { tracking: { $nin: ['', null] } },
+        { dhlShipmentId: { $nin: ['', null] } },
+        { packetaBarcode: { $nin: ['', null] } },
+        { status: 'created_label' }
+      ],
+      $and: [
+        {
+          $or: [
+            { shippedAt: { $lte: twoDaysAgo, $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) }, tracking: { $nin: ['', null] } }
+          ]
+        }
       ]
     }),
     TemuOrder.countDocuments({}),

@@ -158,6 +158,14 @@ const temuOrderSchema = new mongoose.Schema(
     manuallyRevertedToOpen: {
       type: Boolean,
       default: false
+    },
+    isDispatched: {
+      type: Boolean,
+      default: false
+    },
+    dispatchedAt: {
+      type: Date,
+      default: null
     }
   },
   {
@@ -168,6 +176,7 @@ const temuOrderSchema = new mongoose.Schema(
 temuOrderSchema.index({ user: 1, orderNum: 1 }, { unique: true });
 temuOrderSchema.index({ user: 1, status: 1, createdAt: -1 });
 temuOrderSchema.index({ user: 1, status: 1, shippedAt: -1, updatedAt: -1, createdAt: -1 });
+temuOrderSchema.index({ user: 1, isDispatched: 1, shippedAt: -1 });
 temuOrderSchema.index({ user: 1, status: 1, country: 1, createdAt: -1 });
 temuOrderSchema.index({ user: 1, createdAt: -1 });
 

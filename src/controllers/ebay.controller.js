@@ -461,12 +461,25 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   let filter = { user: userId };
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
+  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+
   if (req.query.status === 'activity') {
-    filter.status = 'created_label';
-    filter.$or = [
-      { shippedAt: { $lte: twoDaysAgo } },
-      { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-      { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+    filter.status = { $in: ['created_label', 'printed'] };
+    filter.isDispatched = { $ne: true };
+    filter.$and = [
+      {
+        $or: [
+          { tracking: { $nin: ['', null] } },
+          { dhlShipmentId: { $nin: ['', null] } },
+          { status: 'created_label' }
+        ]
+      },
+      {
+        $or: [
+          { shippedAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo } },
+          { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+        ]
+      }
     ];
   } else if (req.query.status) {
     filter.status = req.query.status;
@@ -478,11 +491,20 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   if (mongoose.connection.readyState === 1) {
     const activityCountPromise = EbayOrder.countDocuments({
       user: userId,
-      status: 'created_label',
+      status: { $in: ['created_label', 'printed'] },
+      isDispatched: { $ne: true },
       $or: [
-        { shippedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, updatedAt: { $lte: twoDaysAgo } },
-        { shippedAt: null, createdAt: { $lte: twoDaysAgo } }
+        { tracking: { $nin: ['', null] } },
+        { dhlShipmentId: { $nin: ['', null] } },
+        { status: 'created_label' }
+      ],
+      $and: [
+        {
+          $or: [
+            { shippedAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+          ]
+        }
       ]
     });
 

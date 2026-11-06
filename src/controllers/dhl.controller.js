@@ -362,7 +362,13 @@ exports.markPrinted = catchAsync(async (req, res, next) => {
       if (order) {
         order.status = 'printed';
         order.manuallyRevertedToOpen = false;
-        order.shippedAt = new Date();
+        if (!order.shippedAt) {
+          order.shippedAt = new Date();
+        }
+        if (req.body && req.body.isDispatched) {
+          order.isDispatched = true;
+          order.dispatchedAt = new Date();
+        }
 
         if (tracking && !order.tracking) {
           order.tracking = tracking;
@@ -447,6 +453,8 @@ exports.revertToOpen = catchAsync(async (req, res, next) => {
         qrCodeData: '',
         barcodeData: '',
         shippedAt: null,
+        isDispatched: false,
+        dispatchedAt: null,
         trackingUploadedToTemu: false
       }
     };

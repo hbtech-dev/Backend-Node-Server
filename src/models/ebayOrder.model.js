@@ -119,6 +119,14 @@ const ebayOrderSchema = new mongoose.Schema(
     temuCourierName: {
       type: String,
       default: 'DHL'
+    },
+    isDispatched: {
+      type: Boolean,
+      default: false
+    },
+    dispatchedAt: {
+      type: Date,
+      default: null
     }
   },
   {
