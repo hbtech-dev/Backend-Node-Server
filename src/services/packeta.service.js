@@ -291,11 +291,70 @@ async function fetchCarriers(apiKey) {
   });
 }
 
+/**
+ * Query current status of a Packet from Packeta API
+ */
+async function getPacketStatus(packetId, user) {
+  const apiPassword = (user && user.packetaIntegration && user.packetaIntegration.apiPassword) ||
+                      process.env.PACKETA_API_PASSWORD ||
+                      'ec486a9b163632ebedcfd2d081343eee';
+
+  const cleanId = String(packetId || '').replace(/^Z/i, '').trim();
+  if (!cleanId) return null;
+
+  const xml = `
+<packetStatus>
+    <apiPassword>${escapeXml(apiPassword)}</apiPassword>
+    <packetId>${escapeXml(cleanId)}</packetId>
+</packetStatus>
+  `.trim();
+
+  try {
+    const res = await postXml(xml);
+    const resText = res.body;
+
+    if (resText.includes('<status>ok</status>')) {
+      const codeMatch = resText.match(/<statusCode>(\d+)<\/statusCode>/);
+      const textMatch = resText.match(/<codeText>([^<]+)<\/codeText>/);
+      const statusTextMatch = resText.match(/<statusText>([\s\S]*?)<\/statusText>/);
+      const carrierMatch = resText.match(/<carrierName>([^<]+)<\/carrierName>/);
+
+      const statusCode = codeMatch ? codeMatch[1] : '';
+      const codeText = textMatch ? textMatch[1] : '';
+      const statusText = statusTextMatch ? statusTextMatch[1].replace(/<[^>]+>/g, ' ').trim() : '';
+
+      // statusCode map:
+      // '1': 'received data' (created label, awaiting physical package handover)
+      // '2': 'arrived' (arrived at Packeta depot)
+      // '4': 'departed' / in transit
+      // '5': 'ready for pickup'
+      // '6': 'handed to carrier'
+      // '7': 'delivered'
+      // '10': 'returned'
+      // '11': 'cancelled'
+      const isDispatched = ['2', '3', '4', '5', '6', '7'].includes(statusCode);
+
+      return {
+        success: true,
+        statusCode,
+        codeText,
+        statusText,
+        isDispatched,
+        carrierName: carrierMatch ? carrierMatch[1] : ''
+      };
+    }
+  } catch (err) {
+    console.warn(`Packeta packetStatus error for ${packetId}:`, err.message);
+  }
+  return null;
+}
+
 module.exports = {
   DEFAULT_CARRIERS_BY_COUNTRY,
   ALTERNATIVE_CARRIERS,
   createPacket,
   getPacketLabelPdf,
   cancelPacket,
-  fetchCarriers
+  fetchCarriers,
+  getPacketStatus
 };

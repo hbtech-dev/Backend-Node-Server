@@ -127,6 +127,22 @@ const ebayOrderSchema = new mongoose.Schema(
     dispatchedAt: {
       type: Date,
       default: null
+    },
+    carrierStatus: {
+      type: String,
+      default: ''
+    },
+    carrierStatusCode: {
+      type: String,
+      default: ''
+    },
+    carrierStatusText: {
+      type: String,
+      default: ''
+    },
+    carrierStatusCheckedAt: {
+      type: Date,
+      default: null
     }
   },
   {

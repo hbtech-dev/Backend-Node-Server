@@ -490,6 +490,42 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       const cutoffDate = new Date(Date.now() - (days > 0 ? days : 2) * 24 * 60 * 60 * 1000);
       const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
 
+      // Fast auto-reconciliation of live Packeta tracking status for stale unverified Packeta orders
+      try {
+        const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000);
+        const stalePacketaOrders = await TemuOrder.find({
+          user: userId,
+          tracking: { $regex: '^Z', $options: 'i' },
+          isDispatched: { $ne: true },
+          $or: [
+            { carrierStatusCheckedAt: null },
+            { carrierStatusCheckedAt: { $lt: tenMinAgo } }
+          ]
+        }).limit(15);
+
+        if (stalePacketaOrders.length > 0) {
+          const packetaService = require('../services/packeta.service');
+          for (const ord of stalePacketaOrders) {
+            const pStatus = await packetaService.getPacketStatus(ord.tracking, user);
+            if (pStatus && pStatus.success) {
+              const updateData = {
+                carrierStatusCode: pStatus.statusCode,
+                carrierStatus: pStatus.codeText,
+                carrierStatusText: pStatus.statusText,
+                carrierStatusCheckedAt: new Date()
+              };
+              if (pStatus.isDispatched) {
+                updateData.isDispatched = true;
+                updateData.dispatchedAt = new Date();
+              }
+              await TemuOrder.updateOne({ _id: ord._id }, { $set: updateData });
+            }
+          }
+        }
+      } catch (staleErr) {
+        console.warn('Packeta live auto-reconciliation check:', staleErr.message);
+      }
+
       const activityConditions = [
         {
           $or: [
@@ -2153,6 +2189,73 @@ exports.generateFulfillmentAppeal = catchAsync(async (req, res, next) => {
       carrier,
       orderDate,
       statusDate
+    }
+  });
+});
+
+/**
+ * Reconcile live carrier tracking status for orders in warehouse activity
+ */
+exports.syncActivityCarriers = catchAsync(async (req, res) => {
+  const user = req.user;
+  const userId = user._id || user.id;
+
+  // 1. Reconcile Packeta orders
+  const packetaService = require('../services/packeta.service');
+  const packetaOrders = await TemuOrder.find({
+    user: userId,
+    tracking: { $regex: '^Z', $options: 'i' },
+    isDispatched: { $ne: true }
+  });
+
+  let packetaDispatched = 0;
+  let packetaWaiting = 0;
+
+  for (const ord of packetaOrders) {
+    const pStatus = await packetaService.getPacketStatus(ord.tracking, user);
+    if (pStatus && pStatus.success) {
+      const updateData = {
+        carrierStatusCode: pStatus.statusCode,
+        carrierStatus: pStatus.codeText,
+        carrierStatusText: pStatus.statusText,
+        carrierStatusCheckedAt: new Date()
+      };
+      if (pStatus.isDispatched) {
+        updateData.isDispatched = true;
+        updateData.dispatchedAt = new Date();
+        packetaDispatched++;
+      } else {
+        packetaWaiting++;
+      }
+      await TemuOrder.updateOne({ _id: ord._id }, { $set: updateData });
+    }
+  }
+
+  // 2. Mark old historical printed orders (> 7 days) as dispatched
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const oldDhlResult = await TemuOrder.updateMany(
+    {
+      user: userId,
+      status: 'printed',
+      createdAt: { $lt: sevenDaysAgo },
+      isDispatched: { $ne: true }
+    },
+    {
+      $set: {
+        isDispatched: true,
+        carrierStatus: 'delivered',
+        dispatchedAt: new Date()
+      }
+    }
+  );
+
+  res.status(200).json({
+    status: 'success',
+    message: 'Carrier status synchronized successfully',
+    data: {
+      packetaDispatched,
+      packetaWaiting,
+      historicalDispatched: oldDhlResult.modifiedCount
     }
   });
 });
