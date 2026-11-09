@@ -708,7 +708,13 @@ const syncUserTemuOrders = async (user) => {
           const $set = { manuallyRevertedToOpen: false };
           if (trackingNo) {
             $set.tracking = trackingNo;
-            $set.qrCodeData = `https://shipstation.dhl.com/track/${trackingNo}`;
+            if (trackingNo.startsWith('Z')) {
+              $set.packetaBarcode = trackingNo;
+              $set.packetaPacketId = trackingNo.replace(/^Z/i, '');
+              $set.qrCodeData = `https://tracking.packeta.com/en/${trackingNo}`;
+            } else {
+              $set.qrCodeData = `https://shipstation.dhl.com/track/${trackingNo}`;
+            }
           }
           const query = {
             user: user._id,
@@ -721,7 +727,6 @@ const syncUserTemuOrders = async (user) => {
             ]
           };
           if (status === 4) {
-            query.status = { $ne: 'created_label' };
             $set.status = 'printed';
           } else {
             $set.status = 'printed';

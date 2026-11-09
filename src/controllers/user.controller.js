@@ -428,6 +428,8 @@ exports.getAdminOverview = catchAsync(async (req, res, next) => {
     TemuOrder.countDocuments({
       status: { $in: ['created_label', 'printed'] },
       isDispatched: { $ne: true },
+      carrierStatusCode: { $ne: '11' },
+      carrierStatus: { $nin: ['cancelled', 'canceled'] },
       $or: [
         { tracking: { $nin: ['', null] } },
         { dhlShipmentId: { $nin: ['', null] } },

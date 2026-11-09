@@ -514,9 +514,9 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
                 carrierStatusText: pStatus.statusText,
                 carrierStatusCheckedAt: new Date()
               };
-              if (pStatus.isDispatched) {
+              if (pStatus.isDispatched || pStatus.statusCode === '11') {
                 updateData.isDispatched = true;
-                updateData.dispatchedAt = new Date();
+                if (pStatus.isDispatched) updateData.dispatchedAt = new Date();
               }
               await TemuOrder.updateOne({ _id: ord._id }, { $set: updateData });
             }
@@ -527,6 +527,10 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       }
 
       const activityConditions = [
+        {
+          carrierStatusCode: { $ne: '11' },
+          carrierStatus: { $nin: ['cancelled', 'canceled'] }
+        },
         {
           $or: [
             { tracking: { $nin: ['', null] } },
@@ -623,6 +627,8 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       user: userId,
       status: { $in: ['created_label', 'printed'] },
       isDispatched: { $ne: true },
+      carrierStatusCode: { $ne: '11' },
+      carrierStatus: { $nin: ['cancelled', 'canceled'] },
       $or: [
         { tracking: { $nin: ['', null] } },
         { dhlShipmentId: { $nin: ['', null] } },
@@ -2224,6 +2230,9 @@ exports.syncActivityCarriers = catchAsync(async (req, res) => {
         updateData.isDispatched = true;
         updateData.dispatchedAt = new Date();
         packetaDispatched++;
+      } else if (pStatus.statusCode === '11') {
+        updateData.isDispatched = true;
+        updateData.carrierStatus = 'cancelled';
       } else {
         packetaWaiting++;
       }

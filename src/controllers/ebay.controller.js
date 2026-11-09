@@ -466,6 +466,8 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   if (req.query.status === 'activity') {
     filter.status = { $in: ['created_label', 'printed'] };
     filter.isDispatched = { $ne: true };
+    filter.carrierStatusCode = { $ne: '11' };
+    filter.carrierStatus = { $nin: ['cancelled', 'canceled'] };
     filter.$and = [
       {
         $or: [
@@ -493,6 +495,8 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
       user: userId,
       status: { $in: ['created_label', 'printed'] },
       isDispatched: { $ne: true },
+      carrierStatusCode: { $ne: '11' },
+      carrierStatus: { $nin: ['cancelled', 'canceled'] },
       $or: [
         { tracking: { $nin: ['', null] } },
         { dhlShipmentId: { $nin: ['', null] } },
