@@ -2,6 +2,7 @@
  * DHL API Integration Service
  * Supports DHL Express REST API & DHL Parcel Germany Shipping API
  */
+const AppError = require('../utils/appError');
 
 const getDhlConfig = (userDhlConfig = {}) => {
   const apiKey = userDhlConfig.apiKey || process.env.DHL_API_KEY || '';
@@ -330,10 +331,10 @@ exports.createDHLShipment = async ({ sender = {}, recipient = {}, orderNum = '',
     }
   }
 
-  // If live API was attempted and failed in production, throw error so UI/user knows real cause
+  // If live API was attempted and failed in production, throw AppError so UI/user knows real cause with 400 status
   if (apiKey && !config.isSandbox && !liveApiSuccess) {
     const dhlErr = lastDhlError || 'DHL API failed to validate or generate shipping label';
-    throw new Error(`DHL Error: ${dhlErr}`);
+    throw new AppError(`DHL Error: ${dhlErr}`, 400);
   }
 
   // High-fidelity DHL Shipment fallback result (sandbox / test mode)
