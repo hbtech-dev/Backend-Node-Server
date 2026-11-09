@@ -333,6 +333,7 @@ async function getPacketStatus(packetId, user) {
       // '10': 'returned'
       // '11': 'cancelled'
       const isDispatched = ['2', '3', '4', '5', '6', '7'].includes(statusCode);
+      const isCancelled = statusCode === '11' || statusCode === '10';
 
       return {
         success: true,
@@ -340,6 +341,7 @@ async function getPacketStatus(packetId, user) {
         codeText,
         statusText,
         isDispatched,
+        isCancelled,
         carrierName: carrierMatch ? carrierMatch[1] : ''
       };
     }

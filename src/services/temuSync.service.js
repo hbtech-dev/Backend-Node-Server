@@ -914,9 +914,24 @@ const syncUserTemuOrders = async (user) => {
             if (existing.status && existing.status !== 'open') {
               updatePayload.status = existing.status;
             }
-            if (existing.tracking) updatePayload.tracking = existing.tracking;
-            if (existing.qrCodeData) updatePayload.qrCodeData = existing.qrCodeData;
-            if (existing.barcodeData) updatePayload.barcodeData = existing.barcodeData;
+            if (mapped.tracking && mapped.tracking !== existing.tracking) {
+              updatePayload.tracking = mapped.tracking;
+              if (mapped.tracking.startsWith('Z')) {
+                updatePayload.packetaBarcode = mapped.tracking;
+                updatePayload.packetaPacketId = mapped.tracking.replace(/^Z/i, '');
+                updatePayload.qrCodeData = `https://tracking.packeta.com/en/?id=${mapped.tracking}`;
+              } else {
+                updatePayload.qrCodeData = `https://shipstation.dhl.com/track/${mapped.tracking}`;
+              }
+              updatePayload.carrierStatus = '';
+              updatePayload.carrierStatusCode = '';
+              updatePayload.carrierStatusText = '';
+              updatePayload.carrierStatusCheckedAt = null;
+            } else if (existing.tracking) {
+              updatePayload.tracking = existing.tracking;
+            }
+            if (existing.qrCodeData && !updatePayload.qrCodeData) updatePayload.qrCodeData = existing.qrCodeData;
+            if (existing.barcodeData && !updatePayload.barcodeData) updatePayload.barcodeData = existing.barcodeData;
             if (existing.dhlShipmentId) updatePayload.dhlShipmentId = existing.dhlShipmentId;
             if (existing.dhlLabelUrl) updatePayload.dhlLabelUrl = existing.dhlLabelUrl;
             if (existing.shippedAt) updatePayload.shippedAt = existing.shippedAt;
