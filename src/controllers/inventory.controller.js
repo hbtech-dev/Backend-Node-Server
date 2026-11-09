@@ -216,7 +216,8 @@ exports.createInventoryItem = catchAsync(async (req, res, next) => {
     batchNumber,
     expiryDate,
     manufacturingDate,
-    notes
+    notes,
+    labelTemplate
   } = req.body;
 
   if (!productName || !productName.trim()) {
@@ -229,6 +230,24 @@ exports.createInventoryItem = catchAsync(async (req, res, next) => {
 
   const cleanBarcode = (barcode || rfidTag || '').trim();
   const cleanRfid = (rfidTag || cleanBarcode).trim();
+
+  let formattedLabelTemplate = undefined;
+  if (labelTemplate && typeof labelTemplate === 'object') {
+    formattedLabelTemplate = {
+      designUrl: labelTemplate.designUrl || '',
+      fileName: labelTemplate.fileName || '',
+      fileType: labelTemplate.fileType || 'image',
+      placement: {
+        x: labelTemplate.placement?.x ?? 45,
+        y: labelTemplate.placement?.y ?? 38,
+        size: labelTemplate.placement?.size ?? labelTemplate.placement?.width ?? 20,
+        width: labelTemplate.placement?.width ?? labelTemplate.placement?.size ?? 20,
+        height: labelTemplate.placement?.height ?? labelTemplate.placement?.size ?? 20,
+        hasWhiteBg: Boolean(labelTemplate.placement?.hasWhiteBg),
+        includeLabelNumber: Boolean(labelTemplate.placement?.includeLabelNumber)
+      }
+    };
+  }
 
   const item = await InventoryItem.create({
     user: req.user.id,
@@ -246,6 +265,7 @@ exports.createInventoryItem = catchAsync(async (req, res, next) => {
     manufacturingDate: (manufacturingDate || '').trim(),
     status,
     notes: (notes || '').trim(),
+    labelTemplate: formattedLabelTemplate,
     lastScannedAt: cleanBarcode ? new Date() : null
   });
 
@@ -280,7 +300,8 @@ exports.updateInventoryItem = catchAsync(async (req, res, next) => {
     batchNumber,
     expiryDate,
     manufacturingDate,
-    notes
+    notes,
+    labelTemplate
   } = req.body;
 
   if (productName !== undefined) item.productName = productName.trim();
@@ -293,6 +314,23 @@ exports.updateInventoryItem = catchAsync(async (req, res, next) => {
   if (batchNumber !== undefined) item.batchNumber = batchNumber.trim();
   if (expiryDate !== undefined) item.expiryDate = expiryDate.trim();
   if (manufacturingDate !== undefined) item.manufacturingDate = manufacturingDate.trim();
+
+  if (labelTemplate !== undefined && typeof labelTemplate === 'object') {
+    item.labelTemplate = {
+      designUrl: labelTemplate.designUrl !== undefined ? labelTemplate.designUrl : (item.labelTemplate?.designUrl || ''),
+      fileName: labelTemplate.fileName !== undefined ? labelTemplate.fileName : (item.labelTemplate?.fileName || ''),
+      fileType: labelTemplate.fileType !== undefined ? labelTemplate.fileType : (item.labelTemplate?.fileType || 'image'),
+      placement: {
+        x: labelTemplate.placement?.x ?? item.labelTemplate?.placement?.x ?? 45,
+        y: labelTemplate.placement?.y ?? item.labelTemplate?.placement?.y ?? 38,
+        size: labelTemplate.placement?.size ?? labelTemplate.placement?.width ?? item.labelTemplate?.placement?.size ?? 20,
+        width: labelTemplate.placement?.width ?? labelTemplate.placement?.size ?? item.labelTemplate?.placement?.width ?? 20,
+        height: labelTemplate.placement?.height ?? labelTemplate.placement?.size ?? item.labelTemplate?.placement?.height ?? 20,
+        hasWhiteBg: labelTemplate.placement?.hasWhiteBg !== undefined ? Boolean(labelTemplate.placement?.hasWhiteBg) : Boolean(item.labelTemplate?.placement?.hasWhiteBg),
+        includeLabelNumber: labelTemplate.placement?.includeLabelNumber !== undefined ? Boolean(labelTemplate.placement?.includeLabelNumber) : Boolean(item.labelTemplate?.placement?.includeLabelNumber)
+      }
+    };
+  }
 
   if (quantity !== undefined) {
     item.quantity = Math.max(0, parseInt(quantity, 10) || 0);

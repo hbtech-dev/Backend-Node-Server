@@ -86,12 +86,13 @@ const inventoryItemSchema = new mongoose.Schema(
       fileName: { type: String, default: '' },
       fileType: { type: String, default: 'image' },
       placement: {
-        x: { type: Number, default: 77 },
-        y: { type: Number, default: 71 },
-        width: { type: Number, default: 19 },
-        height: { type: Number, default: 24 },
-        hasWhiteBg: { type: Boolean, default: true },
-        includeLabelNumber: { type: Boolean, default: true }
+        x: { type: Number, default: 45 },
+        y: { type: Number, default: 38 },
+        size: { type: Number, default: 20 },
+        width: { type: Number, default: 20 },
+        height: { type: Number, default: 20 },
+        hasWhiteBg: { type: Boolean, default: false },
+        includeLabelNumber: { type: Boolean, default: false }
       }
     },
     lastScannedAt: {
