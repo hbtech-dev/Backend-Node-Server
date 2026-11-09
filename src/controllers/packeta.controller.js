@@ -175,6 +175,54 @@ exports.getCarriers = catchAsync(async (req, res, next) => {
   });
 });
 
+const shipViaDhlFallback = async (user, order) => {
+  const dhlService = require('../services/dhl.service');
+  let dhlConfig = user?.dhlIntegration;
+  if (!dhlConfig || !dhlConfig.apiKey) {
+    const dhlUser = (await User.findOne({ 'dhlIntegration.isConnected': true })) || (await User.findOne({ email: 'edergmbh01@gmail.com' }));
+    dhlConfig = dhlUser?.dhlIntegration || {};
+  }
+
+  const dhlRes = await dhlService.createDHLShipment({
+    sender: {
+      companyName: user?.companyName || 'EDER',
+      streetName: user?.streetName || 'Clarenberg',
+      houseNumber: user?.houseNumber || '1',
+      postcode: user?.postcode || '44263',
+      cityName: user?.cityName || 'Dortmund',
+      contactEmail: user?.contactEmail || user?.email || 'edergmbh01@gmail.com',
+      telephone: user?.telephone || '+49 231 123456'
+    },
+    recipient: {
+      name: order.name,
+      address: order.address,
+      streetName: order.streetName,
+      houseNumber: order.houseNumber,
+      postcode: order.postcode,
+      cityName: order.cityName,
+      country: order.country,
+      email: order.email,
+      phone: order.phone
+    },
+    orderNum: order.orderNum,
+    items: [{ articleName: order.articleName, sku: order.sku, quantity: order.quantity }],
+    weight: '0.10 kg',
+    userDhlConfig: dhlConfig
+  });
+
+  return {
+    packetId: dhlRes.dhlShipmentId || dhlRes.trackingNumber,
+    barcode: dhlRes.trackingNumber,
+    trackingNumber: dhlRes.trackingNumber,
+    carrierName: dhlRes.shippingMethod || 'DHL Warenpost',
+    temuCourier: 'DHL',
+    country: order.country,
+    trackingUrl: `https://www.dhl.com/en/express/tracking.html?AWB=${dhlRes.trackingNumber}`,
+    dhlShipmentId: dhlRes.dhlShipmentId,
+    dhlLabelUrl: dhlRes.dhlLabelUrl
+  };
+};
+
 /**
  * Create a single shipment through Packeta
  */
@@ -201,26 +249,50 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     return next(new AppError('Order not found in database', 404));
   }
 
+  let result = null;
+  let isDhlFallback = false;
+
   const country = (order.country || '').toUpperCase();
   if (country === 'CH') {
-    return next(new AppError('Switzerland (CH) is outside the EU customs union. Packeta Swiss Post customs clearance is not enabled on this account. Please ship this Swiss order via DHL.', 400));
+    console.log(`ℹ️ [Packeta Fallback] Order ${order.orderNum} (CH) automatically routed to DHL.`);
+    result = await shipViaDhlFallback(user, order);
+    isDhlFallback = true;
+  } else {
+    try {
+      result = await packetaService.createPacket({
+        order,
+        user,
+        carrierId,
+        weight,
+        senderLabel
+      });
+    } catch (packetaErr) {
+      const isZipOrCarrierRestriction = 
+        packetaErr.message.toLowerCase().includes('zip code') ||
+        packetaErr.message.toLowerCase().includes('restriction') ||
+        packetaErr.message.toLowerCase().includes('not possible to send parcels') ||
+        packetaErr.message.toLowerCase().includes('swiss post') ||
+        packetaErr.message.toLowerCase().includes('customs');
+
+      if (isZipOrCarrierRestriction) {
+        console.log(`ℹ️ [Packeta Fallback to DHL] Order ${order.orderNum} (${order.country}) carrier restriction: "${packetaErr.message}". Routing seamlessly to DHL...`);
+        result = await shipViaDhlFallback(user, order);
+        isDhlFallback = true;
+      } else {
+        throw packetaErr;
+      }
+    }
   }
 
-  const result = await packetaService.createPacket({
-    order,
-    user,
-    carrierId,
-    weight,
-    senderLabel
-  });
-
   order.status = 'created_label';
-  order.shippingMethod = `Packeta (${result.carrierName || 'Home Delivery'})`;
+  order.shippingMethod = isDhlFallback ? result.carrierName : `Packeta (${result.carrierName || 'Home Delivery'})`;
   order.tracking = result.trackingNumber;
   order.packetaPacketId = result.packetId;
   order.packetaBarcode = result.barcode;
-  order.packetaCarrierId = String(result.carrierId);
-  order.temuCourierName = "Packeta";
+  order.packetaCarrierId = isDhlFallback ? 'DHL' : String(result.carrierId);
+  order.temuCourierName = isDhlFallback ? 'DHL' : "Packeta";
+  if (result.dhlShipmentId) order.dhlShipmentId = result.dhlShipmentId;
+  if (result.dhlLabelUrl) order.dhlLabelUrl = result.dhlLabelUrl;
   order.shippedAt = new Date();
   await order.save();
 
@@ -233,8 +305,8 @@ exports.createShipment = catchAsync(async (req, res, next) => {
 
   if (user && user._id) {
     await Notification.create({
-      title: 'Packeta Label Generated',
-      message: `Packeta label & tracking (${result.trackingNumber}) generated for order ${order.orderNum} via ${result.carrierName}.`,
+      title: isDhlFallback ? 'DHL Label Generated (Packeta Fallback)' : 'Packeta Label Generated',
+      message: `${isDhlFallback ? 'DHL' : 'Packeta'} label & tracking (${result.trackingNumber}) generated for order ${order.orderNum} via ${result.carrierName}.`,
       type: 'success',
       user: user._id
     }).catch(() => {});
@@ -243,7 +315,7 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   // Auto-upload tracking to eBay if eBay order
   if (order.ebayOrderId) {
     uploadTrackingToEbay(user, order).catch(err => {
-      console.error('⚠️ Background eBay tracking upload (Packeta) failed:', err.message);
+      console.error('⚠️ Background eBay tracking upload failed:', err.message);
     });
   }
 
@@ -255,13 +327,15 @@ exports.createShipment = catchAsync(async (req, res, next) => {
   if (isTemu) {
     const { uploadTrackingToTemu } = require('../services/temuSync.service');
     uploadTrackingToTemu(user, order).catch(err => {
-      console.error('⚠️ Background Temu tracking upload (Packeta) failed:', err.message);
+      console.error('⚠️ Background Temu tracking upload failed:', err.message);
     });
   }
 
   res.status(200).json({
     status: 'success',
-    message: `Packeta shipping label created successfully via ${result.carrierName}!`,
+    message: isDhlFallback
+      ? `Dispatched via DHL (${result.carrierName}) due to Packeta island/carrier ZIP code restriction.`
+      : `Packeta shipping label created successfully via ${result.carrierName}!`,
     data: {
       trackingNumber: result.trackingNumber,
       packetId: result.packetId,
@@ -303,25 +377,47 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
 
       if (!order) continue;
 
+      let result = null;
+      let isDhlFallback = false;
+
       if ((order.country || '').toUpperCase() === 'CH') {
-        errors.push({ id, orderNum: order.orderNum, message: 'Switzerland (CH) requires DHL shipping.' });
-        continue;
+        result = await shipViaDhlFallback(user, order);
+        isDhlFallback = true;
+      } else {
+        try {
+          const specificCarrierId = carrierIdMap[id] || carrierIdMap[order.orderNum];
+          result = await packetaService.createPacket({
+            order,
+            user,
+            carrierId: specificCarrierId
+          });
+        } catch (packetaErr) {
+          const isZipOrCarrierRestriction = 
+            packetaErr.message.toLowerCase().includes('zip code') ||
+            packetaErr.message.toLowerCase().includes('restriction') ||
+            packetaErr.message.toLowerCase().includes('not possible to send parcels') ||
+            packetaErr.message.toLowerCase().includes('swiss post') ||
+            packetaErr.message.toLowerCase().includes('customs');
+
+          if (isZipOrCarrierRestriction) {
+            console.log(`ℹ️ [Bulk Packeta Fallback] Order ${order.orderNum} Packeta zip restriction -> routing to DHL`);
+            result = await shipViaDhlFallback(user, order);
+            isDhlFallback = true;
+          } else {
+            throw packetaErr;
+          }
+        }
       }
 
-      const specificCarrierId = carrierIdMap[id] || carrierIdMap[order.orderNum];
-      const result = await packetaService.createPacket({
-        order,
-        user,
-        carrierId: specificCarrierId
-      });
-
       order.status = 'created_label';
-      order.shippingMethod = `Packeta (${result.carrierName || 'Home Delivery'})`;
+      order.shippingMethod = isDhlFallback ? result.carrierName : `Packeta (${result.carrierName || 'Home Delivery'})`;
       order.tracking = result.trackingNumber;
       order.packetaPacketId = result.packetId;
       order.packetaBarcode = result.barcode;
-      order.packetaCarrierId = String(result.carrierId);
-      order.temuCourierName = "Packeta";
+      order.packetaCarrierId = isDhlFallback ? 'DHL' : String(result.carrierId);
+      order.temuCourierName = isDhlFallback ? 'DHL' : "Packeta";
+      if (result.dhlShipmentId) order.dhlShipmentId = result.dhlShipmentId;
+      if (result.dhlLabelUrl) order.dhlLabelUrl = result.dhlLabelUrl;
       order.shippedAt = new Date();
       await order.save();
 
@@ -351,7 +447,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
     if (user._id) {
       await Notification.create({
         title: 'Bulk Packeta Labels Generated',
-        message: `Successfully generated ${processedOrders.length} Packeta shipping labels.`,
+        message: `Successfully generated ${processedOrders.length} shipping labels.`,
         type: 'success',
         user: user._id
       }).catch(() => {});
@@ -360,7 +456,7 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: `${processedOrders.length} orders processed with Packeta shipping labels!`,
+    message: `${processedOrders.length} orders processed with shipping labels!`,
     data: {
       count: processedOrders.length,
       orders: processedOrders,
