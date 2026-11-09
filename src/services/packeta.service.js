@@ -1,4 +1,5 @@
 const https = require('https');
+const AppError = require('../utils/appError');
 
 const DEFAULT_CARRIERS_BY_COUNTRY = {
   // Primary options requested by user from Packeta Home Delivery table
@@ -19,12 +20,17 @@ const DEFAULT_CARRIERS_BY_COUNTRY = {
   // Additional European Home Delivery options
   LT: { id: 5065, name: "LT Omniva HD", code: "omniva_lt", phonePrefix: "+370", temuCourier: "Omniva" },
   AT: { id: 6830, name: "AT DPD HD", code: "dpd_at", phonePrefix: "+43", temuCourier: "DPD" },
-  DE: { id: 141252268, name: "DHL Kleinpaket / Warenpost", code: "dhl_de", phonePrefix: "+49", temuCourier: "DHL" },
+  DE: { id: 13613, name: "DE Home Delivery HD", code: "packeta_de", phonePrefix: "+49", temuCourier: "Packeta" },
   IT: { id: 9103, name: "IT Bartolini Home", code: "bartolini", phonePrefix: "+39", temuCourier: "BRT (Bartolini)" },
   ES: { id: 4638, name: "ES Correos HD", code: "correos", phonePrefix: "+34", temuCourier: "Correos" },
   FR: { id: 4309, name: "FR Colissimo HD", code: "colissimo", phonePrefix: "+33", temuCourier: "Colissimo" },
   NL: { id: 8000, name: "NL DHL HD", code: "dhl_nl", phonePrefix: "+31", temuCourier: "DHL" },
-  BE: { id: 7909, name: "BE Belgická pošta HD", code: "bpost", phonePrefix: "+32", temuCourier: "bpost" }
+  BE: { id: 7909, name: "BE Belgická pošta HD", code: "bpost", phonePrefix: "+32", temuCourier: "bpost" },
+  SE: { id: 4827, name: "SE Post Nord HD", code: "postnord_se", phonePrefix: "+46", temuCourier: "PostNord" },
+  FI: { id: 4830, name: "FI Post Nord HD", code: "postnord_fi", phonePrefix: "+358", temuCourier: "PostNord" },
+  IE: { id: 24810, name: "IE FedEx HD Connect Plus", code: "fedex_ie", phonePrefix: "+353", temuCourier: "FedEx" },
+  LU: { id: 8125, name: "LU Lucemburská pošta HD", code: "post_lu", phonePrefix: "+352", temuCourier: "POST Luxembourg" },
+  GB: { id: 4856, name: "GB Royal Mail 24 HD", code: "royalmail_gb", phonePrefix: "+44", temuCourier: "Royal Mail" }
 };
 
 const ALTERNATIVE_CARRIERS = {
@@ -207,10 +213,31 @@ async function createPacket({ order, user, carrierId, weight, senderLabel }) {
     };
   }
 
-  // Parse fault description
-  const faultMatch = resText.match(/<fault>([\s\S]*?)<\/fault>/);
-  const faultDesc = faultMatch ? faultMatch[1].replace(/<[^>]+>/g, ' ').trim() : 'Packet creation failed';
-  throw new Error(faultDesc || 'Failed to create Packeta shipment');
+  // Parse fault description with detailed attributes if available
+  let faultDesc = '';
+  const detailMatch = resText.match(/<detail>([\s\S]*?)<\/detail>/);
+  if (detailMatch) {
+    const faultTexts = [];
+    const innerFaultRegex = /<fault>([^<]+)<\/fault>/g;
+    let m;
+    while ((m = innerFaultRegex.exec(detailMatch[1])) !== null) {
+      const txt = m[1].trim();
+      if (txt && !faultTexts.includes(txt)) {
+        faultTexts.push(txt);
+      }
+    }
+    if (faultTexts.length > 0) {
+      faultDesc = faultTexts.join('; ');
+    }
+  }
+
+  if (!faultDesc) {
+    const stringMatch = resText.match(/<string>([^<]+)<\/string>/);
+    const faultMatch = resText.match(/<fault>([^<]+)<\/fault>/);
+    faultDesc = stringMatch ? stringMatch[1] : (faultMatch ? faultMatch[1] : 'Packet creation failed');
+  }
+
+  throw new AppError(`Packeta Error: ${faultDesc || 'Failed to create Packeta shipment'}`, 400);
 }
 
 /**
@@ -246,7 +273,7 @@ async function getPacketLabelPdf(packetId, user, format = 'A6 on A6', offset = 0
 
   const faultMatch = resText.match(/<fault>([\s\S]*?)<\/fault>/);
   const faultDesc = faultMatch ? faultMatch[1].replace(/<[^>]+>/g, ' ').trim() : 'Failed to retrieve label PDF';
-  throw new Error(faultDesc);
+  throw new AppError(`Packeta Error: ${faultDesc}`, 400);
 }
 
 /**
