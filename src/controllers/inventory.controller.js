@@ -409,10 +409,16 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     }
   }
 
-  const baseTag = codePart.includes('-') ? codePart.split('-')[0].trim() : codePart;
-  if (!unitNum && codePart.includes('-')) {
-    const parsed = parseInt(codePart.split('-')[1], 10);
-    if (!isNaN(parsed)) unitNum = parsed;
+  let baseTag = codePart;
+  if (codePart.includes('-')) {
+    const lastHyphen = codePart.lastIndexOf('-');
+    const suffix = codePart.slice(lastHyphen + 1).trim();
+    if (/^\d+$/.test(suffix)) {
+      baseTag = codePart.slice(0, lastHyphen).trim();
+      if (!unitNum) unitNum = parseInt(suffix, 10);
+    } else {
+      baseTag = codePart.split('-')[0].trim();
+    }
   }
 
   // If pairing to an item
@@ -905,10 +911,18 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
     }
 
     // Support serialized unit codes like 603900753096928-042 or query param ?unit=42
-    const baseCode = rawCode.includes('-') ? rawCode.split('-')[0].trim() : rawCode;
-    const unitNum = rawCode.includes('-')
-      ? parseInt(rawCode.split('-')[1], 10)
-      : (req.query.unit ? parseInt(req.query.unit, 10) : null);
+    let baseCode = rawCode;
+    let unitNum = req.query.unit ? parseInt(req.query.unit, 10) : null;
+    if (rawCode.includes('-')) {
+      const lastHyphen = rawCode.lastIndexOf('-');
+      const suffix = rawCode.slice(lastHyphen + 1).trim();
+      if (/^\d+$/.test(suffix)) {
+        baseCode = rawCode.slice(0, lastHyphen).trim();
+        if (!unitNum) unitNum = parseInt(suffix, 10);
+      } else {
+        baseCode = rawCode.split('-')[0].trim();
+      }
+    }
 
     const item = await InventoryItem.findOne({
       $or: [
