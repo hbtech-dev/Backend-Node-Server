@@ -389,9 +389,30 @@ exports.adjustStock = catchAsync(async (req, res, next) => {
  */
 exports.scanRfidTag = catchAsync(async (req, res, next) => {
   const { rfidTag, barcode, targetItemId } = req.body;
-  const cleanTag = (barcode || rfidTag || '').trim();
+  let cleanTag = (barcode || rfidTag || '').trim();
   if (!cleanTag) {
     return next(new AppError('Barcode or tag is required.', 400));
+  }
+
+  // If scanner gun reads full 2D QR verify URL, extract the code and unit
+  let unitNum = null;
+  let codePart = cleanTag;
+  if (codePart.includes('/verify/')) {
+    const after = codePart.split('/verify/')[1];
+    codePart = decodeURIComponent(after.split('?')[0]).trim();
+    const queryPart = after.includes('?') ? after.split('?')[1] : '';
+    if (queryPart) {
+      try {
+        const qParams = new URLSearchParams(queryPart);
+        if (qParams.get('unit')) unitNum = parseInt(qParams.get('unit'), 10);
+      } catch (_) { }
+    }
+  }
+
+  const baseTag = codePart.includes('-') ? codePart.split('-')[0].trim() : codePart;
+  if (!unitNum && codePart.includes('-')) {
+    const parsed = parseInt(codePart.split('-')[1], 10);
+    if (!isNaN(parsed)) unitNum = parsed;
   }
 
   // If pairing to an item
@@ -415,18 +436,18 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     });
   }
 
-  const baseTag = cleanTag.includes('-') ? cleanTag.split('-')[0].trim() : cleanTag;
-  const unitNum = cleanTag.includes('-') ? parseInt(cleanTag.split('-')[1], 10) : null;
-
   // Lookup existing item by Barcode, RFID tag, or SKU
   const matched = await InventoryItem.findOne({
     user: req.user.id,
     $or: [
       { barcode: cleanTag },
+      { barcode: codePart },
       { barcode: baseTag },
       { rfidTag: cleanTag },
+      { rfidTag: codePart },
       { rfidTag: baseTag },
       { sku: cleanTag },
+      { sku: codePart },
       { sku: baseTag }
     ]
   });
@@ -447,13 +468,13 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
       scannedAt: new Date(),
       action: unitNum ? `scanner_gun_unit_${unitNum}` : 'scanner_gun',
       unitNumber: unitNum,
-      scannedCode: cleanTag,
+      scannedCode: codePart || cleanTag,
       previousStock,
       remainingStock,
       location: matched.location || 'Shelf A-04',
       deviceId: 'Warehouse 2D Scanner Gun',
       notes: unitNum
-        ? `Scanned Unit #${unitNum} (${cleanTag}) via scanner gun • Stock: ${previousStock} → ${remainingStock}`
+        ? `Scanned Unit #${unitNum} (${codePart || cleanTag}) via scanner gun • Stock: ${previousStock} → ${remainingStock}`
         : `Scanned by warehouse operator via scanner gun • Stock: ${previousStock} → ${remainingStock}`
     });
     if (matched.scanHistory.length > 50) matched.scanHistory = matched.scanHistory.slice(0, 50);
@@ -464,9 +485,9 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
       inventoryItem: matched._id,
       productName: matched.productName,
       sku: matched.sku,
-      barcode: cleanTag,
+      barcode: codePart || cleanTag,
       unitNumber: unitNum,
-      scannedCode: cleanTag,
+      scannedCode: codePart || cleanTag,
       previousStock,
       remainingStock,
       deviceType: 'Scanner Gun',
@@ -992,7 +1013,7 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
  * Get all recent scan logs for current user (with device, time, IP, product)
  */
 exports.getScanLogs = catchAsync(async (req, res, next) => {
-  const { limit = 100, page = 1, deviceType, inventoryItemId, search } = req.query;
+  const { limit = 100, page = 1, deviceType, inventoryItemId, productName, search } = req.query;
   const userId = req.user._id || req.user.id;
   const userObjId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(String(userId)) : userId;
   const filter = { user: { $in: [userObjId, String(userId)] } };
@@ -1002,6 +1023,9 @@ exports.getScanLogs = catchAsync(async (req, res, next) => {
   }
   if (inventoryItemId) {
     filter.inventoryItem = inventoryItemId;
+  }
+  if (productName && productName !== 'all') {
+    filter.productName = { $regex: productName.trim(), $options: 'i' };
   }
   if (search && search.trim()) {
     const s = search.trim();
