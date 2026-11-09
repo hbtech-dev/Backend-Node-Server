@@ -415,26 +415,46 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     });
   }
 
+  const baseTag = cleanTag.includes('-') ? cleanTag.split('-')[0].trim() : cleanTag;
+  const unitNum = cleanTag.includes('-') ? parseInt(cleanTag.split('-')[1], 10) : null;
+
   // Lookup existing item by Barcode, RFID tag, or SKU
   const matched = await InventoryItem.findOne({
     user: req.user.id,
     $or: [
       { barcode: cleanTag },
+      { barcode: baseTag },
       { rfidTag: cleanTag },
-      { sku: cleanTag }
+      { rfidTag: baseTag },
+      { sku: cleanTag },
+      { sku: baseTag }
     ]
   });
   if (matched) {
     const devInfo = parseDeviceInfo(req);
     matched.totalScanCount = (matched.totalScanCount || 0) + 1;
     matched.lastScannedAt = new Date();
+
+    const previousStock = matched.quantity || 0;
+    if (matched.quantity > 0) {
+      matched.quantity = Math.max(0, matched.quantity - 1);
+      matched.status = computeStatus(matched.quantity, matched.minStockThreshold);
+    }
+    const remainingStock = matched.quantity;
+
     if (!Array.isArray(matched.scanHistory)) matched.scanHistory = [];
     matched.scanHistory.unshift({
       scannedAt: new Date(),
-      action: 'scanner_gun',
+      action: unitNum ? `scanner_gun_unit_${unitNum}` : 'scanner_gun',
+      unitNumber: unitNum,
+      scannedCode: cleanTag,
+      previousStock,
+      remainingStock,
       location: matched.location || 'Shelf A-04',
       deviceId: 'Warehouse 2D Scanner Gun',
-      notes: `Scanned by warehouse operator via scanner wedge`
+      notes: unitNum
+        ? `Scanned Unit #${unitNum} (${cleanTag}) via scanner gun • Stock: ${previousStock} → ${remainingStock}`
+        : `Scanned by warehouse operator via scanner gun • Stock: ${previousStock} → ${remainingStock}`
     });
     if (matched.scanHistory.length > 50) matched.scanHistory = matched.scanHistory.slice(0, 50);
     await matched.save().catch(() => { });
@@ -444,7 +464,11 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
       inventoryItem: matched._id,
       productName: matched.productName,
       sku: matched.sku,
-      barcode: matched.barcode || cleanTag,
+      barcode: cleanTag,
+      unitNumber: unitNum,
+      scannedCode: cleanTag,
+      previousStock,
+      remainingStock,
       deviceType: 'Scanner Gun',
       deviceModel: 'Warehouse 2D Scanner Gun',
       os: devInfo.os,
@@ -458,7 +482,7 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     return res.status(200).json({
       status: 'success',
       found: true,
-      message: `Found product: ${matched.productName}`,
+      message: `Found product: ${matched.productName}. Stock updated: ${previousStock} → ${remainingStock}`,
       data: { item: matched }
     });
   }
@@ -890,28 +914,44 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
     item.totalScanCount = (item.totalScanCount || 0) + 1;
     item.lastScannedAt = new Date();
 
+    // 1. Deduct 1 item from inventory stock on each scan
+    const previousStock = item.quantity || 0;
+    if (item.quantity > 0) {
+      item.quantity = Math.max(0, item.quantity - 1);
+      item.status = computeStatus(item.quantity, item.minStockThreshold);
+    }
+    const remainingStock = item.quantity;
+
     if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
     item.scanHistory.unshift({
       scannedAt: new Date(),
       action: unitNum ? `qr_scan_unit_${unitNum}` : 'qr_scan',
+      unitNumber: unitNum,
+      scannedCode: rawCode,
+      previousStock,
+      remainingStock,
       location: item.location || 'Warehouse',
       deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
-    notes: unitNum
-        ? `Scanned Unit #${unitNum} via camera from IP ${devInfo.ip || 'Unknown'}`
-        : `Scanned via camera from IP ${devInfo.ip || 'Unknown'}`
+      notes: unitNum
+        ? `Scanned Unit #${unitNum} (${rawCode}) via camera from IP ${devInfo.ip || 'Unknown'} • Stock: ${previousStock} → ${remainingStock}`
+        : `Scanned via camera from IP ${devInfo.ip || 'Unknown'} • Stock: ${previousStock} → ${remainingStock}`
     });
     if (item.scanHistory.length > 50) {
       item.scanHistory = item.scanHistory.slice(0, 50);
     }
     await item.save().catch(() => { });
 
-    // Create persistent scan log in MongoDB
+    // Create persistent scan log in MongoDB with unit number and stock change
     ProductScanLog.create({
       user: item.user,
       inventoryItem: item._id,
       productName: item.productName,
       sku: item.sku,
       barcode: rawCode,
+      unitNumber: unitNum,
+      scannedCode: rawCode,
+      previousStock,
+      remainingStock,
       deviceType: devInfo.deviceType,
       deviceModel: devInfo.deviceModel,
       os: devInfo.os,
@@ -932,6 +972,8 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
           barcode: item.barcode,
           scannedCode: rawCode,
           scannedUnitNumber: unitNum,
+          previousStock,
+          remainingStock: item.quantity,
           totalQuantity: item.quantity,
           labelTemplate: item.labelTemplate,
           quantity: item.quantity,
@@ -950,7 +992,7 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
  * Get all recent scan logs for current user (with device, time, IP, product)
  */
 exports.getScanLogs = catchAsync(async (req, res, next) => {
-  const { limit = 50, page = 1, deviceType, inventoryItemId } = req.query;
+  const { limit = 100, page = 1, deviceType, inventoryItemId, search } = req.query;
   const userId = req.user._id || req.user.id;
   const userObjId = mongoose.Types.ObjectId.isValid(userId) ? new mongoose.Types.ObjectId(String(userId)) : userId;
   const filter = { user: { $in: [userObjId, String(userId)] } };
@@ -960,6 +1002,17 @@ exports.getScanLogs = catchAsync(async (req, res, next) => {
   }
   if (inventoryItemId) {
     filter.inventoryItem = inventoryItemId;
+  }
+  if (search && search.trim()) {
+    const s = search.trim();
+    filter.$or = [
+      { productName: { $regex: s, $options: 'i' } },
+      { sku: { $regex: s, $options: 'i' } },
+      { barcode: { $regex: s, $options: 'i' } },
+      { scannedCode: { $regex: s, $options: 'i' } },
+      { deviceModel: { $regex: s, $options: 'i' } },
+      { ip: { $regex: s, $options: 'i' } }
+    ];
   }
 
   const skip = (Math.max(1, parseInt(page, 10)) - 1) * parseInt(limit, 10);

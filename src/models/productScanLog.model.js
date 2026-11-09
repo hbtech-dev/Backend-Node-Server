@@ -30,6 +30,24 @@ const productScanLogSchema = new mongoose.Schema(
       trim: true,
       index: true
     },
+    unitNumber: {
+      type: Number,
+      default: null,
+      index: true
+    },
+    scannedCode: {
+      type: String,
+      default: '',
+      trim: true
+    },
+    previousStock: {
+      type: Number,
+      default: null
+    },
+    remainingStock: {
+      type: Number,
+      default: null
+    },
     deviceType: {
       type: String,
       default: 'Mobile' // 'Mobile', 'Tablet', 'Desktop', 'Scanner Gun'
