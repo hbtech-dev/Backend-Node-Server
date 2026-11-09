@@ -201,6 +201,11 @@ exports.createShipment = catchAsync(async (req, res, next) => {
     return next(new AppError('Order not found in database', 404));
   }
 
+  const country = (order.country || '').toUpperCase();
+  if (country === 'CH') {
+    return next(new AppError('Switzerland (CH) is outside the EU customs union. Packeta Swiss Post customs clearance is not enabled on this account. Please ship this Swiss order via DHL.', 400));
+  }
+
   const result = await packetaService.createPacket({
     order,
     user,
@@ -297,6 +302,11 @@ exports.bulkCreateShipments = catchAsync(async (req, res, next) => {
       }
 
       if (!order) continue;
+
+      if ((order.country || '').toUpperCase() === 'CH') {
+        errors.push({ id, orderNum: order.orderNum, message: 'Switzerland (CH) requires DHL shipping.' });
+        continue;
+      }
 
       const specificCarrierId = carrierIdMap[id] || carrierIdMap[order.orderNum];
       const result = await packetaService.createPacket({

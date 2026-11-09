@@ -144,9 +144,23 @@ async function createPacket({ order, user, carrierId, weight, senderLabel }) {
                 process.env.PACKETA_SENDER_LABEL ||
                 'EDER UG';
 
-  const country = (order.country || 'BG').toUpperCase();
-  const carrierConfig = DEFAULT_CARRIERS_BY_COUNTRY[country] || DEFAULT_CARRIERS_BY_COUNTRY['BG'];
-  const finalCarrierId = carrierId || carrierConfig.id;
+  const country = (order.country || 'DE').toUpperCase();
+  if (country === 'CH') {
+    throw new AppError('Switzerland (CH) is outside the EU customs union. Packeta Swiss Post customs clearance is not activated for this account. Please ship this order via DHL.', 400);
+  }
+
+  const carrierConfig = DEFAULT_CARRIERS_BY_COUNTRY[country] || DEFAULT_CARRIERS_BY_COUNTRY['DE'];
+
+  // Validate and sanitize carrierId:
+  // If carrierId is empty, or is the bogus Temu ID 141252268, or is the fallback Speedy 4015 for a non-BG country,
+  // or is the Danish Post 4993 for a non-DK country, automatically resolve to verified Home Delivery carrier ID!
+  let finalCarrierId = carrierId;
+  if (!finalCarrierId ||
+      String(finalCarrierId) === '141252268' ||
+      (String(finalCarrierId) === '4015' && country !== 'BG') ||
+      (String(finalCarrierId) === '4993' && country !== 'DK')) {
+    finalCarrierId = carrierConfig.id;
+  }
   const carrierName = carrierConfig.name;
 
   const { name, surname } = splitFullName(order.recipientName || order.name);
