@@ -461,7 +461,7 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
   let filter = { user: userId };
   const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000);
 
-  const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
   if (req.query.status === 'activity') {
     filter.status = { $in: ['created_label', 'printed'] };
@@ -478,8 +478,8 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
       },
       {
         $or: [
-          { shippedAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo } },
-          { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+          { shippedAt: { $lte: twoDaysAgo, $gte: sevenDaysAgo } },
+          { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: sevenDaysAgo }, tracking: { $nin: ['', null] } }
         ]
       }
     ];
@@ -505,8 +505,8 @@ exports.getUserEbayOrders = catchAsync(async (req, res, next) => {
       $and: [
         {
           $or: [
-            { shippedAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo } },
-            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+            { shippedAt: { $lte: twoDaysAgo, $gte: sevenDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: sevenDaysAgo }, tracking: { $nin: ['', null] } }
           ]
         }
       ]

@@ -488,7 +488,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       filter.isDispatched = { $ne: true };
       const days = req.query.days !== undefined ? parseInt(req.query.days, 10) : 2;
       const cutoffDate = new Date(Date.now() - (days > 0 ? days : 2) * 24 * 60 * 60 * 1000);
-      const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
       // Fast auto-reconciliation of live Packeta tracking status for stale unverified Packeta orders
       try {
@@ -541,8 +541,8 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
         },
         {
           $or: [
-            { shippedAt: { $lte: cutoffDate, $gte: thirtyDaysAgo } },
-            { shippedAt: null, createdAt: { $lte: cutoffDate, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+            { shippedAt: { $lte: cutoffDate, $gte: sevenDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: cutoffDate, $gte: sevenDaysAgo }, tracking: { $nin: ['', null] } }
           ]
         }
       ];
@@ -622,7 +622,7 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       { $group: { _id: '$status', count: { $sum: 1 } } }
     ]);
 
-    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const activityCountPromise = TemuOrder.countDocuments({
       user: userId,
       status: { $in: ['created_label', 'printed'] },
@@ -638,8 +638,8 @@ exports.getUserTemuOrders = catchAsync(async (req, res, next) => {
       $and: [
         {
           $or: [
-            { shippedAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo } },
-            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: thirtyDaysAgo }, tracking: { $nin: ['', null] } }
+            { shippedAt: { $lte: twoDaysAgo, $gte: sevenDaysAgo } },
+            { shippedAt: null, createdAt: { $lte: twoDaysAgo, $gte: sevenDaysAgo }, tracking: { $nin: ['', null] } }
           ]
         }
       ]
@@ -2245,8 +2245,11 @@ exports.syncActivityCarriers = catchAsync(async (req, res) => {
   const oldDhlResult = await TemuOrder.updateMany(
     {
       user: userId,
-      status: 'printed',
-      createdAt: { $lt: sevenDaysAgo },
+      status: { $in: ['created_label', 'printed'] },
+      $or: [
+        { shippedAt: { $lt: sevenDaysAgo } },
+        { shippedAt: null, createdAt: { $lt: sevenDaysAgo } }
+      ],
       isDispatched: { $ne: true }
     },
     {
