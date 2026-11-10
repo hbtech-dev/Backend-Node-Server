@@ -462,54 +462,81 @@ exports.scanRfidTag = catchAsync(async (req, res, next) => {
     matched.totalScanCount = (matched.totalScanCount || 0) + 1;
     matched.lastScannedAt = new Date();
 
+    if (!Array.isArray(matched.scannedUnits)) matched.scannedUnits = [];
+    if (!Array.isArray(matched.scanHistory)) matched.scanHistory = [];
+
     const previousStock = matched.quantity || 0;
-    if (matched.quantity > 0) {
+    let shouldDeduct = true;
+    let alreadyDeducted = false;
+
+    if (matched.quantity <= 0) {
+      shouldDeduct = false;
+    } else if (unitNum != null && matched.scannedUnits.includes(unitNum)) {
+      // 1 QR code 1 product: Serialized Unit #X was already scanned & deducted
+      shouldDeduct = false;
+      alreadyDeducted = true;
+    }
+
+    if (shouldDeduct) {
       matched.quantity = Math.max(0, matched.quantity - 1);
       matched.status = computeStatus(matched.quantity, matched.minStockThreshold);
+      if (unitNum != null) {
+        matched.scannedUnits.push(unitNum);
+      }
     }
+
     const remainingStock = matched.quantity;
 
-    if (!Array.isArray(matched.scanHistory)) matched.scanHistory = [];
-    matched.scanHistory.unshift({
-      scannedAt: new Date(),
-      action: unitNum ? `scanner_gun_unit_${unitNum}` : 'scanner_gun',
-      unitNumber: unitNum,
-      scannedCode: codePart || cleanTag,
-      previousStock,
-      remainingStock,
-      location: matched.location || 'Shelf A-04',
-      deviceId: 'Warehouse 2D Scanner Gun',
-      notes: unitNum
-        ? `Scanned Unit #${unitNum} (${codePart || cleanTag}) via scanner gun • Stock: ${previousStock} → ${remainingStock}`
-        : `Scanned by warehouse operator via scanner gun • Stock: ${previousStock} → ${remainingStock}`
-    });
-    if (matched.scanHistory.length > 50) matched.scanHistory = matched.scanHistory.slice(0, 50);
-    await matched.save().catch(() => { });
+    if (shouldDeduct) {
+      matched.scanHistory.unshift({
+        scannedAt: new Date(),
+        action: unitNum ? `scanner_gun_unit_${unitNum}` : 'scanner_gun',
+        unitNumber: unitNum,
+        scannedCode: codePart || cleanTag,
+        previousStock,
+        remainingStock,
+        delta: -1,
+        ip: devInfo.ip,
+        location: matched.location || 'Shelf A-04',
+        deviceId: 'Warehouse 2D Scanner Gun',
+        notes: unitNum
+          ? `Scanned Unit #${unitNum} (${codePart || cleanTag}) via scanner gun • Stock: ${previousStock} → ${remainingStock}`
+          : `Scanned by warehouse operator via scanner gun • Stock: ${previousStock} → ${remainingStock}`
+      });
+      if (matched.scanHistory.length > 50) matched.scanHistory = matched.scanHistory.slice(0, 50);
+      await matched.save().catch(() => { });
 
-    ProductScanLog.create({
-      user: req.user.id,
-      inventoryItem: matched._id,
-      productName: matched.productName,
-      sku: matched.sku,
-      barcode: codePart || cleanTag,
-      unitNumber: unitNum,
-      scannedCode: codePart || cleanTag,
-      previousStock,
-      remainingStock,
-      deviceType: 'Scanner Gun',
-      deviceModel: 'Warehouse 2D Scanner Gun',
-      os: devInfo.os,
-      browser: devInfo.browser,
-      ip: devInfo.ip,
-      userAgent: devInfo.userAgent,
-      scanMethod: 'scanner_gun',
-      location: matched.location,
-      scannedAt: new Date()
-    }).catch(() => { });
+      ProductScanLog.create({
+        user: req.user.id,
+        inventoryItem: matched._id,
+        productName: matched.productName,
+        sku: matched.sku,
+        barcode: codePart || cleanTag,
+        unitNumber: unitNum,
+        scannedCode: codePart || cleanTag,
+        previousStock,
+        remainingStock,
+        deviceType: 'Scanner Gun',
+        deviceModel: 'Warehouse 2D Scanner Gun',
+        os: devInfo.os,
+        browser: devInfo.browser,
+        ip: devInfo.ip,
+        userAgent: devInfo.userAgent,
+        scanMethod: 'scanner_gun',
+        location: matched.location,
+        scannedAt: new Date()
+      }).catch(() => { });
+    } else {
+      await matched.save().catch(() => { });
+    }
+
     return res.status(200).json({
       status: 'success',
       found: true,
-      message: `Found product: ${matched.productName}. Stock updated: ${previousStock} → ${remainingStock}`,
+      alreadyDeducted: Boolean(alreadyDeducted),
+      message: alreadyDeducted
+        ? `Unit #${unitNum} of ${matched.productName} was already scanned. Stock remains ${remainingStock}.`
+        : `Found product: ${matched.productName}. Stock updated: ${previousStock} → ${remainingStock}`,
       data: { item: matched }
     });
   }
@@ -953,58 +980,122 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
     // Parse device telemetry (iPhone, Android, PC, Browser, IP, Time)
     const devInfo = parseDeviceInfo(req);
 
+    // Check if client explicitly requests NO deduction (e.g. read-only query / already applied on client)
+    const reqDeduct = req.query.deduct !== 'false' && req.body?.deduct !== false;
+    const scanToken = (req.query.scanToken || req.body?.scanToken || '').trim();
+
+    let shouldDeduct = reqDeduct;
+    let alreadyDeducted = false;
+    let deductReason = '';
+
+    // Ensure scannedUnits and deductedTokens arrays exist
+    if (!Array.isArray(item.scannedUnits)) item.scannedUnits = [];
+    if (!Array.isArray(item.deductedTokens)) item.deductedTokens = [];
+    if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
+
+    if (item.quantity <= 0) {
+      shouldDeduct = false;
+      alreadyDeducted = false;
+      deductReason = 'Product is currently out of stock.';
+    } else if (!reqDeduct) {
+      shouldDeduct = false;
+      alreadyDeducted = true;
+      deductReason = 'Query requested without stock deduction.';
+    } else if (unitNum != null && item.scannedUnits.includes(unitNum)) {
+      // 1 QR code 1 product: Serialized Unit #X was already scanned & deducted
+      shouldDeduct = false;
+      alreadyDeducted = true;
+      deductReason = `Unit #${unitNum} has already been verified and deducted from inventory.`;
+    } else if (scanToken && item.deductedTokens.includes(scanToken)) {
+      // Scan session token was already processed
+      shouldDeduct = false;
+      alreadyDeducted = true;
+      deductReason = 'This scan code has already been applied.';
+    } else if (unitNum == null) {
+      // For un-serialized QR codes (e.g. base barcode):
+      // Check if the same IP verified this product within the last 15 minutes to prevent rapid reload stock depletion
+      const recentScanFromIp = item.scanHistory.find(h => {
+        if (!h.ip || h.ip !== devInfo.ip) return false;
+        if (!h.scannedAt) return false;
+        const ageMs = Date.now() - new Date(h.scannedAt).getTime();
+        return ageMs >= 0 && ageMs < 15 * 60 * 1000 && (h.delta === -1 || h.action === 'qr_scan');
+      });
+
+      if (recentScanFromIp) {
+        shouldDeduct = false;
+        alreadyDeducted = true;
+        deductReason = 'Product already verified from this device recently.';
+      }
+    }
+
     // Update item metrics
     item.totalScanCount = (item.totalScanCount || 0) + 1;
     item.lastScannedAt = new Date();
 
-    // 1. Deduct 1 item from inventory stock on each scan
     const previousStock = item.quantity || 0;
-    if (item.quantity > 0) {
+
+    if (shouldDeduct) {
       item.quantity = Math.max(0, item.quantity - 1);
       item.status = computeStatus(item.quantity, item.minStockThreshold);
+
+      if (unitNum != null) {
+        item.scannedUnits.push(unitNum);
+      }
+      if (scanToken) {
+        item.deductedTokens.push(scanToken);
+        if (item.deductedTokens.length > 200) {
+          item.deductedTokens = item.deductedTokens.slice(-200);
+        }
+      }
+
+      item.scanHistory.unshift({
+        scannedAt: new Date(),
+        action: unitNum ? `qr_scan_unit_${unitNum}` : 'qr_scan',
+        unitNumber: unitNum,
+        scannedCode: rawCode,
+        previousStock,
+        remainingStock: item.quantity,
+        delta: -1,
+        ip: devInfo.ip,
+        location: item.location || 'Warehouse',
+        deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
+        notes: unitNum
+          ? `Scanned Unit #${unitNum} (${rawCode}) via camera from IP ${devInfo.ip || 'Unknown'} • Stock: ${previousStock} → ${item.quantity}`
+          : `Scanned via camera from IP ${devInfo.ip || 'Unknown'} • Stock: ${previousStock} → ${item.quantity}`
+      });
+
+      if (item.scanHistory.length > 50) {
+        item.scanHistory = item.scanHistory.slice(0, 50);
+      }
+
+      await item.save().catch((err) => console.warn('Item save warning:', err.message));
+
+      // Create persistent scan log in MongoDB with unit number and stock change
+      ProductScanLog.create({
+        user: item.user,
+        inventoryItem: item._id,
+        productName: item.productName,
+        sku: item.sku,
+        barcode: rawCode,
+        unitNumber: unitNum,
+        scannedCode: rawCode,
+        previousStock,
+        remainingStock: item.quantity,
+        deviceType: devInfo.deviceType,
+        deviceModel: devInfo.deviceModel,
+        os: devInfo.os,
+        browser: devInfo.browser,
+        ip: devInfo.ip,
+        userAgent: devInfo.userAgent,
+        scanMethod: 'camera_qr',
+        location: item.location || 'Shelf A-04',
+        scannedAt: new Date()
+      }).catch(err => console.warn('ProductScanLog creation warning:', err.message));
+    } else {
+      await item.save().catch(() => {});
     }
+
     const remainingStock = item.quantity;
-
-    if (!Array.isArray(item.scanHistory)) item.scanHistory = [];
-    item.scanHistory.unshift({
-      scannedAt: new Date(),
-      action: unitNum ? `qr_scan_unit_${unitNum}` : 'qr_scan',
-      unitNumber: unitNum,
-      scannedCode: rawCode,
-      previousStock,
-      remainingStock,
-      location: item.location || 'Warehouse',
-      deviceId: `${devInfo.deviceModel} (${devInfo.browser})`,
-      notes: unitNum
-        ? `Scanned Unit #${unitNum} (${rawCode}) via camera from IP ${devInfo.ip || 'Unknown'} • Stock: ${previousStock} → ${remainingStock}`
-        : `Scanned via camera from IP ${devInfo.ip || 'Unknown'} • Stock: ${previousStock} → ${remainingStock}`
-    });
-    if (item.scanHistory.length > 50) {
-      item.scanHistory = item.scanHistory.slice(0, 50);
-    }
-    await item.save().catch(() => { });
-
-    // Create persistent scan log in MongoDB with unit number and stock change
-    ProductScanLog.create({
-      user: item.user,
-      inventoryItem: item._id,
-      productName: item.productName,
-      sku: item.sku,
-      barcode: rawCode,
-      unitNumber: unitNum,
-      scannedCode: rawCode,
-      previousStock,
-      remainingStock,
-      deviceType: devInfo.deviceType,
-      deviceModel: devInfo.deviceModel,
-      os: devInfo.os,
-      browser: devInfo.browser,
-      ip: devInfo.ip,
-      userAgent: devInfo.userAgent,
-      scanMethod: 'camera_qr',
-      location: item.location || 'Shelf A-04',
-      scannedAt: new Date()
-    }).catch(err => console.warn('ProductScanLog creation warning:', err.message));
 
     res.status(200).json({
       status: 'success',
@@ -1016,16 +1107,19 @@ exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
           scannedCode: rawCode,
           scannedUnitNumber: unitNum,
           previousStock,
-          remainingStock: item.quantity,
-          totalQuantity: item.quantity,
+          remainingStock,
+          totalQuantity: remainingStock,
           labelTemplate: item.labelTemplate,
-          quantity: item.quantity,
+          quantity: remainingStock,
           unitPrice: item.unitPrice,
           status: item.status,
           notes: item.notes,
           totalScanCount: item.totalScanCount,
           lastScannedAt: item.lastScannedAt,
-          scanHistory: item.scanHistory
+          scanHistory: item.scanHistory,
+          alreadyDeducted: Boolean(alreadyDeducted),
+          deductedThisScan: Boolean(shouldDeduct),
+          deductReason: deductReason || (shouldDeduct ? 'Deducted 1 unit for authentic scan' : '')
         }
       }
     });

@@ -103,12 +103,23 @@ const inventoryItemSchema = new mongoose.Schema(
       type: Number,
       default: 0
     },
+    scannedUnits: [
+      { type: Number }
+    ],
+    deductedTokens: [
+      { type: String }
+    ],
     scanHistory: [
       {
         scannedAt: { type: Date, default: Date.now },
         action: { type: String, default: 'scan' },
         location: { type: String, default: '' },
         deviceId: { type: String, default: '' },
+        ip: { type: String, default: '' },
+        unitNumber: { type: Number, default: null },
+        scannedCode: { type: String, default: '' },
+        previousStock: { type: Number },
+        remainingStock: { type: Number },
         delta: { type: Number, default: 0 },
         notes: { type: String, default: '' }
       }
