@@ -4,8 +4,10 @@ const auth = require('../middlewares/auth');
 
 const router = express.Router();
 
-// Public unauthenticated route for globally scannable QR codes
+// Public unauthenticated route for globally scannable QR codes (supports both GET and POST)
 router.get('/public/:code', inventoryController.getPublicItemByCode);
+router.post('/public/:code', inventoryController.getPublicItemByCode);
+router.post('/public/:code/scan', inventoryController.getPublicItemByCode);
 
 // Require authentication for all inventory management routes
 router.use(auth);

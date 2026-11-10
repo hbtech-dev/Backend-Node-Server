@@ -905,14 +905,22 @@ exports.getItemHistory = catchAsync(async (req, res, next) => {
  * Scannable by anyone with a smartphone anywhere in the world
  */
 exports.getPublicItemByCode = catchAsync(async (req, res, next) => {
+    // Explicitly disable any caching on iOS Safari, Cloudflare, proxies, or browsers
+    res.set({
+      'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate, max-age=0',
+      'Pragma': 'no-cache',
+      'Expires': '0',
+      'Surrogate-Control': 'no-store'
+    });
+
     const rawCode = String(req.params.code || '').trim();
     if (!rawCode) {
       return next(new AppError('Product code or barcode is required.', 400));
     }
 
-    // Support serialized unit codes like 603900753096928-042 or query param ?unit=42
+    // Support serialized unit codes like 603900753096928-042 or query/body param ?unit=42
     let baseCode = rawCode;
-    let unitNum = req.query.unit ? parseInt(req.query.unit, 10) : null;
+    let unitNum = req.query.unit || req.body?.unit ? parseInt(req.query.unit || req.body?.unit, 10) : null;
     if (rawCode.includes('-')) {
       const lastHyphen = rawCode.lastIndexOf('-');
       const suffix = rawCode.slice(lastHyphen + 1).trim();
