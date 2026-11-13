@@ -12,6 +12,38 @@ exports.getMe = catchAsync(async (req, res, next) => {
   const mongoose = require('mongoose');
   let user = req.user;
 
+  if (req.operator) {
+    const companyUser = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        user: {
+          _id: req.operator._id,
+          id: req.operator._id,
+          email: req.operator.email,
+          username: req.operator.username,
+          fullName: req.operator.fullName,
+          companyName: companyUser.companyName || req.operator.companyName,
+          balance: companyUser.balance,
+          accountType: companyUser.accountType,
+          subscription: companyUser.subscription,
+          role: req.operator.role || 'user',
+          allowedPages: req.operator.allowedPages || companyUser.allowedPages,
+          parentAccount: companyUser._id,
+          isOperator: true,
+          temuIntegration: companyUser.temuIntegration,
+          temuIntegrations: companyUser.temuIntegrations,
+          ebayIntegration: companyUser.ebayIntegration,
+          dhlIntegration: companyUser.dhlIntegration,
+          packetaIntegration: companyUser.packetaIntegration,
+          fedexIntegration: companyUser.fedexIntegration,
+          settings: companyUser.settings,
+          countryCarrierRules: companyUser.countryCarrierRules
+        }
+      }
+    });
+  }
+
   if (mongoose.connection.readyState === 1) {
     user = await User.findById(req.user.id) || req.user;
   }
@@ -27,6 +59,8 @@ exports.getMe = catchAsync(async (req, res, next) => {
 exports.updateMe = catchAsync(async (req, res, next) => {
   const { email, username, fullName, companyName, streetName, houseNumber, postcode, cityName, contactEmail, telephone, settings } = req.body;
 
+  const targetUserId = req.operator ? req.operator._id : req.user.id;
+
   const updateData = {};
   if (email) updateData.email = email;
   if (username) updateData.username = username;
@@ -38,9 +72,14 @@ exports.updateMe = catchAsync(async (req, res, next) => {
   if (cityName !== undefined) updateData.cityName = cityName;
   if (contactEmail !== undefined) updateData.contactEmail = contactEmail;
   if (telephone !== undefined) updateData.telephone = telephone;
-  if (settings !== undefined) updateData.settings = settings;
+  if (settings !== undefined) {
+    updateData.settings = settings;
+    if (req.operator) {
+      await User.findByIdAndUpdate(req.user.id, { settings }).catch(() => {});
+    }
+  }
 
-  const user = await User.findByIdAndUpdate(req.user.id, updateData, {
+  const user = await User.findByIdAndUpdate(targetUserId, updateData, {
     new: true,
     runValidators: true
   });
@@ -622,17 +661,33 @@ exports.adminCreateUser = catchAsync(async (req, res, next) => {
     'credit', 'invoices', 'settings'
   ];
 
+  const cleanCompany = companyName ? companyName.trim() : 'EDER Partner';
+  let resolvedParentId = null;
+  if (cleanCompany && cleanCompany !== 'EDER Agency HQ') {
+    const parentCompanyOwner = await User.findOne({
+      companyName: cleanCompany,
+      role: { $ne: 'admin' },
+      $or: [{ parentAccount: null }, { parentAccount: { $exists: false } }]
+    });
+    if (parentCompanyOwner) {
+      resolvedParentId = parentCompanyOwner._id;
+    }
+  }
+  if (!resolvedParentId && req.user && req.user.role !== 'admin') {
+    resolvedParentId = req.user._id;
+  }
+
   const newUser = await User.create({
     email: cleanEmail,
     password,
     username: finalUsername,
     fullName: fullName ? fullName.trim() : finalUsername,
-    companyName: companyName ? companyName.trim() : 'EDER Partner',
+    companyName: cleanCompany,
     balance: balance !== undefined ? Math.max(0, Number(balance) || 0) : 0,
     role: role === 'admin' ? 'admin' : 'user',
     allowedPages: Array.isArray(allowedPages) && allowedPages.length > 0 ? allowedPages : defaultPages,
     accountType: accountType || 'standard',
-    parentAccount: req.user?._id || null,
+    parentAccount: resolvedParentId,
     isActive: true,
     streetName: streetName || '',
     houseNumber: houseNumber || '',
@@ -770,6 +825,17 @@ exports.adminUpdatePermissions = catchAsync(async (req, res, next) => {
 
   if (companyName !== undefined) {
     user.companyName = companyName.trim();
+    if (user.role !== 'admin' && user.companyName) {
+      const p = await User.findOne({
+        companyName: user.companyName,
+        role: { $ne: 'admin' },
+        _id: { $ne: user._id },
+        $or: [{ parentAccount: null }, { parentAccount: { $exists: false } }]
+      });
+      if (p) {
+        user.parentAccount = p._id;
+      }
+    }
   }
 
   if (fullName !== undefined) {

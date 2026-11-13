@@ -138,6 +138,32 @@ exports.login = catchAsync(async (req, res, next) => {
     return next(new AppError('Your account has been deactivated', 401));
   }
 
+  // Resolve parent/company account for operators
+  let parentUser = null;
+  if (user.role !== 'admin') {
+    if (user.parentAccount) {
+      const p = await User.findById(user.parentAccount);
+      if (p && p.role !== 'admin' && String(p._id) !== String(user._id)) {
+        parentUser = p;
+      }
+    }
+    if (!parentUser && user.companyName && user.companyName !== 'EDER Agency HQ') {
+      const p = await User.findOne({
+        companyName: user.companyName,
+        role: { $ne: 'admin' },
+        _id: { $ne: user._id },
+        $or: [{ parentAccount: null }, { parentAccount: { $exists: false } }]
+      });
+      if (p) {
+        parentUser = p;
+        user.parentAccount = p._id;
+        await user.save().catch(() => {});
+      }
+    }
+  }
+
+  const effectiveCompany = parentUser || user;
+
   const token = generateToken(user._id);
   const refreshToken = generateRefreshToken(user._id);
 
@@ -149,17 +175,18 @@ exports.login = catchAsync(async (req, res, next) => {
         email: user.email,
         username: user.username,
         fullName: user.fullName,
-        companyName: user.companyName,
-        balance: user.balance,
-        accountType: user.accountType,
-        subscription: user.subscription,
+        companyName: effectiveCompany.companyName || user.companyName,
+        balance: effectiveCompany.balance,
+        accountType: effectiveCompany.accountType || user.accountType,
+        subscription: effectiveCompany.subscription || user.subscription,
         role: user.role || 'user',
         allowedPages: user.allowedPages || [
           'stats', 'activity', 'open', 'labels', 'printed',
           'canceled', 'issues', 'trash', 'routing', 'inventory',
           'credit', 'invoices', 'settings'
         ],
-        parentAccount: user.parentAccount,
+        parentAccount: parentUser ? parentUser._id : user.parentAccount,
+        isOperator: Boolean(parentUser),
         agencyName: user.agencyName,
         isActive: user.isActive
       },

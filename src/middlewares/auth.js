@@ -61,7 +61,53 @@ const auth = catchAsync(async (req, res, next) => {
     return next(new AppError('Your account has been deactivated.', 401));
   }
 
-  req.user = user;
+  // Resolve parent account if this user is an operator / sub-account under a company
+  let parentUser = null;
+  if (user && user.role !== 'admin' && mongoose.connection.readyState === 1) {
+    if (user.parentAccount) {
+      const p = await User.findById(user.parentAccount);
+      if (p && p.role !== 'admin' && String(p._id) !== String(user._id)) {
+        parentUser = p;
+      }
+    }
+
+    // Fallback: If parentAccount is not set or was set to admin, match by companyName
+    if (!parentUser && user.companyName && user.companyName !== 'EDER Agency HQ') {
+      const p = await User.findOne({
+        companyName: user.companyName,
+        role: { $ne: 'admin' },
+        _id: { $ne: user._id },
+        $or: [{ parentAccount: null }, { parentAccount: { $exists: false } }]
+      });
+      if (p) {
+        parentUser = p;
+        // Self-heal parentAccount link in MongoDB
+        User.updateOne({ _id: user._id }, { $set: { parentAccount: p._id } }).exec().catch(() => {});
+      }
+    }
+  }
+
+  if (parentUser) {
+    // Preserve operator identity for auditing and UI profile
+    req.operator = user;
+
+    // Use parent company account so all orders, inventory, tickets, and carrier integrations work seamlessly
+    req.user = parentUser;
+    req.user.operator = {
+      _id: user._id,
+      id: user._id,
+      email: user.email,
+      username: user.username,
+      fullName: user.fullName,
+      role: user.role,
+      allowedPages: user.allowedPages
+    };
+    req.user.allowedPages = user.allowedPages;
+    req.user.isOperator = true;
+  } else {
+    req.user = user;
+  }
+
   next();
 });
 
