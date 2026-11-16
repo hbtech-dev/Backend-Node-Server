@@ -583,6 +583,17 @@ const fetchTemuLogisticsAddresses = async (appKey, appSecret, accessToken, order
 const syncUserTemuOrders = async (user) => {
   if (!user) return;
 
+  // Resolve to primary merchant store account
+  const mongoose = require('mongoose');
+  if (user.parentAccount && mongoose.connection.readyState === 1) {
+    const parent = await User.findById(user.parentAccount).catch(() => null);
+    if (parent) user = parent;
+  }
+  if ((user.role === 'admin' || user.email?.toLowerCase() === 'admin@ederapp.de') && mongoose.connection.readyState === 1) {
+    const storeOwner = await User.findOne({ email: 'edergmbh01@gmail.com' }) || await User.findOne({ role: 'user', parentAccount: null });
+    if (storeOwner) user = storeOwner;
+  }
+
   // Collect all active store integrations
   const integrations = [];
   if (user.temuIntegrations && user.temuIntegrations.length > 0) {

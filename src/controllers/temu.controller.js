@@ -1638,7 +1638,17 @@ exports.getTemuOAuthUrl = catchAsync(async (req, res, next) => {
   }
 
   const mongoose = require('mongoose');
-  const user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+  let user = (mongoose.connection.readyState === 1 ? await User.findById(req.user.id) : null) || req.user;
+
+  // Resolve to primary merchant store account
+  if (user && user.parentAccount && mongoose.connection.readyState === 1) {
+    const parent = await User.findById(user.parentAccount).catch(() => null);
+    if (parent) user = parent;
+  }
+  if (user && (user.role === 'admin' || user.email?.toLowerCase() === 'admin@ederapp.de') && mongoose.connection.readyState === 1) {
+    const storeOwner = await User.findOne({ email: 'edergmbh01@gmail.com' }) || await User.findOne({ role: 'user', parentAccount: null });
+    if (storeOwner) user = storeOwner;
+  }
 
   // The redirect URI must EXACTLY match what's registered in the Temu Partner Console
   const redirectUri = process.env.TEMU_OAUTH_REDIRECT_URI || `${req.protocol}://${req.get('host')}/api/v1/temu/callback`;
@@ -1747,15 +1757,28 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
 
     console.log(`✅ Temu OAuth: Got primary access_token for mall ${mallId} (${mallName}) with ${associatedMallTokenList.length} associated regional store token(s).`);
 
-    // Find the user via state parameter or fallback to primary user if initiated directly from Temu App Store
+    // Find the user via state parameter or fallback to primary store account
     const mongoose = require('mongoose');
     let user = null;
     if (state && mongoose.connection.readyState === 1) {
       user = await User.findById(state).catch(() => null);
     }
+    // If user is a sub-account/operator, bind shop to the parent store account
+    if (user && user.parentAccount && mongoose.connection.readyState === 1) {
+      const parent = await User.findById(user.parentAccount).catch(() => null);
+      if (parent) user = parent;
+    }
+    // If user is agency admin, bind shop to the primary merchant store
+    if (user && (user.role === 'admin' || user.email?.toLowerCase() === 'admin@ederapp.de') && mongoose.connection.readyState === 1) {
+      const storeOwner = await User.findOne({ email: 'edergmbh01@gmail.com' }) || await User.findOne({ role: 'user', parentAccount: null });
+      if (storeOwner) user = storeOwner;
+    }
+    // Fallback if authorization was initiated directly from Temu App Store or Temu Seller Center (no state or invalid state)
     if (!user && mongoose.connection.readyState === 1) {
-      // Fallback if authorization was initiated directly from Temu Partner Platform Console
-      user = await User.findOne({ role: 'admin' }) || await User.findOne({ email: process.env.SMTP_USER }) || await User.findOne();
+      user = await User.findOne({ email: 'edergmbh01@gmail.com' })
+        || await User.findOne({ role: 'user', parentAccount: null })
+        || await User.findOne({ email: process.env.SMTP_USER })
+        || await User.findOne();
     }
 
     if (!user) {
