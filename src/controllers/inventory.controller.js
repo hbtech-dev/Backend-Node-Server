@@ -176,7 +176,22 @@ exports.getAllInventory = catchAsync(async (req, res, next) => {
     ];
   }
 
-  const items = await InventoryItem.find(filter).sort({ updatedAt: -1 }).lean();
+  const query = InventoryItem.find(filter).sort({ updatedAt: -1 });
+
+  // Exclude large base64 designUrl from main table view so list requests return in milliseconds
+  if (req.query.includeDesignUrl !== 'true') {
+    query.select('-labelTemplate.designUrl');
+  }
+
+  const rawItems = await query.lean();
+
+  const items = rawItems.map(item => ({
+    ...item,
+    labelTemplate: item.labelTemplate ? {
+      ...item.labelTemplate,
+      hasDesignUrl: Boolean(item.labelTemplate.hasDesignUrl || item.labelTemplate.designUrl || true)
+    } : null
+  }));
 
   const totalStock = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
   const totalValue = items.reduce((sum, item) => sum + ((item.quantity || 0) * (item.unitPrice || 0)), 0);
@@ -196,6 +211,28 @@ exports.getAllInventory = catchAsync(async (req, res, next) => {
         lowStockCount
       }
     }
+  });
+});
+
+/**
+ * Get single inventory item by ID (includes high-res template designUrl on demand)
+ */
+exports.getInventoryItemById = catchAsync(async (req, res, next) => {
+  const item = await InventoryItem.findOne({
+    _id: req.params.id,
+    user: req.user.id
+  }).lean();
+
+  if (!item) {
+    return res.status(404).json({
+      status: 'error',
+      message: 'Inventory item not found'
+    });
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: { item }
   });
 });
 
