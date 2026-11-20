@@ -91,6 +91,15 @@ exports.testDHLConnection = async (userDhlConfig = {}) => {
   const maskedKey = `${config.apiKey.slice(0, 6)}...${config.apiKey.slice(-4)}`;
   const ekpInfo = config.accountNumber ? ` (EKP: ${config.accountNumber})` : '';
 
+  if (!liveSuccess) {
+    return {
+      success: false,
+      message: `❌ DHL live API connection failed for ${maskedKey}${ekpInfo} in ${modeText} mode. Please verify your API Key, API Secret, and Billing Number.`,
+      config: { isSandbox: config.isSandbox, accountNumber: config.accountNumber },
+      liveSuccess: false
+    };
+  }
+
   return {
     success: true,
     message: `✅ DHL API Credentials (${maskedKey}${ekpInfo}) verified for ${modeText} mode! Ready to generate shipping labels.`,

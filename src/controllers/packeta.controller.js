@@ -38,11 +38,11 @@ exports.getPacketaStatus = catchAsync(async (req, res, next) => {
   const user = await resolveUser(req);
   const packeta = (user && user.packetaIntegration) || {};
 
-  const apiKey = packeta.apiKey || process.env.PACKETA_API_KEY || 'ec486a9b163632eb';
-  const apiLocale = packeta.apiLocale || process.env.PACKETA_API_LOCALE || 'en_GB';
-  const invoiceLocale = packeta.invoiceLocale || process.env.PACKETA_INVOICE_LOCALE || 'de_DE';
-  const senderLabel = packeta.senderLabel || process.env.PACKETA_SENDER_LABEL || 'EDER UG';
-  const isConnected = Boolean(packeta.isConnected !== false && apiKey);
+  const apiKey = packeta.apiKey || '';
+  const apiLocale = packeta.apiLocale || 'en_GB';
+  const invoiceLocale = packeta.invoiceLocale || 'de_DE';
+  const senderLabel = packeta.senderLabel || '';
+  const isConnected = Boolean(packeta.isConnected === true && apiKey);
 
   res.status(200).json({
     status: 'success',

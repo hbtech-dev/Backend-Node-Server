@@ -30,23 +30,25 @@ const resolveUser = async (req) => {
 exports.getDhlStatus = catchAsync(async (req, res, next) => {
   const user = await resolveUser(req);
   const dhlConfig = user.dhlIntegration || {};
-  const isConnected = dhlConfig.isConnected !== false;
-  const apiKey = dhlConfig.apiKey || process.env.DHL_API_KEY || 'QkLYX6G92E6avPGYov9Pyk7fpWeAvRb7';
+  const apiKey = dhlConfig.apiKey || '';
+  const isConnected = Boolean(dhlConfig.isConnected === true && apiKey);
   res.status(200).json({
     status: 'success',
     data: {
       dhlIntegration: {
         isConnected,
         apiKey,
-        accountNumber: dhlConfig.accountNumber || '50000000000101',
-        isSandbox: dhlConfig.isSandbox !== undefined ? dhlConfig.isSandbox : false
+        accountNumber: dhlConfig.accountNumber || '',
+        isSandbox: dhlConfig.isSandbox !== undefined ? dhlConfig.isSandbox : false,
+        productType: dhlConfig.productType || 'V01PAK',
+        lastTestedAt: dhlConfig.lastTestedAt || null
       }
     }
   });
 });
 
 exports.connectDhl = catchAsync(async (req, res, next) => {
-  const { apiKey, apiSecret, accountNumber, isSandbox, productType } = req.body;
+  const { apiKey, apiSecret, gkpUser, gkpPassword, accountNumber, isSandbox, productType } = req.body;
 
   if (!apiKey && !accountNumber) {
     return next(new AppError('DHL API Key or Account Number (EKP) is required', 400));
@@ -58,7 +60,9 @@ exports.connectDhl = catchAsync(async (req, res, next) => {
     isConnected: true,
     apiKey: apiKey || '',
     apiSecret: apiSecret || '',
-    accountNumber: accountNumber || '50000000000101',
+    gkpUser: gkpUser !== undefined ? gkpUser : (user.dhlIntegration?.gkpUser || ''),
+    gkpPassword: gkpPassword !== undefined ? gkpPassword : (user.dhlIntegration?.gkpPassword || ''),
+    accountNumber: accountNumber || '',
     isSandbox: isSandbox !== undefined ? Boolean(isSandbox) : (process.env.DHL_IS_SANDBOX === 'true'),
     productType: productType || 'V01PAK',
     lastTestedAt: new Date()
@@ -116,6 +120,10 @@ exports.disconnectDhl = catchAsync(async (req, res, next) => {
 exports.testConnection = catchAsync(async (req, res, next) => {
   const user = await resolveUser(req);
   const result = await dhlService.testDHLConnection(user.dhlIntegration || {});
+
+  if (!result.success) {
+    return next(new AppError(result.message || 'DHL live connection test failed.', 400));
+  }
 
   user.dhlIntegration = user.dhlIntegration || {};
   user.dhlIntegration.lastTestedAt = new Date();
