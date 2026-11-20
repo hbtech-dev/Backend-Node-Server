@@ -278,6 +278,20 @@ exports.connectTemu = catchAsync(async (req, res, next) => {
     return next(new AppError(`Temu API verification failed: ${err.message}`, 401));
   }
 
+  // ---- Prevent connecting a Temu store token already owned by another account ----
+  if (mongoose.connection.readyState === 1) {
+    const conflictUser = await User.findOne({
+      _id: { $ne: user._id },
+      $or: [
+        { 'temuIntegration.accessToken': cleanToken },
+        { 'temuIntegrations.accessToken': cleanToken }
+      ]
+    }).select('email');
+    if (conflictUser) {
+      return next(new AppError('This Temu store is already connected to another user account. Disconnect it from the other account first.', 409));
+    }
+  }
+
   // ---- Save credentials ----
   const newIntegration = {
     isConnected: true,
@@ -1811,6 +1825,22 @@ exports.handleTemuOAuthCallback = catchAsync(async (req, res, next) => {
           });
         }
       });
+    }
+
+    // Check if any of these store tokens are already connected to a different user account
+    const tokensToCheck = storesToRegister.map(s => s.accessToken).filter(Boolean);
+    if (tokensToCheck.length > 0 && mongoose.connection.readyState === 1) {
+      const conflictUser = await User.findOne({
+        _id: { $ne: user._id },
+        $or: [
+          { 'temuIntegration.accessToken': { $in: tokensToCheck } },
+          { 'temuIntegrations.accessToken': { $in: tokensToCheck } }
+        ]
+      }).select('email');
+      if (conflictUser) {
+        console.warn(`⚠️ Temu OAuth: Store token already connected to another user (${conflictUser.email}). Blocking cross-account link.`);
+        return res.redirect(`${frontendUrl}/settings?temu_error=${encodeURIComponent('This Temu store is already connected to another account.')}`);
+      }
     }
 
     // Upsert all regional store integrations for the user
