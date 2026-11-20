@@ -888,84 +888,18 @@ exports.resolveTemuReturn = catchAsync(async (req, res, next) => {
  * Get all Temu Fulfillment Issues across all countries
  */
 
-// Authentic Temu Fulfillment Issues from Temu Seller Center (Order fulfillment exceptions)
-const AUTHENTIC_TEMU_ISSUES = [
-  {
-    issueId: '261029001429093719',
-    orderNum: 'PO-076-261029001429093719',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 5.00€ exempted',
-    noticeDate: 'Oct 29, 2026, 2:03 pm PKT',
-    status: 'Action required'
-  },
-  {
-    issueId: '261028001223208830',
-    orderNum: 'PO-076-261028001223208830',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 5.00€ exempted',
-    noticeDate: 'Oct 28, 2026, 2:04 pm PKT',
-    status: 'Action required'
-  },
-  {
-    issueId: '261024004915141465',
-    orderNum: 'PO-076-261024004915141465',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Abnormal fulfillment',
-    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 13.20€ exempted',
-    parcel: 'PK-1419210750208101099',
-    trackingNumber: 'PK-1419210750208101099',
-    carrier: 'DHL Paket',
-    noticeDate: 'Oct 24, 2026, 5:03 pm PKT',
-    status: 'Pending',
-    resolutionAction: 'appeal',
-    resolutionNotes: 'Order dispatched promptly with tracking PK-1419210750208101099. Package handed over to carrier and in active transit.'
-  },
-  {
-    issueId: '261022004222448410',
-    orderNum: 'PO-076-261022004222448410',
-    buyerName: 'Temu Customer (EU)',
-    country: 'DE',
-    issueType: 'Abnormal fulfillment',
-    description: 'No tracking updates for an extended period after shipment - Compliance with performance policy exemption confirmed.',
-    quantity: 1,
-    compensationRaw: 'Compensation 13.20€ exempted',
-    parcel: 'PK-0011870313479741899',
-    trackingNumber: 'PK-0011870313479741899',
-    carrier: 'DHL Paket',
-    noticeDate: 'Oct 22, 2026, 8:22 pm PKT',
-    status: 'Pending',
-    resolutionAction: 'appeal',
-    resolutionNotes: 'Order dispatched promptly with tracking PK-0011870313479741899. Package handed over to carrier and in active transit.'
-  },
-  {
-    issueId: '261028001671515286',
-    orderNum: 'PO-162-06050210509430832',
-    buyerName: 'Temu Customer (PL)',
-    country: 'PL',
-    issueType: 'Delayed fulfillment',
-    description: 'Delayed fulfillment - Compliance with performance policy exemption confirmed.',
-    quantity: 2,
-    compensationRaw: '40,00 zł',
-    noticeDate: 'Oct 28, 2026, 2:05 pm PKT',
-    status: 'Action required'
-  }
+const SEEDED_LEGACY_ISSUE_IDS = [
+  '261029001429093719',
+  '261028001223208830',
+  '261024004915141465',
+  '261022004222448410',
+  '261028001671515286',
+  '261028001904297179'
 ];
 
 /**
- * Synchronize Temu Fulfillment Issues
- * Reconciles cancellations, marks fulfilled/printed orders as resolved,
- * removes obsolete legacy mock data, and pulls live cancellations.
+ * Synchronize Real Temu Fulfillment Issues across all connected regional stores
+ * and overdue/non-dispatched orders in DB.
  */
 exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
   invalidateFulfillmentCache(req.user?.id);
@@ -976,37 +910,155 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
-  const isConnected = (user.temuIntegration && user.temuIntegration.isConnected) || 
-                      (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected));
+  const stores = (user.temuIntegrations && user.temuIntegrations.length > 0)
+    ? user.temuIntegrations.filter(i => i.isConnected && i.appKey && i.appSecret)
+    : (user.temuIntegration && user.temuIntegration.isConnected ? [user.temuIntegration] : []);
 
+  if (stores.length === 0) {
+    return res.status(200).json({
+      status: 'success',
+      message: 'No Temu stores connected yet.',
+      data: { issues: [], totalPending: 0, totalResolved: 0, syncedStores: 0 }
+    });
+  }
 
   if (mongoose.connection.readyState === 1) {
-    // 1. Purge legacy mistakenly created cancellation_request issues and ticket copies
+    // 1. Purge legacy hardcoded seed / mock issues
     await TemuFulfillmentIssue.deleteMany({
       user: req.user.id,
       $or: [
         { issueType: 'cancellation_request' },
         { issueId: /^ISS-PO-/ },
         { issueId: /-D0\d$/i },
-        { issueId: '261028001904297179' }
+        { issueId: { $in: SEEDED_LEGACY_ISSUE_IDS } }
       ]
     }).catch(() => {});
 
-    // Ensure authentic Temu Seller Center fulfillment issues exist in DB
-    for (const issueData of AUTHENTIC_TEMU_ISSUES) {
-      await TemuFulfillmentIssue.updateOne(
-        { user: req.user.id, issueId: issueData.issueId },
+    // 2. Query connected Temu stores for real fulfillment/abnormal records
+    const crypto = require('crypto');
+    const httpFetch = require('../utils/httpHelper');
+    const routerUrl = process.env.TEMU_ROUTER_URL || 'https://openapi-b-eu.temu.com/openapi/router';
+    const nowSec = Math.floor(Date.now() / 1000);
+    const startSec = nowSec - 60 * 86400;
+
+    const callStoreApi = async (store, type) => {
+      try {
+        const ts = Math.floor(Date.now() / 1000).toString();
+        const payload = {
+          app_key: store.appKey,
+          access_token: store.accessToken || '',
+          timestamp: ts,
+          type,
+          pageNo: 1,
+          pageSize: 50,
+          createAtStart: startSec,
+          createAtEnd: nowSec
+        };
+        const sortedKeys = Object.keys(payload).sort();
+        const signStr = store.appSecret + sortedKeys.map(k => `${k}${payload[k]}`).join('') + store.appSecret;
+        const sign = crypto.createHash('md5').update(signStr).digest('hex').toUpperCase();
+        const resp = await httpFetch(routerUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, sign }),
+          timeout: 5000
+        });
+        const data = await resp.json();
+        const ok = data && (data.success === true || data.errorCode === 1000000 || data.errorCode === 0);
+        return ok ? (data.result?.data || data.result?.list || data.result?.pageItems || []) : [];
+      } catch (_) {
+        return [];
+      }
+    };
+
+    await Promise.allSettled(stores.map(async (store) => {
+      const storeCountry = (store.country || store.region || 'DE').toUpperCase();
+      const [abn1, abn2] = await Promise.all([
+        callStoreApi(store, 'bg.fulfillment.abnormal.list.get'),
+        callStoreApi(store, 'bg.order.fulfillment.issue.list.get')
+      ]);
+      const combined = [...abn1, ...abn2];
+      for (const rec of combined) {
+        const rawOrder = rec.parentOrderSn || rec.orderSn || rec.order_sn || '';
+        const orderNum = rawOrder ? (rawOrder.startsWith('PO-') ? rawOrder : `PO-${rawOrder}`) : '';
+        const issueId = String(rec.issueId || rec.abnormalSn || rec.violationSn || (orderNum ? `DEL-${orderNum}` : ''));
+        if (!issueId) continue;
+
+        const qty = Number(rec.quantity || rec.goodsNumber || 1) || 1;
+        await TemuFulfillmentIssue.updateOne(
+          { user: req.user.id, issueId },
+          {
+            $set: {
+              orderNum,
+              country: (rec.country || storeCountry).toUpperCase(),
+              issueType: rec.issueType || rec.abnormalTypeDesc || 'Delayed fulfillment',
+              description: rec.reason || rec.abnormalDesc || 'Fulfillment delay / exception reported by Temu',
+              quantity: qty,
+              compensationRaw: rec.compensationAmount ? `${rec.compensationAmount}€` : '€0.00',
+              noticeDate: rec.createTime ? new Date(Number(rec.createTime) * 1000).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+            },
+            $setOnInsert: {
+              user: req.user.id,
+              issueId,
+              buyerName: rec.buyerName || 'Temu Customer',
+              status: 'Action required'
+            }
+          },
+          { upsert: true }
+        ).catch(() => {});
+      }
+    }));
+
+    // 3. Reconcile real delayed / un-dispatched orders from user's synced TemuOrder DB
+    const fortyEightHoursAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+    const delayedOrders = await TemuOrder.find({
+      user: req.user.id,
+      createdAt: { $gte: thirtyDaysAgo },
+      $or: [
+        { status: 'open', createdAt: { $lt: fortyEightHoursAgo } },
         {
+          status: { $in: ['created_label', 'printed'] },
+          isDispatched: { $ne: true },
+          carrierStatusCode: { $ne: '11' },
+          shippedAt: { $lt: fortyEightHoursAgo }
+        }
+      ]
+    }).lean();
+
+    for (const ord of delayedOrders) {
+      if (!ord.orderNum) continue;
+      const issueId = `DELAY-${ord.orderNum}`;
+      const isAbnormal = Boolean(ord.tracking && ord.shippedAt);
+      await TemuFulfillmentIssue.updateOne(
+        { user: req.user.id, issueId },
+        {
+          $set: {
+            orderNum: ord.orderNum,
+            buyerName: ord.buyerName || ord.name || 'Temu Customer',
+            country: (ord.country || 'DE').toUpperCase(),
+            parcel: ord.tracking || '',
+            trackingNumber: ord.tracking || '',
+            carrier: ord.shippingMethod || ord.temuCourierName || 'DHL Warenpost',
+            quantity: Number(ord.quantity) || 1
+          },
           $setOnInsert: {
             user: req.user.id,
-            ...issueData
+            issueId,
+            issueType: isAbnormal ? 'Abnormal fulfillment' : 'Delayed fulfillment',
+            description: isAbnormal
+              ? 'Label created >48h ago without active carrier transit scan.'
+              : 'Unshipped order pending dispatch >48h.',
+            compensationRaw: '€5.00',
+            noticeDate: (ord.orderDate || ord.createdAt || new Date()).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+            status: 'Action required'
           }
         },
         { upsert: true }
       ).catch(() => {});
     }
 
-    // 3. Reconcile existing issues with tracking numbers and carriers without auto-closing unresolved delay claims
+    // 4. Auto-resolve DELAY- issues if the order has since been dispatched or delivered
     const allIssues = await TemuFulfillmentIssue.find({ user: req.user.id });
     for (const issue of allIssues) {
       if (issue.orderNum) {
@@ -1030,6 +1082,11 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
           }
           if (order.shippingMethod && !issue.carrier) {
             issue.carrier = order.shippingMethod;
+            needsSave = true;
+          }
+          if (issue.issueId?.startsWith('DELAY-') && (order.isDispatched || order.carrierStatusCode === '11') && issue.status !== 'resolved') {
+            issue.status = 'resolved';
+            issue.resolvedAt = new Date();
             needsSave = true;
           }
           if (needsSave) {
@@ -1056,11 +1113,12 @@ exports.syncTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
 
   res.status(200).json({
     status: 'success',
-    message: `Fulfillment issues synced! Found ${totalPending} pending incidents across Europe (${totalResolved} resolved).`,
+    message: `Fulfillment issues synced across ${stores.length} store(s)! Found ${totalPending} pending (${totalResolved} resolved).`,
     data: {
       issues: updatedIssues,
       totalPending,
-      totalResolved
+      totalResolved,
+      syncedStores: stores.length
     }
   });
 });
@@ -1079,32 +1137,17 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     user = (await User.findById(req.user.id)) || req.user;
   }
 
-
   if (mongoose.connection.readyState === 1) {
-    // Clean out stray cancellation_request, ISS-PO-, and ticket copies
+    // Clean out stray cancellation_request, ISS-PO-, and legacy hardcoded seed copies
     await TemuFulfillmentIssue.deleteMany({
       user: req.user.id,
       $or: [
         { issueType: 'cancellation_request' },
         { issueId: /^ISS-PO-/ },
         { issueId: /-D0\d$/i },
-        { issueId: '261028001904297179' }
+        { issueId: { $in: SEEDED_LEGACY_ISSUE_IDS } }
       ]
     }).catch(() => {});
-
-    // Ensure authentic Temu Seller Center fulfillment issues exist in DB
-    for (const issueData of AUTHENTIC_TEMU_ISSUES) {
-      await TemuFulfillmentIssue.updateOne(
-        { user: req.user.id, issueId: issueData.issueId },
-        {
-          $setOnInsert: {
-            user: req.user.id,
-            ...issueData
-          }
-        },
-        { upsert: true }
-      ).catch(() => {});
-    }
   }
 
   // Sync fulfillment issues when requested with ?sync=true
@@ -2061,6 +2104,7 @@ exports.testTemuApi = catchAsync(async (req, res, next) => {
  * One-click sync for all regional stores across Europe
  */
 exports.syncAllRegionalReturns = catchAsync(async (req, res, next) => {
+  invalidateReturnsCache(req.user?.id);
   const temuAftersalesService = require('../services/temuAftersales.service');
   const result = await temuAftersalesService.syncAllRegionalReturns(req.user.id);
   res.status(200).json({

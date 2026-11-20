@@ -537,7 +537,17 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
   const hasStores = (user.temuIntegrations && user.temuIntegrations.some(i => i.isConnected && i.appKey && i.appSecret)) ||
     (user.temuIntegration && user.temuIntegration.isConnected);
   if (!hasStores) {
-    return next(new AppError('Temu account is not connected.', 400));
+    return res.status(200).json({
+      status: 'success',
+      message: 'No Temu stores connected yet.',
+      data: {
+        stores: 0,
+        pendingCount: 0,
+        totalCount: 0,
+        failedStores: [],
+        tickets: []
+      }
+    });
   }
 
   const summary = await syncTicketsForUser(user);
@@ -551,9 +561,10 @@ exports.syncTickets = catchAsync(async (req, res, next) => {
   res.status(200).json({
     status: 'success',
     message: failed
-      ? `Tickets synced from ${summary.stores} shops (${failed} shop request(s) failed - see server log).`
-      : `Temu Information Tickets synced successfully across all ${summary.stores} connected shops!`,
+      ? `Tickets synced across ${summary.stores} shop(s) (${failed} shop request(s) had warnings).`
+      : `Temu Information Tickets synced successfully across all ${summary.stores} connected shop(s)!`,
     data: {
+      stores: summary.stores,
       pendingCount: allTickets.filter(t => t.status === 'pending').length,
       totalCount: allTickets.length,
       failedStores: summary.failedStores,
