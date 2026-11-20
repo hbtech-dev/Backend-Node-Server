@@ -1185,7 +1185,7 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
         { orderNum: { $in: [...orderNums, ...cleanNums] } },
         { temuOrderId: { $in: cleanNums } }
       ]
-    }).select('orderNum temuOrderId tracking dhlShipmentId orderDate createdAt shippedAt country shippingMethod recipientName address').lean();
+    }).select('orderNum temuOrderId tracking dhlShipmentId packetaBarcode temuCourierName orderDate createdAt shippedAt country shippingMethod recipientName address').lean();
 
     const orderMap = new Map();
     for (const ord of matchedOrders) {
@@ -1201,8 +1201,8 @@ exports.getUserTemuFulfillmentIssues = catchAsync(async (req, res, next) => {
     issuesList = issuesList.map(issue => {
       const country = (issue.country || 'ES').toUpperCase();
       const order = orderMap.get(issue.orderNum) || orderMap.get(issue.orderNum?.replace(/^PO-/i, ''));
-      const realTracking = issue.parcel || issue.trackingNumber || order?.tracking || order?.dhlShipmentId || '';
-      const carrier = issue.carrier || order?.shippingMethod || 'DHL Warenpost';
+      const realTracking = issue.parcel || issue.trackingNumber || order?.tracking || order?.packetaBarcode || order?.dhlShipmentId || '';
+      const carrier = issue.carrier || order?.shippingMethod || order?.temuCourierName || 'DHL Warenpost';
       const noticeDate = issue.noticeDate || (issue.createdAt ? new Date(issue.createdAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Recent');
       const compensationRaw = issue.compensationRaw || '';
 
