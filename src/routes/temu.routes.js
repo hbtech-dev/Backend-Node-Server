@@ -26,6 +26,7 @@ router.get('/orders', auth, temuController.getUserTemuOrders);
 router.post('/orders/:orderNum/upload-tracking', auth, temuController.uploadOrderTrackingManually);
 router.get('/debug-order/:orderSn', auth, temuController.debugTemuOrder);
 router.get('/orders/:orderNum/fetch-tracking', auth, temuController.fetchOrderTracking);
+router.get('/orders/:orderNum/delivery-status', auth, temuController.getOrderDeliveryStatus);
 
 // Returns & Performance Fulfillment Issues Routes
 router.post('/returns/sync-all', auth, temuController.syncAllRegionalReturns);

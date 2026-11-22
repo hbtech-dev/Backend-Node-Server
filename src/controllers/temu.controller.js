@@ -2395,3 +2395,177 @@ exports.syncActivityCarriers = catchAsync(async (req, res) => {
     }
   });
 });
+
+/**
+ * Fetch live delivery status for a specific order (Packeta / DHL / DB fallback)
+ */
+exports.getOrderDeliveryStatus = catchAsync(async (req, res) => {
+  const mongoose = require('mongoose');
+  const httpFetch = require('../utils/httpHelper');
+  const user = req.user;
+  const userId = user._id || user.id;
+  const rawParam = decodeURIComponent(req.params.orderNum || '').trim();
+  const cleanNum = rawParam.replace(/^PO-/i, '').trim();
+
+  const query = {
+    user: userId,
+    $or: [
+      ...(mongoose.isValidObjectId(rawParam) ? [{ _id: rawParam }] : []),
+      { orderNum: rawParam },
+      { orderNum: cleanNum },
+      { orderNum: `PO-${cleanNum}` },
+      { temuOrderId: rawParam }
+    ]
+  };
+
+  let order = await TemuOrder.findOne(query).select('-dhlLabelUrl -packetaLabelUrl');
+  let isEbay = false;
+  if (!order) {
+    const EbayOrder = require('../models/ebayOrder.model');
+    order = await EbayOrder.findOne({
+      user: userId,
+      $or: [
+        ...(mongoose.isValidObjectId(rawParam) ? [{ _id: rawParam }] : []),
+        { orderId: rawParam },
+        { orderNum: rawParam }
+      ]
+    });
+    if (order) isEbay = true;
+  }
+
+  if (!order) {
+    return res.status(200).json({
+      status: 'success',
+      data: {
+        deliveryStatus: 'Shipped',
+        statusDetail: '',
+        source: 'fallback'
+      }
+    });
+  }
+
+  const tracking = String(order.tracking || order.packetaBarcode || order.dhlShipmentId || '').trim();
+  const isPacketa = Boolean(
+    tracking.toUpperCase().startsWith('Z') ||
+    order.packetaPacketId ||
+    (order.shippingMethod && order.shippingMethod.toLowerCase().includes('packeta'))
+  );
+
+  let deliveryStatus = '';
+  let statusDetail = order.carrierStatusText || '';
+  let statusCode = order.carrierStatusCode || '';
+  let location = '';
+  let lastUpdated = order.dispatchedAt || order.shippedAt || order.updatedAt || null;
+  let source = 'database';
+
+  // 1. Live Packeta XML API status check
+  if (isPacketa && (tracking || order.packetaPacketId)) {
+    try {
+      const packetaService = require('../services/packeta.service');
+      const pStatus = await packetaService.getPacketStatus(order.packetaPacketId || tracking, user);
+      if (pStatus && pStatus.success) {
+        source = 'packeta_api';
+        statusCode = pStatus.statusCode;
+        statusDetail = pStatus.statusText || pStatus.codeText || '';
+        const codeMap = {
+          '1': 'Label Created (Awaiting Handover)',
+          '2': 'Arrived at Carrier Depot',
+          '3': 'Ready for Dispatch',
+          '4': 'In Transit',
+          '5': 'Ready for Pickup',
+          '6': 'Out for Delivery / Handed to Carrier',
+          '7': 'Delivered',
+          '10': 'Returned to Sender',
+          '11': 'Cancelled'
+        };
+        deliveryStatus = codeMap[pStatus.statusCode] || pStatus.codeText || 'In Transit';
+
+        order.carrierStatusCode = pStatus.statusCode;
+        order.carrierStatus = pStatus.codeText || deliveryStatus;
+        order.carrierStatusText = statusDetail;
+        order.carrierStatusCheckedAt = new Date();
+        if (pStatus.isDispatched && !order.isDispatched) {
+          order.isDispatched = true;
+          order.dispatchedAt = new Date();
+        }
+        await order.save().catch(() => {});
+      }
+    } catch (_) {}
+  }
+
+  // 2. Live DHL Unified Tracking API check (for non-Packeta tracking numbers)
+  if (!deliveryStatus && !isPacketa && tracking) {
+    try {
+      const dhlKey = user?.dhlIntegration?.apiKey || process.env.DHL_API_KEY || '';
+      if (dhlKey) {
+        const dhlRes = await httpFetch(
+          `https://api-eu.dhl.com/track/shipments?trackingNumber=${encodeURIComponent(tracking)}`,
+          {
+            method: 'GET',
+            headers: { 'DHL-API-Key': dhlKey, 'Accept': 'application/json' },
+            timeout: 4500
+          }
+        );
+        if (dhlRes && dhlRes.ok) {
+          const dhlJson = await dhlRes.json().catch(() => null);
+          const shipment = dhlJson?.shipments?.[0];
+          const st = shipment?.status;
+          if (st) {
+            source = 'dhl_api';
+            statusCode = st.statusCode || '';
+            statusDetail = st.description || st.status || '';
+            location = st.location?.address?.addressLocality || '';
+            lastUpdated = st.timestamp || lastUpdated;
+            const sc = String(st.statusCode || '').toLowerCase();
+            if (sc === 'delivered') deliveryStatus = 'Delivered';
+            else if (sc === 'transit') deliveryStatus = 'In Transit';
+            else if (sc === 'pre-transit') deliveryStatus = 'Label Created (Pre-Transit)';
+            else if (sc === 'failure') deliveryStatus = 'Delivery Exception';
+            else deliveryStatus = st.status || 'In Transit';
+
+            order.carrierStatusCode = statusCode;
+            order.carrierStatus = deliveryStatus;
+            order.carrierStatusText = statusDetail;
+            order.carrierStatusCheckedAt = new Date();
+            if (sc === 'delivered' || sc === 'transit') {
+              order.isDispatched = true;
+              if (!order.dispatchedAt) order.dispatchedAt = new Date(st.timestamp || Date.now());
+            }
+            await order.save().catch(() => {});
+          }
+        }
+      }
+    } catch (_) {}
+  }
+
+  // 3. Clean DB fallback if carrier API didn't return an active event
+  if (!deliveryStatus) {
+    const rawCs = String(order.carrierStatus || '').toLowerCase();
+    if (rawCs.includes('deliver') || order.carrierStatusCode === '7') {
+      deliveryStatus = 'Delivered';
+    } else if (rawCs.includes('cancel') || order.carrierStatusCode === '11') {
+      deliveryStatus = 'Cancelled';
+    } else if (order.isDispatched || rawCs.includes('transit') || rawCs.includes('dispatch')) {
+      deliveryStatus = 'In Transit / Dispatched';
+    } else if (tracking) {
+      deliveryStatus = 'Shipped (Label Created)';
+    } else {
+      deliveryStatus = order.status === 'printed' ? 'Shipped' : 'Processing';
+    }
+  }
+
+  res.status(200).json({
+    status: 'success',
+    data: {
+      orderNum: order.orderNum || rawParam,
+      tracking,
+      deliveryStatus,
+      statusCode,
+      statusDetail,
+      location,
+      lastUpdated,
+      isEbay,
+      source
+    }
+  });
+});
