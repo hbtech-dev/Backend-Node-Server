@@ -2468,14 +2468,14 @@ exports.getOrderDeliveryStatus = catchAsync(async (req, res) => {
         statusCode = pStatus.statusCode;
         statusDetail = pStatus.statusText || pStatus.codeText || '';
         const codeMap = {
-          '1': 'Label Created (Awaiting Handover)',
-          '2': 'Arrived at Carrier Depot',
+          '1': 'Shipped',
+          '2': 'In Transit',
           '3': 'Ready for Dispatch',
           '4': 'In Transit',
           '5': 'Ready for Pickup',
-          '6': 'Out for Delivery / Handed to Carrier',
+          '6': 'Out for Delivery',
           '7': 'Delivered',
-          '10': 'Returned to Sender',
+          '10': 'Returned',
           '11': 'Cancelled'
         };
         deliveryStatus = codeMap[pStatus.statusCode] || pStatus.codeText || 'In Transit';
@@ -2519,7 +2519,7 @@ exports.getOrderDeliveryStatus = catchAsync(async (req, res) => {
             const sc = String(st.statusCode || '').toLowerCase();
             if (sc === 'delivered') deliveryStatus = 'Delivered';
             else if (sc === 'transit') deliveryStatus = 'In Transit';
-            else if (sc === 'pre-transit') deliveryStatus = 'Label Created (Pre-Transit)';
+            else if (sc === 'pre-transit') deliveryStatus = 'Shipped';
             else if (sc === 'failure') deliveryStatus = 'Delivery Exception';
             else deliveryStatus = st.status || 'In Transit';
 
@@ -2545,10 +2545,12 @@ exports.getOrderDeliveryStatus = catchAsync(async (req, res) => {
       deliveryStatus = 'Delivered';
     } else if (rawCs.includes('cancel') || order.carrierStatusCode === '11') {
       deliveryStatus = 'Cancelled';
+    } else if (rawCs.includes('return') || order.carrierStatusCode === '10') {
+      deliveryStatus = 'Returned';
     } else if (order.isDispatched || rawCs.includes('transit') || rawCs.includes('dispatch')) {
-      deliveryStatus = 'In Transit / Dispatched';
+      deliveryStatus = 'In Transit';
     } else if (tracking) {
-      deliveryStatus = 'Shipped (Label Created)';
+      deliveryStatus = 'Shipped';
     } else {
       deliveryStatus = order.status === 'printed' ? 'Shipped' : 'Processing';
     }
