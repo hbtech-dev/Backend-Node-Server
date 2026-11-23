@@ -2367,7 +2367,7 @@ exports.syncActivityCarriers = catchAsync(async (req, res) => {
     }
   }
 
-  // 2. Mark old historical printed orders (> 7 days) as dispatched
+  // 2. Mark old historical printed orders (> 7 days) as dispatched (do NOT fake carrierStatus as 'delivered')
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const oldDhlResult = await TemuOrder.updateMany(
     {
@@ -2379,7 +2379,6 @@ exports.syncActivityCarriers = catchAsync(async (req, res) => {
     {
       $set: {
         isDispatched: true,
-        carrierStatus: 'delivered',
         dispatchedAt: new Date()
       }
     }
@@ -2539,15 +2538,17 @@ exports.getOrderDeliveryStatus = catchAsync(async (req, res) => {
   }
 
   // 3. Clean DB fallback if carrier API didn't return an active event
+  // Only trust stored carrierStatus as Delivered/In Transit if backed by a real carrierStatusCode or carrierStatusText
   if (!deliveryStatus) {
     const rawCs = String(order.carrierStatus || '').toLowerCase();
-    if (rawCs.includes('deliver') || order.carrierStatusCode === '7') {
+    const hasVerifiedCarrierData = Boolean(order.carrierStatusCode || order.carrierStatusText);
+    if ((hasVerifiedCarrierData && rawCs.includes('deliver')) || order.carrierStatusCode === '7') {
       deliveryStatus = 'Delivered';
     } else if (rawCs.includes('cancel') || order.carrierStatusCode === '11') {
       deliveryStatus = 'Cancelled';
     } else if (rawCs.includes('return') || order.carrierStatusCode === '10') {
       deliveryStatus = 'Returned';
-    } else if (order.isDispatched || rawCs.includes('transit') || rawCs.includes('dispatch')) {
+    } else if ((hasVerifiedCarrierData && (rawCs.includes('transit') || rawCs.includes('dispatch'))) || order.carrierStatusCode === '4') {
       deliveryStatus = 'In Transit';
     } else if (tracking) {
       deliveryStatus = 'Shipped';
