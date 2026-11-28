@@ -2367,14 +2367,21 @@ exports.syncActivityCarriers = catchAsync(async (req, res) => {
     }
   }
 
-  // 2. Mark old historical printed orders (> 7 days) as dispatched (do NOT fake carrierStatus as 'delivered')
+  // 2. Mark old historical printed non-Packeta (DHL) orders (> 7 days) as dispatched (do NOT fake carrierStatus as 'delivered')
+  // Strictly exclude Packeta orders (reconciled via live Packeta API above) and any order with carrierStatusCode '1' (awaiting handover)
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const oldDhlResult = await TemuOrder.updateMany(
     {
       user: userId,
       status: 'printed',
       createdAt: { $lt: sevenDaysAgo },
-      isDispatched: { $ne: true }
+      isDispatched: { $ne: true },
+      carrierStatusCode: { $ne: '1' },
+      tracking: { $not: /^Z/i },
+      packetaPacketId: { $in: ['', null] },
+      packetaBarcode: { $in: ['', null] },
+      temuCourierName: { $not: /packeta/i },
+      shippingMethod: { $not: /packeta/i }
     },
     {
       $set: {
